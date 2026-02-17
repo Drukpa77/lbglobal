@@ -1,0 +1,139 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  SUB_ADMIN
+  ADMIN
+}
+
+enum SubmissionStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  DOCS_REQUESTED
+  OFFER_RECEIVED
+  VISA_GRANTED
+  REJECTED
+  ENROLLED
+}
+
+enum VisaStatus {
+  NOT_STARTED
+  DOCUMENTS_IN_PROGRESS
+  APPLIED
+  INTERVIEW_SCHEDULED
+  ADDITIONAL_DOCS_REQUESTED
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+model User {
+  id              String                   @id @default(cuid())
+  name            String?
+  email           String                   @unique
+  emailVerified   DateTime?
+  password        String?
+  role            Role                     @default(USER)
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+  studentProfile  StudentProfile?
+  accounts        Account[]
+  sessions        Session[]
+  submissions     QuestionnaireSubmission[] @relation("StudentSubmissions")
+  assignedReviews QuestionnaireSubmission[] @relation("AssignedSubAdmin")
+}
+
+model StudentProfile {
+  id                    String   @id @default(cuid())
+  userId                String   @unique
+  dateOfBirth           DateTime?
+  nationality           String?
+  city                  String?
+  phone                 String?
+  currentEducationLevel String?
+  targetCourse          String?
+  preferredIntake       String?
+  englishTestScore      String?
+  visaStatus            VisaStatus @default(NOT_STARTED)
+  courseStartDate       DateTime?
+  courseEndDate         DateTime?
+  visaExpiryDate        DateTime?
+  lastFollowUpDate      DateTime?
+  nextFollowUpDate      DateTime?
+  followUpNotes         String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model QuestionnaireTemplate {
+  id          String                   @id @default(cuid())
+  title       String
+  description String?
+  isActive    Boolean                  @default(true)
+  questions   Json
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+  submissions QuestionnaireSubmission[]
+}
+
+model QuestionnaireSubmission {
+  id               String               @id @default(cuid())
+  studentId        String
+  templateId       String
+  assignedToId     String?
+  sourceCity       String?
+  sourceCountry    String?
+  intendedCourse   String?
+  intendedIntake   String?
+  answers          Json
+  status           SubmissionStatus     @default(SUBMITTED)
+  submittedAt      DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  student          User                 @relation("StudentSubmissions", fields: [studentId], references: [id], onDelete: Cascade)
+  template         QuestionnaireTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  assignedSubAdmin User?                @relation("AssignedSubAdmin", fields: [assignedToId], references: [id], onDelete: SetNull)
+}
+
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([provider, providerAccountId])
+}
+
+model Session {
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+}
