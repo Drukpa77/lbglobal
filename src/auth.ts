@@ -34,6 +34,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           where: { email },
         });
 
+        if (user?.role === "USER") {
+          return null;
+        }
+
         if (!user?.password) {
           return null;
         }

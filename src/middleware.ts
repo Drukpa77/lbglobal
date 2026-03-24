@@ -9,12 +9,16 @@ export default auth((req: NextAuthRequest) => {
   const pathname = req.nextUrl.pathname;
   const role = req.auth?.user?.role;
 
-  if ((pathname.startsWith("/dashboard") || pathname.startsWith("/apply")) && !isLoggedIn) {
+  if (pathname.startsWith("/dashboard") && !isLoggedIn) {
     return NextResponse.redirect(new URL("/login", req.nextUrl));
   }
 
-  if (pathname === "/login" && isLoggedIn) {
+  if (pathname === "/login" && isLoggedIn && role !== "USER") {
     return NextResponse.redirect(new URL("/dashboard", req.nextUrl));
+  }
+
+  if (pathname.startsWith("/dashboard") && role === "USER") {
+    return NextResponse.redirect(new URL("/login", req.nextUrl));
   }
 
   if (pathname.startsWith("/dashboard/admin") && role !== "ADMIN") {
@@ -28,7 +32,25 @@ export default auth((req: NextAuthRequest) => {
   }
 
   if (pathname.startsWith("/dashboard/students")) {
+    if (role !== "ADMIN" && role !== "SUB_ADMIN" && role !== "INTERNAL_STAFF") {
+      return NextResponse.redirect(new URL(getDashboardPath(role), req.nextUrl));
+    }
+  }
+
+  if (pathname.startsWith("/dashboard/posts")) {
     if (role !== "ADMIN" && role !== "SUB_ADMIN") {
+      return NextResponse.redirect(new URL(getDashboardPath(role), req.nextUrl));
+    }
+  }
+
+  if (pathname.startsWith("/dashboard/internal-staff")) {
+    if (role !== "ADMIN" && role !== "SUB_ADMIN" && role !== "INTERNAL_STAFF") {
+      return NextResponse.redirect(new URL(getDashboardPath(role), req.nextUrl));
+    }
+  }
+
+  if (pathname.startsWith("/dashboard/communication")) {
+    if (role !== "ADMIN" && role !== "SUB_ADMIN" && role !== "INTERNAL_STAFF") {
       return NextResponse.redirect(new URL(getDashboardPath(role), req.nextUrl));
     }
   }
@@ -36,7 +58,7 @@ export default auth((req: NextAuthRequest) => {
   const isStudentSelfDashboard =
     pathname === "/dashboard/student" || pathname.startsWith("/dashboard/student/");
 
-  if (isStudentSelfDashboard && role === "SUB_ADMIN") {
+  if (isStudentSelfDashboard) {
     return NextResponse.redirect(new URL(getDashboardPath(role), req.nextUrl));
   }
 
@@ -44,5 +66,5 @@ export default auth((req: NextAuthRequest) => {
 });
 
 export const config = {
-  matcher: ["/login", "/dashboard/:path*", "/apply"],
+  matcher: ["/login", "/dashboard/:path*"],
 };

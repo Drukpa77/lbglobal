@@ -1,5 +1,6 @@
 generator client {
   provider = "prisma-client-js"
+  engineType = "binary"
 }
 
 datasource db {
@@ -9,6 +10,7 @@ datasource db {
 
 enum Role {
   USER
+  INTERNAL_STAFF
   SUB_ADMIN
   ADMIN
 }
@@ -34,20 +36,126 @@ enum VisaStatus {
   EXPIRED
 }
 
+enum HomePostMediaType {
+  NONE
+  IMAGE
+  VIDEO
+}
+
+enum PostMediaType {
+  IMAGE
+  VIDEO
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  BLOCKED
+  DONE
+}
+
+enum DocumentCategory {
+  PASSPORT
+  TRANSCRIPT
+  SOP
+  OFFER_LETTER
+  VISA
+  FINANCIAL
+  IDENTITY
+  OTHER
+}
+
+enum DocumentVerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum ContractStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  CANCELLED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum TemplateType {
+  CONTRACT
+  INVOICE
+  FOLLOW_UP
+  GENERAL
+}
+
+enum EmailLogStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+enum ConversationType {
+  DIRECT
+  TEAM
+  STUDENT_THREAD
+}
+
+enum ActivityEntityType {
+  STUDENT
+  TASK
+  DOCUMENT
+  CONTRACT
+  INVOICE
+  MESSAGE
+  ASSIGNMENT
+}
+
 model User {
-  id              String                   @id @default(cuid())
-  name            String?
-  email           String                   @unique
-  emailVerified   DateTime?
-  password        String?
-  role            Role                     @default(USER)
-  createdAt       DateTime                 @default(now())
-  updatedAt       DateTime                 @updatedAt
-  studentProfile  StudentProfile?
-  accounts        Account[]
-  sessions        Session[]
-  submissions     QuestionnaireSubmission[] @relation("StudentSubmissions")
-  assignedReviews QuestionnaireSubmission[] @relation("AssignedSubAdmin")
+  id                      String                   @id @default(cuid())
+  name                    String?
+  jobTitle                String?
+  email                   String                   @unique
+  emailVerified           DateTime?
+  password                String?
+  role                    Role                     @default(USER)
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  studentProfile          StudentProfile?
+  accounts                Account[]
+  sessions                Session[]
+  submissions             QuestionnaireSubmission[] @relation("StudentSubmissions")
+  assignedReviews         QuestionnaireSubmission[] @relation("AssignedSubAdmin")
+  homePosts               HomePost[]
+  managedTeamLinks        StaffTeamMembership[]    @relation("ManagerMemberships")
+  internalTeamLinks       StaffTeamMembership[]    @relation("StaffMemberships")
+  studentAssignments      StudentAssignment[]      @relation("AssignedStudentOwner")
+  createdStudentAssignments StudentAssignment[]    @relation("StudentAssignmentCreator")
+  assignedTasks           Task[]                   @relation("TaskAssignee")
+  createdTasks            Task[]                   @relation("TaskCreator")
+  uploadedDocuments       StudentDocument[]        @relation("DocumentUploader")
+  createdConversations    Conversation[]           @relation("ConversationCreator")
+  conversationMemberships ConversationParticipant[]
+  messagesSent            Message[]                @relation("MessageSender")
+  messageReadStates       MessageRead[]
+  createdTemplates        EmailTemplate[]          @relation("TemplateCreator")
+  createdContracts        Contract[]               @relation("ContractCreator")
+  createdInvoices         Invoice[]                @relation("InvoiceCreator")
+  emailLogs               OutboundEmailLog[]       @relation("EmailLogCreator")
+  activitiesCreated       ActivityLog[]            @relation("ActivityCreator")
+  activitiesTargeted      ActivityLog[]            @relation("ActivityTargetUser")
 }
 
 model StudentProfile {
@@ -71,6 +179,13 @@ model StudentProfile {
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
   user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documents             StudentDocument[]
+  contracts             Contract[]
+  invoices              Invoice[]
+  tasks                 Task[]
+  conversations         Conversation[] @relation("StudentConversation")
+  assignments           StudentAssignment[]
+  activities            ActivityLog[] @relation("ActivityTargetStudent")
 }
 
 model QuestionnaireTemplate {
@@ -100,6 +215,261 @@ model QuestionnaireSubmission {
   student          User                 @relation("StudentSubmissions", fields: [studentId], references: [id], onDelete: Cascade)
   template         QuestionnaireTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
   assignedSubAdmin User?                @relation("AssignedSubAdmin", fields: [assignedToId], references: [id], onDelete: SetNull)
+}
+
+model HomePost {
+  id                  String            @id @default(cuid())
+  title               String
+  slug                String?           @unique
+  content             String
+  contentHtml         String            @default("")
+  mediaType           HomePostMediaType @default(NONE)
+  mediaUrl            String?
+  featuredThumbnail   String?
+  featuredThumbnailAlt String?
+  isPublished         Boolean           @default(false)
+  publishDate         DateTime?
+  metaTitle           String?
+  metaDescription     String?
+  metaKeywords        String?
+  focusKeyword        String?
+  ogImage             String?
+  authorId            String
+  authorNameSnapshot  String            @default("Unknown")
+  authorEmailSnapshot String            @default("")
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  author              User              @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  galleryMedia        PostMedia[]
+
+  @@index([isPublished, publishDate])
+}
+
+model PostMedia {
+  id        String        @id @default(cuid())
+  postId    String
+  url       String
+  mediaType PostMediaType
+  altText   String?
+  sortOrder Int           @default(0)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  post      HomePost      @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId, sortOrder])
+}
+
+model StaffTeamMembership {
+  id              String   @id @default(cuid())
+  managerId       String
+  internalStaffId String
+  createdAt       DateTime @default(now())
+  manager         User     @relation("ManagerMemberships", fields: [managerId], references: [id], onDelete: Cascade)
+  internalStaff   User     @relation("StaffMemberships", fields: [internalStaffId], references: [id], onDelete: Cascade)
+
+  @@unique([managerId, internalStaffId])
+}
+
+model StudentAssignment {
+  id               String         @id @default(cuid())
+  studentProfileId String
+  assignedToId     String
+  assignedById     String
+  notes            String?
+  isActive         Boolean        @default(true)
+  createdAt        DateTime       @default(now())
+  endedAt          DateTime?
+  studentProfile   StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+  assignedTo       User           @relation("AssignedStudentOwner", fields: [assignedToId], references: [id], onDelete: Cascade)
+  assignedBy       User           @relation("StudentAssignmentCreator", fields: [assignedById], references: [id], onDelete: Cascade)
+}
+
+model Task {
+  id               String         @id @default(cuid())
+  title            String
+  description      String?
+  priority         TaskPriority   @default(MEDIUM)
+  status           TaskStatus     @default(TODO)
+  dueDate          DateTime?
+  studentProfileId String
+  assigneeId       String
+  assignerId       String
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  studentProfile   StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+  assignee         User           @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: Cascade)
+  assigner         User           @relation("TaskCreator", fields: [assignerId], references: [id], onDelete: Cascade)
+}
+
+model StudentDocument {
+  id                 String                     @id @default(cuid())
+  studentProfileId   String
+  uploadedById       String
+  category           DocumentCategory           @default(OTHER)
+  title              String
+  originalFileName   String
+  storagePath        String
+  mimeType           String
+  sizeBytes          Int
+  verificationStatus DocumentVerificationStatus @default(PENDING)
+  notes              String?
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+  studentProfile     StudentProfile             @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+  uploadedBy         User                       @relation("DocumentUploader", fields: [uploadedById], references: [id], onDelete: Cascade)
+}
+
+model EmailTemplate {
+  id          String       @id @default(cuid())
+  key         String       @unique
+  name        String
+  type        TemplateType @default(GENERAL)
+  subject     String
+  htmlBody    String
+  placeholders Json?
+  isActive    Boolean      @default(true)
+  createdById String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  createdBy   User         @relation("TemplateCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  contracts   Contract[]
+  invoices    Invoice[]
+}
+
+model Contract {
+  id               String         @id @default(cuid())
+  studentProfileId String
+  templateId       String?
+  createdById      String
+  title            String
+  subject          String
+  recipientEmail   String
+  htmlSnapshot     String
+  status           ContractStatus @default(DRAFT)
+  sentAt           DateTime?
+  acceptedAt       DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  studentProfile   StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+  template         EmailTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  createdBy        User           @relation("ContractCreator", fields: [createdById], references: [id], onDelete: Cascade)
+}
+
+model Invoice {
+  id               String        @id @default(cuid())
+  studentProfileId String
+  templateId       String?
+  createdById      String
+  invoiceNumber    String        @unique
+  title            String
+  subject          String
+  recipientEmail   String
+  currency         String        @default("AUD")
+  subtotal         Float         @default(0)
+  taxAmount        Float         @default(0)
+  totalAmount      Float         @default(0)
+  dueDate          DateTime?
+  status           InvoiceStatus @default(DRAFT)
+  htmlSnapshot     String
+  sentAt           DateTime?
+  paidAt           DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  studentProfile   StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+  template         EmailTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  createdBy        User           @relation("InvoiceCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  lineItems        InvoiceLineItem[]
+}
+
+model InvoiceLineItem {
+  id          String  @id @default(cuid())
+  invoiceId   String
+  description String
+  quantity    Int     @default(1)
+  unitPrice   Float   @default(0)
+  amount      Float   @default(0)
+  createdAt   DateTime @default(now())
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+model OutboundEmailLog {
+  id                String         @id @default(cuid())
+  createdById       String
+  toEmail           String
+  subject           String
+  htmlBody          String
+  templateKey       String?
+  relatedContractId String?
+  relatedInvoiceId  String?
+  status            EmailLogStatus @default(QUEUED)
+  providerMessageId String?
+  errorMessage      String?
+  createdAt         DateTime       @default(now())
+  sentAt            DateTime?
+  createdBy         User           @relation("EmailLogCreator", fields: [createdById], references: [id], onDelete: Cascade)
+}
+
+model Conversation {
+  id               String           @id @default(cuid())
+  type             ConversationType @default(TEAM)
+  title            String?
+  studentProfileId String?
+  createdById      String
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  createdBy        User             @relation("ConversationCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  studentProfile   StudentProfile?  @relation("StudentConversation", fields: [studentProfileId], references: [id], onDelete: SetNull)
+  participants     ConversationParticipant[]
+  messages         Message[]
+}
+
+model ConversationParticipant {
+  id             String       @id @default(cuid())
+  conversationId String
+  userId         String
+  joinedAt       DateTime     @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  senderId       String
+  content        String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         User         @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  reads          MessageRead[]
+}
+
+model MessageRead {
+  id        String   @id @default(cuid())
+  messageId String
+  userId    String
+  readAt    DateTime @default(now())
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+}
+
+model ActivityLog {
+  id                     String             @id @default(cuid())
+  actorId                String
+  targetUserId           String?
+  targetStudentProfileId String?
+  entityType             ActivityEntityType
+  entityId               String
+  action                 String
+  metadata               Json?
+  createdAt              DateTime           @default(now())
+  actor                  User               @relation("ActivityCreator", fields: [actorId], references: [id], onDelete: Cascade)
+  targetUser             User?              @relation("ActivityTargetUser", fields: [targetUserId], references: [id], onDelete: SetNull)
+  targetStudentProfile   StudentProfile?    @relation("ActivityTargetStudent", fields: [targetStudentProfileId], references: [id], onDelete: SetNull)
 }
 
 model Account {

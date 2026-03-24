@@ -227,6 +227,13 @@ async function main() {
     role: Role.SUB_ADMIN,
   });
 
+  const internalStaff = await upsertUser({
+    name: "Internal Staff User",
+    email: "staff@lbglobal.test",
+    password: "StaffPass123!",
+    role: Role.INTERNAL_STAFF,
+  });
+
   const student = await upsertUser({
     name: "Student User",
     email: "student@lbglobal.test",
@@ -247,6 +254,13 @@ async function main() {
       type: "text",
       required: true,
       placeholder: "Enter your full name",
+    },
+    {
+      id: "email",
+      label: "Email",
+      type: "text",
+      required: true,
+      placeholder: "you@example.com",
     },
     {
       id: "phone",
@@ -409,6 +423,75 @@ async function main() {
     where: { id: admin.id },
     data: { name: "Admin User" },
   });
+
+  await prisma.staffTeamMembership.upsert({
+    where: {
+      managerId_internalStaffId: {
+        managerId: subAdmin.id,
+        internalStaffId: internalStaff.id,
+      },
+    },
+    update: {},
+    create: {
+      managerId: subAdmin.id,
+      internalStaffId: internalStaff.id,
+    },
+  });
+
+  const defaultTemplates = [
+    {
+      key: "contract_default",
+      name: "Default Contract Template",
+      type: "CONTRACT",
+      subject: "Study Consultancy Contract - {{studentName}}",
+      htmlBody:
+        "<h2>Consultancy Contract</h2><p>Hello {{studentName}},</p><p>Please review your contract details for {{targetCourse}}.</p><p>Regards,<br/>{{senderName}}</p>",
+      placeholders: ["studentName", "targetCourse", "senderName"],
+    },
+    {
+      key: "invoice_default",
+      name: "Default Invoice Template",
+      type: "INVOICE",
+      subject: "Invoice - {{invoiceNumber}} - {{studentName}}",
+      htmlBody:
+        "<h2>Invoice {{invoiceNumber}}</h2><p>Dear {{studentName}},</p><p>Total amount due: {{currency}} {{totalAmount}}</p><p>Due date: {{dueDate}}</p>",
+      placeholders: ["invoiceNumber", "studentName", "currency", "totalAmount", "dueDate"],
+    },
+    {
+      key: "followup_default",
+      name: "Default Follow-up Template",
+      type: "FOLLOW_UP",
+      subject: "Follow-up on your study application - {{studentName}}",
+      htmlBody:
+        "<p>Hello {{studentName}},</p><p>Just checking in regarding your application progress. Please reply if you need help.</p><p>Regards,<br/>{{senderName}}</p>",
+      placeholders: ["studentName", "senderName"],
+    },
+  ];
+
+  for (const template of defaultTemplates) {
+    await prisma.emailTemplate.upsert({
+      where: { key: template.key },
+      update: {
+        name: template.name,
+        type: template.type,
+        subject: template.subject,
+        htmlBody: template.htmlBody,
+        placeholders: template.placeholders,
+        isActive: true,
+        createdById: admin.id,
+      },
+      create: {
+        key: template.key,
+        name: template.name,
+        type: template.type,
+        subject: template.subject,
+        htmlBody: template.htmlBody,
+        placeholders: template.placeholders,
+        isActive: true,
+        createdById: admin.id,
+      },
+    });
+  }
 }
 
 main()

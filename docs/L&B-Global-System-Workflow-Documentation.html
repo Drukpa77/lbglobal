@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>L&amp;B Global – System Workflow Documentation</title>
+  <style>
+    @media print { .page-break { page-break-before: always; } }
+    body { font-family: 'Segoe UI', Calibri, sans-serif; line-height: 1.5; color: #1a1a1a; max-width: 800px; margin: 0 auto; padding: 2rem; }
+    h1 { font-size: 1.8em; margin-bottom: 0.5em; color: #0f172a; border-bottom: 2px solid #e11d48; padding-bottom: 0.3em; }
+    h2 { font-size: 1.4em; margin-top: 1.5em; margin-bottom: 0.5em; color: #1e293b; }
+    h3 { font-size: 1.15em; margin-top: 1em; margin-bottom: 0.4em; color: #334155; }
+    p { margin: 0.5em 0; }
+    table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.95em; }
+    th, td { border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; }
+    th { background: #f1f5f9; font-weight: 600; color: #334155; }
+    ul, ol { margin: 0.5em 0; padding-left: 1.5em; }
+    li { margin: 0.25em 0; }
+    .toc { margin: 2em 0; }
+    .toc a { color: #2563eb; text-decoration: none; }
+    .toc a:hover { text-decoration: underline; }
+    .toc ul { list-style: none; padding-left: 0; }
+    .toc li { margin: 0.4em 0; }
+    .title-page { text-align: center; padding: 4rem 0; }
+    .title-page h1 { font-size: 2.2em; border: none; }
+    .title-page .subtitle { font-size: 1.2em; color: #64748b; margin-top: 0.5em; }
+    .title-page .date { margin-top: 3rem; color: #94a3b8; font-size: 0.95em; }
+  </style>
+</head>
+<body>
+
+<div class="title-page">
+  <h1>L&amp;B Global</h1>
+  <p class="subtitle">Overseas Education &amp; Visa Consultancy</p>
+  <h2 style="margin-top: 3rem;">System Workflow Documentation</h2>
+  <p style="margin-top: 1rem;">Complete Workflow, Features &amp; Technical Reference</p>
+  <p class="date">Document Version 1.0 – March 2025</p>
+</div>
+
+<div class="page-break"></div>
+
+<h1 id="toc">Table of Contents</h1>
+<nav class="toc">
+  <ol>
+    <li><a href="#1-overview">1. Overview</a></li>
+    <li><a href="#2-user-roles">2. User Roles &amp; Permissions</a></li>
+    <li><a href="#3-workflow">3. Complete Workflow</a>
+      <ul>
+        <li><a href="#3-1-inquiry">3.1 Student Inquiry Submission</a></li>
+        <li><a href="#3-2-staff">3.2 Staff Handling (Admin / Sub-Admin)</a></li>
+        <li><a href="#3-3-profile">3.3 Student Profile Management</a></li>
+        <li><a href="#3-4-docs">3.4 Documents &amp; Verification</a></li>
+        <li><a href="#3-5-contracts">3.5 Contracts</a></li>
+        <li><a href="#3-6-invoices">3.6 Invoices</a></li>
+      </ul>
+    </li>
+    <li><a href="#4-features">4. Features Overview</a></li>
+    <li><a href="#5-dashboards">5. Dashboard Structure by Role</a></li>
+    <li><a href="#6-auth">6. Authentication &amp; Middleware</a></li>
+    <li><a href="#7-data-models">7. Data Models (Database Schema)</a></li>
+    <li><a href="#8-api">8. API Routes</a></li>
+    <li><a href="#9-cron">9. Cron Jobs &amp; Integrations</a></li>
+  </ol>
+</nav>
+
+<div class="page-break"></div>
+
+<h1 id="1-overview">1. Overview</h1>
+<p>L&amp;B Global is a CRM and content management system for an overseas education consultancy. It supports the full student journey from inquiry submission through to enrollment, including internal staff collaboration, document management, contracts, invoices, and a public newsletter/CMS.</p>
+<p><strong>Key principles:</strong></p>
+<ul>
+  <li><strong>No student logins:</strong> Students (applicants) only submit inquiries via the public Apply form. There is no student dashboard or student authentication.</li>
+  <li><strong>Staff-only dashboards:</strong> Admin, Sub-Admin (Agent), and Internal Staff (Case Manager) log in and manage submissions, profiles, tasks, and communication.</li>
+  <li><strong>Role-based access:</strong> Each role has a dedicated dashboard and permissions aligned with their responsibilities.</li>
+</ul>
+
+<div class="page-break"></div>
+
+<h1 id="2-user-roles">2. User Roles &amp; Permissions</h1>
+
+<table>
+  <thead>
+    <tr>
+      <th>Role</th>
+      <th>Label</th>
+      <th>Dashboard Path</th>
+      <th>Permissions</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>ADMIN</strong></td>
+      <td>Admin</td>
+      <td>/dashboard/admin</td>
+      <td>Full access: staff CRUD, analytics, students, newsletter posts, templates, questionnaire config, communication. Can create/edit/delete Admin, Sub-Admin, and Internal Staff accounts.</td>
+    </tr>
+    <tr>
+      <td><strong>SUB_ADMIN</strong></td>
+      <td>Agent</td>
+      <td>/dashboard/sub-admin</td>
+      <td>Assigned and unassigned submissions; team members; own newsletter posts; communication; delegate students to Internal Staff; bulk status updates.</td>
+    </tr>
+    <tr>
+      <td><strong>INTERNAL_STAFF</strong></td>
+      <td>Case Manager</td>
+      <td>/dashboard/internal-staff</td>
+      <td>Only assigned students; tasks; documents (bulk verify); communication; no admin/analytics access.</td>
+    </tr>
+    <tr>
+      <td><strong>USER</strong></td>
+      <td>Applicant</td>
+      <td>N/A (no dashboard)</td>
+      <td>Cannot log in. Submits inquiries only via the public /apply form.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><strong>Auth rule:</strong> USER role cannot sign in. Only ADMIN, SUB_ADMIN, and INTERNAL_STAFF may authenticate.</p>
+
+<h1 id="3-workflow">3. Complete Workflow</h1>
+
+<h2 id="3-1-inquiry">3.1 Student Inquiry Submission</h2>
+<ol>
+  <li>Applicant visits the public <strong>/apply</strong> page.</li>
+  <li>Form fields are driven by the active <strong>QuestionnaireTemplate</strong> plus built-in fields.</li>
+  <li><strong>Required fields:</strong> Full name, Email, Country (from prioritized list), Where did you hear from us?.</li>
+  <li><strong>Where did you hear from us?</strong> options: Higher Perspective, Google Search, Facebook, Instagram, TikTok, Friends/Family, Existing Student, Education Fair, Others.</li>
+  <li>If <strong>Others</strong> is selected, the <strong>Additional note</strong> field becomes mandatory.</li>
+  <li>Submission creates or updates <strong>User</strong> (role USER), <strong>StudentProfile</strong>, and <strong>QuestionnaireSubmission</strong>.</li>
+  <li>Staff email addresses cannot submit; validation blocks them.</li>
+  <li>Confirmation email is queued via the email outbox.</li>
+  <li>Submission status: <strong>SUBMITTED</strong>.</li>
+</ol>
+
+<h2 id="3-2-staff">3.2 Staff Handling (Admin / Sub-Admin)</h2>
+<ol>
+  <li><strong>Admin</strong> can assign submissions to Sub-Admins.</li>
+  <li><strong>Sub-Admins</strong> claim unassigned cases or receive assigned ones.</li>
+  <li><strong>Status progression:</strong> SUBMITTED → UNDER_REVIEW → DOCS_REQUESTED → OFFER_RECEIVED → VISA_GRANTED → REJECTED or ENROLLED.</li>
+  <li>Students can be delegated to Internal Staff via <strong>StudentAssignment</strong>.</li>
+  <li>CSV export of submissions is available (Admin and Sub-Admin).</li>
+</ol>
+
+<h2 id="3-3-profile">3.3 Student Profile Management</h2>
+<p>Created automatically when the first submission is made. Extended with:</p>
+<ul>
+  <li>Visa status, course dates, visa expiry, follow-up dates</li>
+  <li>Documents (upload, verify, bulk verify)</li>
+  <li>Tasks (create, assign, track)</li>
+  <li>Contracts and Invoices</li>
+  <li>Communication threads (student-related)</li>
+</ul>
+<p><strong>Access control:</strong> Sub-Admin sees assigned and unassigned students; Internal Staff sees only assigned students.</p>
+
+<h2 id="3-4-docs">3.4 Documents &amp; Verification</h2>
+<ul>
+  <li><strong>Categories:</strong> PASSPORT, TRANSCRIPT, SOP, OFFER_LETTER, VISA, FINANCIAL, IDENTITY, OTHER.</li>
+  <li><strong>Verification:</strong> PENDING → VERIFIED or REJECTED.</li>
+  <li>Internal Staff can bulk verify documents.</li>
+</ul>
+
+<h2 id="3-5-contracts">3.5 Contracts</h2>
+<ul>
+  <li><strong>Statuses:</strong> DRAFT, SENT, ACCEPTED, REJECTED, CANCELLED.</li>
+  <li>Built from <strong>EmailTemplate</strong> (type CONTRACT) with placeholders like {{studentName}}.</li>
+  <li>Rendered via <strong>template-renderer</strong>.</li>
+</ul>
+
+<h2 id="3-6-invoices">3.6 Invoices</h2>
+<ul>
+  <li><strong>Statuses:</strong> DRAFT, SENT, PAID, OVERDUE, CANCELLED.</li>
+  <li>Uses <strong>InvoiceLineItem</strong> for line items.</li>
+  <li>Totals calculated via <strong>invoice-calculator</strong>.</li>
+</ul>
+
+<div class="page-break"></div>
+
+<h1 id="4-features">4. Features Overview</h1>
+
+<table>
+  <thead>
+    <tr>
+      <th>Feature</th>
+      <th>Description</th>
+      <th>Paths / Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Internal Chat</strong></td>
+      <td>Real-time chat between staff (DIRECT, TEAM, STUDENT_THREAD)</td>
+      <td>/dashboard/communication; ChatPopup (bottom-right); unread count polling; new-message notifications</td>
+    </tr>
+    <tr>
+      <td><strong>Newsletter / CMS</strong></td>
+      <td>SEO-optimized blog/newsletter with slug, meta, OG image, gallery</td>
+      <td>/newsletter (listing); /newsletter/[slug] (article); zoomable images; JSON-LD schema</td>
+    </tr>
+    <tr>
+      <td><strong>Email Templates</strong></td>
+      <td>CONTRACT, INVOICE, FOLLOW_UP, GENERAL with {{placeholder}} support</td>
+      <td>/dashboard/admin/templates; template-renderer</td>
+    </tr>
+    <tr>
+      <td><strong>Lead Sources</strong></td>
+      <td>Analytics by &quot;Where did you hear from us?&quot;</td>
+      <td>/dashboard/admin/lead-sources</td>
+    </tr>
+    <tr>
+      <td><strong>Communication Threads</strong></td>
+      <td>Create TEAM/STUDENT_THREAD; direct chat between staff</td>
+      <td>/dashboard/communication; threads deletable with confirmation</td>
+    </tr>
+    <tr>
+      <td><strong>Reminders</strong></td>
+      <td>Visa expiry, follow-ups, tasks, contracts, invoices</td>
+      <td>RemindersWidget on dashboards; daily cron digest email</td>
+    </tr>
+    <tr>
+      <td><strong>Email Outbox</strong></td>
+      <td>Queue and send outbound emails (dev mode via queueDevEmail)</td>
+      <td>OutboundEmailLog; confirmation, reminders, etc.</td>
+    </tr>
+    <tr>
+      <td><strong>Apply Form</strong></td>
+      <td>Dynamic fields from QuestionnaireTemplate + base fields</td>
+      <td>/apply; hearFrom and additionalNote at bottom; validation</td>
+    </tr>
+    <tr>
+      <td><strong>Delete Confirmations</strong></td>
+      <td>In-app modal for all delete actions (no browser confirm)</td>
+      <td>DeleteWithConfirm, DeleteThreadButton, DeleteStaffButton</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="page-break"></div>
+
+<h1 id="5-dashboards">5. Dashboard Structure by Role</h1>
+
+<h2>Admin (/dashboard/admin)</h2>
+<ul>
+  <li><strong>Overview:</strong> Executive Snapshot, Admin Command Center, Reminders</li>
+  <li><strong>Students:</strong> Priority categories, filters, CSV export, assign to Sub-Admin, delegate to Internal Staff</li>
+  <li><strong>Analytics:</strong> Charts, lead source summary, country/course/intake</li>
+  <li><strong>Staff &amp; Content:</strong> Questionnaire config, templates, communication, newsletter posts, Admin/Sub-Admin/Internal Staff CRUD, job titles, team assignments</li>
+</ul>
+
+<h2>Sub-Admin (/dashboard/sub-admin)</h2>
+<ul>
+  <li><strong>Overview:</strong> Manager Analytics, Risk Board, SLA Breach Alerts, Reminders</li>
+  <li><strong>Students:</strong> Assigned students; filters (all, unassigned, overdue, needs_approval); bulk status update; delegation</li>
+  <li><strong>Team &amp; Operations:</strong> Approval queue, assignment board, newsletter posts, Weekly Manager Report (CSV)</li>
+</ul>
+
+<h2>Internal Staff (/dashboard/internal-staff)</h2>
+<ul>
+  <li><strong>Overview:</strong> Active cases, open tasks, overdue, pending docs</li>
+  <li><strong>Work Queue:</strong> Priority queue, follow-ups, deadlines</li>
+  <li><strong>Tasks &amp; Docs:</strong> Tasks, bulk document verification</li>
+  <li><strong>Students:</strong> Assigned students only, communication threads</li>
+</ul>
+
+<h1 id="6-auth">6. Authentication &amp; Middleware</h1>
+
+<h2>Login</h2>
+<ul>
+  <li>Credentials (email + password)</li>
+  <li>USER role rejected</li>
+  <li>Session with JWT; id and role in token</li>
+  <li>Redirect to /dashboard → getDashboardPath(role)</li>
+</ul>
+
+<h2>Forgot / Reset Password</h2>
+<ul>
+  <li>Forgot: /forgot-password → VerificationToken</li>
+  <li>Reset: /reset-password (token from query)</li>
+</ul>
+
+<h2>Middleware Routes</h2>
+<table>
+  <thead>
+    <tr><th>Path</th><th>Access</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>/dashboard</td><td>Auth required; USER → /login</td></tr>
+    <tr><td>/dashboard/admin</td><td>ADMIN only</td></tr>
+    <tr><td>/dashboard/sub-admin</td><td>ADMIN or SUB_ADMIN</td></tr>
+    <tr><td>/dashboard/internal-staff</td><td>ADMIN, SUB_ADMIN, INTERNAL_STAFF</td></tr>
+    <tr><td>/dashboard/students</td><td>ADMIN, SUB_ADMIN, INTERNAL_STAFF</td></tr>
+    <tr><td>/dashboard/posts</td><td>ADMIN or SUB_ADMIN</td></tr>
+    <tr><td>/dashboard/communication</td><td>ADMIN, SUB_ADMIN, INTERNAL_STAFF</td></tr>
+    <tr><td>/dashboard/student</td><td>Redirects to role dashboard</td></tr>
+  </tbody>
+</table>
+
+<div class="page-break"></div>
+
+<h1 id="7-data-models">7. Data Models (Database Schema)</h1>
+
+<h2>Core Entities</h2>
+<table>
+  <thead>
+    <tr><th>Model</th><th>Key Fields</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>User</td><td>id, name, email, role, password, jobTitle</td></tr>
+    <tr><td>StudentProfile</td><td>userId, visaStatus, visaExpiryDate, nextFollowUpDate, courseStartDate, courseEndDate</td></tr>
+    <tr><td>QuestionnaireSubmission</td><td>studentId, templateId, assignedToId, status, answers, sourceCity, sourceCountry, intendedCourse, intendedIntake</td></tr>
+    <tr><td>QuestionnaireTemplate</td><td>title, questions (JSON), isActive</td></tr>
+    <tr><td>HomePost</td><td>title, slug, content, contentHtml, mediaType, authorId, isPublished, publishDate, SEO fields, galleryMedia</td></tr>
+    <tr><td>PostMedia</td><td>postId, url, mediaType, sortOrder</td></tr>
+  </tbody>
+</table>
+
+<h2>Workflow Entities</h2>
+<table>
+  <thead>
+    <tr><th>Model</th><th>Key Fields</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>StaffTeamMembership</td><td>managerId (Sub-Admin), internalStaffId</td></tr>
+    <tr><td>StudentAssignment</td><td>studentProfileId, assignedToId, assignedById, isActive, notes</td></tr>
+    <tr><td>Task</td><td>title, priority, status, dueDate, studentProfileId, assigneeId</td></tr>
+    <tr><td>StudentDocument</td><td>studentProfileId, category, verificationStatus, storagePath</td></tr>
+    <tr><td>EmailTemplate</td><td>key, name, type (CONTRACT, INVOICE, FOLLOW_UP, GENERAL), subject, htmlBody, placeholders</td></tr>
+    <tr><td>Contract</td><td>studentProfileId, templateId, status, recipientEmail, htmlSnapshot</td></tr>
+    <tr><td>Invoice</td><td>studentProfileId, invoiceNumber, totalAmount, dueDate, status, lineItems</td></tr>
+    <tr><td>InvoiceLineItem</td><td>invoiceId, description, quantity, unitPrice, amount</td></tr>
+    <tr><td>OutboundEmailLog</td><td>toEmail, subject, htmlBody, status (QUEUED, SENT, FAILED)</td></tr>
+  </tbody>
+</table>
+
+<h2>Communication</h2>
+<table>
+  <thead>
+    <tr><th>Model</th><th>Key Fields</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Conversation</td><td>type (DIRECT, TEAM, STUDENT_THREAD), studentProfileId, createdById</td></tr>
+    <tr><td>ConversationParticipant</td><td>conversationId, userId</td></tr>
+    <tr><td>Message</td><td>conversationId, senderId, content</td></tr>
+    <tr><td>MessageRead</td><td>messageId, userId, readAt</td></tr>
+    <tr><td>ActivityLog</td><td>actorId, entityType, entityId, action, metadata</td></tr>
+  </tbody>
+</table>
+
+<h2>Status Enums</h2>
+<ul>
+  <li><strong>SubmissionStatus:</strong> SUBMITTED, UNDER_REVIEW, DOCS_REQUESTED, OFFER_RECEIVED, VISA_GRANTED, REJECTED, ENROLLED</li>
+  <li><strong>VisaStatus:</strong> NOT_STARTED, DOCUMENTS_IN_PROGRESS, APPLIED, INTERVIEW_SCHEDULED, ADDITIONAL_DOCS_REQUESTED, APPROVED, REJECTED, EXPIRED</li>
+  <li><strong>DocumentCategory:</strong> PASSPORT, TRANSCRIPT, SOP, OFFER_LETTER, VISA, FINANCIAL, IDENTITY, OTHER</li>
+  <li><strong>ContractStatus:</strong> DRAFT, SENT, ACCEPTED, REJECTED, CANCELLED</li>
+  <li><strong>InvoiceStatus:</strong> DRAFT, SENT, PAID, OVERDUE, CANCELLED</li>
+  <li><strong>TaskPriority:</strong> LOW, MEDIUM, HIGH, URGENT</li>
+  <li><strong>TaskStatus:</strong> TODO, IN_PROGRESS, BLOCKED, DONE</li>
+</ul>
+
+<div class="page-break"></div>
+
+<h1 id="8-api">8. API Routes</h1>
+
+<table>
+  <thead>
+    <tr><th>Route</th><th>Method</th><th>Purpose</th><th>Access</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>/api/auth/[...nextauth]</td><td>*</td><td>NextAuth handlers</td><td>Public for sign-in</td></tr>
+    <tr><td>/api/chat/users</td><td>GET</td><td>Staff users for chat picker</td><td>Staff (no USER)</td></tr>
+    <tr><td>/api/chat/conversations/direct</td><td>POST</td><td>Get or create direct conversation</td><td>Staff</td></tr>
+    <tr><td>/api/chat/conversations/[id]/messages</td><td>GET</td><td>List messages, mark read</td><td>Participant or ADMIN</td></tr>
+    <tr><td>/api/chat/conversations/[id]/messages</td><td>POST</td><td>Send message</td><td>Participant or ADMIN</td></tr>
+    <tr><td>/api/chat/unread-count</td><td>GET</td><td>Unread chat count (DIRECT)</td><td>Staff</td></tr>
+    <tr><td>/api/notifications/unread-count</td><td>GET</td><td>Unread messages across threads</td><td>Staff</td></tr>
+    <tr><td>/api/students/search</td><td>GET</td><td>Search students (q param)</td><td>Staff</td></tr>
+    <tr><td>/api/submissions/export</td><td>GET</td><td>Export submissions CSV</td><td>ADMIN, SUB_ADMIN</td></tr>
+    <tr><td>/api/sub-admin/report</td><td>GET</td><td>Weekly manager report CSV</td><td>Sub-Admin</td></tr>
+    <tr><td>/api/internal-staff/report</td><td>GET</td><td>Daily work report CSV</td><td>Internal Staff</td></tr>
+    <tr><td>/api/home-posts</td><td>GET</td><td>Published posts (public)</td><td>Public</td></tr>
+    <tr><td>/api/cron/reminders</td><td>GET</td><td>Daily reminder digest</td><td>Vercel Cron (Bearer auth)</td></tr>
+  </tbody>
+</table>
+
+<h1 id="9-cron">9. Cron Jobs &amp; Integrations</h1>
+
+<h2>Cron</h2>
+<ul>
+  <li><strong>Path:</strong> /api/cron/reminders</li>
+  <li><strong>Schedule:</strong> 0 9 * * * (9:00 AM daily)</li>
+  <li><strong>Auth:</strong> CRON_SECRET Bearer token</li>
+  <li><strong>Action:</strong> Builds reminders per staff user, sends digest via email outbox</li>
+</ul>
+
+<h2>External Links</h2>
+<ul>
+  <li>Footer &quot;WhatsApp Us&quot; CTA links to Apply page (no direct WhatsApp URL in app)</li>
+</ul>
+
+<hr style="margin-top: 3rem; border: none; border-top: 1px solid #e2e8f0;" />
+<p style="font-size: 0.9em; color: #64748b;">L&amp;B Global System Workflow Documentation – End of Document</p>
+
+</body>
+</html>

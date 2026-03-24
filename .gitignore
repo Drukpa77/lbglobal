@@ -33,9 +33,26 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# local databases and prisma artifacts
+prisma/*.db
+prisma/*.db-journal
+prisma/*.sqlite
+prisma/*.sqlite-journal
+
+# test outputs
+test-results/
+playwright-report/
+
+# runtime uploads
+public/student-docs/
+
 # vercel
 .vercel
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# editor / local files
+.idea/
+.vscode/

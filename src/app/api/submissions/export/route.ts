@@ -34,11 +34,35 @@ export async function GET(request: Request) {
   const submissions = await prisma.questionnaireSubmission.findMany({
     where,
     include: {
-      student: true,
+      student: {
+        include: { studentProfile: true },
+      },
       assignedSubAdmin: true,
     },
     orderBy: { submittedAt: "desc" },
   });
+
+  const profileIds = submissions
+    .map((item) => item.student.studentProfile?.id)
+    .filter((id): id is string => Boolean(id));
+  const [assignments, tasks] = await Promise.all([
+    prisma.studentAssignment.findMany({
+      where: { studentProfileId: { in: profileIds }, isActive: true },
+      include: { assignedTo: { select: { name: true, email: true } } },
+    }),
+    prisma.task.groupBy({
+      by: ["studentProfileId"],
+      where: {
+        studentProfileId: { in: profileIds },
+        status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] },
+      },
+      _count: { _all: true },
+    }),
+  ]);
+  const assignmentByProfile = new Map(
+    assignments.map((item) => [item.studentProfileId, item.assignedTo.name ?? item.assignedTo.email]),
+  );
+  const taskCountByProfile = new Map(tasks.map((item) => [item.studentProfileId, item._count._all]));
 
   const rows = [
     [
@@ -51,6 +75,8 @@ export async function GET(request: Request) {
       "course",
       "intake",
       "assignedAgent",
+      "delegatedInternalStaff",
+      "openTaskCount",
       "submittedAt",
     ].join(","),
     ...submissions.map((item) =>
@@ -64,6 +90,16 @@ export async function GET(request: Request) {
         csvCell(item.intendedCourse ?? ""),
         csvCell(item.intendedIntake ?? ""),
         csvCell(item.assignedSubAdmin?.name ?? item.assignedSubAdmin?.email ?? ""),
+        csvCell(
+          item.student.studentProfile
+            ? (assignmentByProfile.get(item.student.studentProfile.id) ?? "")
+            : "",
+        ),
+        csvCell(
+          item.student.studentProfile
+            ? String(taskCountByProfile.get(item.student.studentProfile.id) ?? 0)
+            : "0",
+        ),
         csvCell(item.submittedAt.toISOString()),
       ].join(","),
     ),

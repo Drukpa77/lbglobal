@@ -10,20 +10,25 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
-    "db:seed": "prisma db seed"
+    "db:seed": "prisma db seed",
+    "db:backfill-posts": "node prisma/backfill-home-posts.js"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.1",
     "@prisma/client": "^6.19.2",
     "bcryptjs": "^3.0.3",
+    "framer-motion": "^12.34.4",
+    "lucide-react": "^0.576.0",
     "next": "16.1.6",
     "next-auth": "^5.0.0-beta.30",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "recharts": "^3.7.0",
+    "sharp": "^0.34.5",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
