@@ -47,6 +47,11 @@ npm run db:seed
 5. Start the app:
 
 ```bash
+npm docker start "name of DB"
+```
+
+
+```bash
 npm run dev
 ```
 
