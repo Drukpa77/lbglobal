@@ -15,7 +15,7 @@ export function DashboardTabBar({
   const pathname = usePathname();
 
   return (
-    <nav className="sticky top-0 z-10 -mx-4 -mt-2 mb-6 flex flex-wrap gap-2 border-b border-slate-200 bg-white px-4 py-3 sm:-mx-6 sm:px-6">
+    <nav className="sticky top-0 z-10 -mx-4 -mt-2 mb-6 flex gap-2 overflow-x-auto border-b border-slate-200 bg-white px-4 py-3 sm:-mx-6 sm:flex-wrap sm:overflow-visible sm:px-6">
       {tabs.map(({ id, label, count }) => {
         const isActive = activeTab === id;
         return (

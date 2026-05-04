@@ -14,6 +14,8 @@ const typeLabels: Record<ReminderType, string> = {
   task_due: "Task",
   contract_reminder: "Contract",
   invoice_reminder: "Invoice",
+  stage_stalled: "Stage Stalled",
+  stage_info: "Stage",
 };
 
 type Props = {
@@ -36,17 +38,17 @@ export function RemindersWidget({ reminders, title = "Reminders", maxItems = 10 
       <p className="mt-0.5 text-xs text-slate-500">
         {reminders.length} reminder{reminders.length !== 1 ? "s" : ""} requiring attention
       </p>
-      <ul className="mt-3 space-y-2">
+      <ul className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
         {displayed.map((reminder) => (
           <li
             key={reminder.id}
-            className={`rounded-lg border-l-4 p-3 ${severityStyles[reminder.severity]}`}
+            className={`rounded-lg border-l-4 p-3 ${severityStyles[reminder.severity]} min-h-28`}
           >
             <Link
               href={reminder.link}
-              className="block transition hover:opacity-90"
+              className="block h-full transition hover:opacity-90"
             >
-              <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="flex h-full flex-col justify-between gap-2">
                 <div className="min-w-0 flex-1">
                   <span className="inline-block rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-700">
                     {typeLabels[reminder.type]}
@@ -54,9 +56,10 @@ export function RemindersWidget({ reminders, title = "Reminders", maxItems = 10 
                   <p className="mt-1 text-sm font-medium text-slate-900">{reminder.title}</p>
                   <p className="mt-0.5 text-xs text-slate-600 line-clamp-2">{reminder.description}</p>
                 </div>
-                <span className="shrink-0 text-xs text-slate-500">
-                  {reminder.date.toLocaleDateString()}
-                </span>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="shrink-0 text-xs text-slate-500">{reminder.date.toLocaleDateString()}</span>
+                  <span className="text-[11px] font-medium text-blue-700">Open</span>
+                </div>
               </div>
             </Link>
           </li>

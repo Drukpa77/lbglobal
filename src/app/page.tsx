@@ -29,36 +29,42 @@ export const metadata: Metadata = {
 };
 
 async function getHomePosts(): Promise<HomePostItem[]> {
-  const posts = await prisma.homePost.findMany({
-    where: {
-      isPublished: true,
-      publishDate: { not: null, lte: new Date() },
-      slug: { not: null },
-    },
-    select: {
-      id: true,
-      title: true,
-      slug: true,
-      content: true,
-      mediaType: true,
-      mediaUrl: true,
-      featuredThumbnail: true,
-      featuredThumbnailAlt: true,
-      publishDate: true,
-      createdAt: true,
-      authorNameSnapshot: true,
-      authorEmailSnapshot: true,
-      metaDescription: true,
-    },
-    orderBy: { publishDate: "desc" },
-    take: 8,
-  });
+  try {
+    const posts = await prisma.homePost.findMany({
+      where: {
+        isPublished: true,
+        publishDate: { not: null, lte: new Date() },
+        slug: { not: null },
+      },
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        content: true,
+        mediaType: true,
+        mediaUrl: true,
+        featuredThumbnail: true,
+        featuredThumbnailAlt: true,
+        publishDate: true,
+        createdAt: true,
+        authorNameSnapshot: true,
+        authorEmailSnapshot: true,
+        metaDescription: true,
+      },
+      orderBy: { publishDate: "desc" },
+      take: 8,
+    });
 
-  return posts.map((post) => ({
-    ...post,
-    publishDate: post.publishDate?.toISOString() ?? null,
-    createdAt: post.createdAt.toISOString(),
-  }));
+    return posts.map((post) => ({
+      ...post,
+      publishDate: post.publishDate?.toISOString() ?? null,
+      createdAt: post.createdAt.toISOString(),
+    }));
+  } catch (error) {
+    // Keep the homepage available during local setup if the DB is offline.
+    console.error("Unable to load home posts from database.", error);
+    return [];
+  }
 }
 
 export default async function Home() {

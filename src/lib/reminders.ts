@@ -2,13 +2,16 @@ import type { Role } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { buildSubmissionWhere } from "@/lib/submission-filters";
+import { caseStageLabel, isTerminalStage } from "@/lib/case-stage";
 
 export type ReminderType =
   | "followup"
   | "visa_expiry"
   | "task_due"
   | "contract_reminder"
-  | "invoice_reminder";
+  | "invoice_reminder"
+  | "stage_stalled"
+  | "stage_info";
 
 export type ReminderSeverity = "info" | "warning" | "urgent";
 
@@ -27,6 +30,8 @@ export type Reminder = {
 const VISA_EXPIRY_DAYS = 90;
 const FOLLOWUP_OVERDUE_DAYS = 0;
 const TASK_DUE_DAYS = 3;
+const STAGE_STALLED_WARN_DAYS = 14;
+const STAGE_STALLED_URGENT_DAYS = 30;
 
 function daysUntil(date: Date, from: Date): number {
   const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -60,6 +65,18 @@ export async function getRemindersForUser(
     const studentName = profile.user.name ?? profile.user.email;
     const link = "/dashboard/student";
 
+    addReminder({
+      id: `stage-${profile.id}`,
+      type: "stage_info",
+      title: "Your case stage",
+      description: `Currently at: ${caseStageLabel(profile.caseStage)}`,
+      studentId,
+      studentName,
+      link: "/dashboard/student",
+      date: profile.caseStageUpdatedAt,
+      severity: "info",
+    });
+
     if (profile.visaExpiryDate) {
       const days = daysUntil(profile.visaExpiryDate, now);
       if (days <= VISA_EXPIRY_DAYS && days >= 0) {
@@ -70,7 +87,7 @@ export async function getRemindersForUser(
           description: `Your visa expires in ${days} days (${profile.visaExpiryDate.toLocaleDateString()})`,
           studentId,
           studentName,
-          link,
+          link: "/dashboard/student?focus=visa",
           date: profile.visaExpiryDate,
           severity: days <= 30 ? "urgent" : days <= 60 ? "warning" : "info",
         });
@@ -82,7 +99,7 @@ export async function getRemindersForUser(
           description: `Your visa expired ${Math.abs(days)} days ago`,
           studentId,
           studentName,
-          link,
+          link: "/dashboard/student?focus=visa",
           date: profile.visaExpiryDate,
           severity: "urgent",
         });
@@ -97,7 +114,7 @@ export async function getRemindersForUser(
         description: `Follow-up was due ${profile.nextFollowUpDate.toLocaleDateString()}`,
         studentId,
         studentName,
-        link,
+        link: "/dashboard/student?focus=followup",
         date: profile.nextFollowUpDate,
         severity: "warning",
       });
@@ -121,7 +138,7 @@ export async function getRemindersForUser(
           description: `${c.title} – check your email for the acceptance link`,
           studentId,
           studentName,
-          link: "/dashboard/student",
+          link: `/dashboard/contracts/${c.id}/preview`,
           date: c.createdAt,
           severity: "warning",
         });
@@ -149,7 +166,7 @@ export async function getRemindersForUser(
           description: `${inv.title} – due ${inv.dueDate.toLocaleDateString()}${isOverdue ? ` (${Math.abs(days)} days overdue)` : ""}`,
           studentId,
           studentName,
-          link: "/dashboard/student",
+          link: "/dashboard/student?focus=invoice",
           date: inv.dueDate,
           severity: isOverdue ? "urgent" : days <= 3 ? "warning" : "info",
         });
@@ -221,7 +238,7 @@ export async function getRemindersForUser(
           description: `${studentName} – ${profile.nextFollowUpDate.toLocaleDateString()}${days < 0 ? ` (${Math.abs(days)} days overdue)` : ""}`,
           studentId,
           studentName,
-          link,
+          link: `${link}#profile`,
           date: profile.nextFollowUpDate,
           severity: days < -3 ? "urgent" : "warning",
         });
@@ -238,9 +255,26 @@ export async function getRemindersForUser(
           description: `${studentName} – ${profile.visaExpiryDate.toLocaleDateString()}${days < 0 ? ` (expired)` : ` (${days} days)`}`,
           studentId,
           studentName,
-          link,
+          link: `${link}#profile`,
           date: profile.visaExpiryDate,
           severity: days <= 0 ? "urgent" : days <= 30 ? "warning" : "info",
+        });
+      }
+    }
+
+    if (!isTerminalStage(profile.caseStage)) {
+      const stalledDays = -daysUntil(profile.caseStageUpdatedAt, now);
+      if (stalledDays >= STAGE_STALLED_WARN_DAYS) {
+        addReminder({
+          id: `stage-stalled-${profile.id}`,
+          type: "stage_stalled",
+          title: "Case stage stalled",
+          description: `${studentName} has been at "${caseStageLabel(profile.caseStage)}" for ${stalledDays} days`,
+          studentId,
+          studentName,
+          link: `${link}#case-stage`,
+          date: profile.caseStageUpdatedAt,
+          severity: stalledDays >= STAGE_STALLED_URGENT_DAYS ? "urgent" : "warning",
         });
       }
     }
@@ -274,7 +308,7 @@ export async function getRemindersForUser(
         description: `${task.title} – ${studentName} – ${task.dueDate.toLocaleDateString()}`,
         studentId: task.studentProfile.user.id,
         studentName,
-        link: `/dashboard/students/${task.studentProfile.user.id}`,
+        link: `/dashboard/students/${task.studentProfile.user.id}#tasks`,
         date: task.dueDate,
         severity: days < 0 ? "urgent" : days === 0 ? "warning" : "info",
       });

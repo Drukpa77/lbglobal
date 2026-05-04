@@ -22,18 +22,50 @@
 
 # misc
 .DS_Store
+Thumbs.db
+Desktop.ini
+
+# certificates and keys (never commit)
 *.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.cer
+*.crt
+id_rsa
+id_rsa.pub
+*.pub
+
+# cloud / OAuth JSON (often contain private keys or client secrets)
+credentials.json
+client_secret*.json
+google-services.json
+*serviceAccount*.json
+*-firebase-adminsdk*.json
 
 # debug
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+*.log
 
-# env files (can opt-in for committing if needed)
-.env*
+# env and local secrets — real values stay out of git; template is tracked
+.env
+.env.*
+!.env.example
 
-# local databases and prisma artifacts
+# Cursor MCP config may store API keys / tokens
+.cursor/mcp.json
+
+# local databases (any path)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite-journal
+
+# prisma default sqlite paths (redundant with *.db but explicit)
 prisma/*.db
 prisma/*.db-journal
 prisma/*.sqlite
@@ -43,8 +75,9 @@ prisma/*.sqlite-journal
 test-results/
 playwright-report/
 
-# runtime uploads
+# user-uploaded files when stored locally (sensitive / large)
 public/student-docs/
+public/uploads/
 
 # vercel
 .vercel

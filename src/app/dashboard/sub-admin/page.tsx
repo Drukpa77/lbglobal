@@ -1,18 +1,26 @@
-import type { SubmissionStatus } from "@prisma/client";
+import type { CaseStage, SubmissionStatus } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
+import { ContributionLeaderboard } from "@/components/contribution-leaderboard";
 import { DashboardTabBar } from "@/components/dashboard-tab-bar";
 import { RemindersWidget } from "@/components/reminders-widget";
-import { SubAdminHelp } from "@/components/sub-admin-help";
+import { getContributions } from "@/lib/contributions";
 import { prisma } from "@/lib/prisma";
 import { getRemindersForUser } from "@/lib/reminders";
 import { getDashboardPath } from "@/lib/roles";
 import { buildSubmissionWhere } from "@/lib/submission-filters";
 import { formatSubmissionStatus, submissionStatuses } from "@/lib/submission";
 import { formatVisaStatus, formatYearsLeft } from "@/lib/student-tracking";
+import {
+  allCaseStages,
+  caseStageLabel,
+  caseStageOrder,
+  caseStageTerminals,
+  caseStageTone,
+} from "@/lib/case-stage";
 
 type SearchParams = Promise<{
   search?: string;
@@ -20,12 +28,17 @@ type SearchParams = Promise<{
   country?: string;
   course?: string;
   queue?: string;
+  stage?: string;
   tab?: string;
 }>;
 
 export default async function SubAdminDashboardPage(props: { searchParams: SearchParams }) {
   const searchParams = await props.searchParams;
-  const tab = (searchParams.tab ?? "overview") as "overview" | "students" | "team";
+  const tab = (searchParams.tab ?? "overview") as
+    | "overview"
+    | "students"
+    | "team"
+    | "contributions";
   const session = await auth();
 
   if (!session?.user) {
@@ -45,6 +58,9 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     queueRaw === "unassigned" || queueRaw === "overdue" || queueRaw === "needs_approval"
       ? queueRaw
       : "all";
+  const stageRaw = (searchParams.stage ?? "") as CaseStage | "";
+  const stageFilter: CaseStage | "" =
+    stageRaw && (allCaseStages as string[]).includes(stageRaw) ? stageRaw : "";
 
   const scopedWhere = buildSubmissionWhere({
     role: session.user.role,
@@ -60,7 +76,19 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   const trendWindowStart = new Date(today);
   trendWindowStart.setDate(trendWindowStart.getDate() - 56);
 
-  const [reminders, submissions, trendSubmissions, pendingReviews, offersInProgress, homePosts, teamMembers, activeAssignments, openTaskCount, allInternalStaff] =
+  const [
+    reminders,
+    submissions,
+    trendSubmissions,
+    pendingReviews,
+    offersInProgress,
+    homePosts,
+    teamMembers,
+    activeAssignments,
+    openTaskCount,
+    allInternalStaff,
+    stagePipelineCounts,
+  ] =
     await Promise.all([
       getRemindersForUser(session.user.role as "ADMIN" | "SUB_ADMIN", session.user.id),
       prisma.questionnaireSubmission.findMany({
@@ -159,7 +187,35 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
         select: { id: true, name: true, email: true },
         orderBy: { name: "asc" },
       }),
+      prisma.studentProfile.groupBy({
+        by: ["caseStage"],
+        where:
+          session.user.role === "ADMIN"
+            ? undefined
+            : {
+                user: {
+                  submissions: {
+                    some: {
+                      OR: [
+                        { assignedToId: session.user.id },
+                        { assignedToId: null },
+                      ],
+                    },
+                  },
+                },
+              },
+        _count: { _all: true },
+      }),
     ]);
+
+  const stageCountMap = new Map<string, number>(
+    stagePipelineCounts.map((row) => [row.caseStage, row._count._all]),
+  );
+  const stageCounts = allCaseStages.map((stage) => ({
+    stage,
+    count: stageCountMap.get(stage) ?? 0,
+  }));
+  const stageTotal = stageCounts.reduce((sum, item) => sum + item.count, 0);
 
   const assignedStudents = new Set(submissions.map((item) => item.studentId)).size;
   const studentProfileIds = submissions
@@ -237,9 +293,12 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   });
   const autoFollowUpItems = latestSubmissionPerStudent.filter((item) => {
     const visaExpiryDate = item.student.studentProfile?.visaExpiryDate;
-    if (!visaExpiryDate) return false;
-    const days = daysUntilDate(visaExpiryDate, today);
-    return days >= 120 && days <= 150;
+    const nextFollowUpDate = item.student.studentProfile?.nextFollowUpDate;
+    const visaDays = visaExpiryDate ? daysUntilDate(visaExpiryDate, today) : null;
+    const followUpDays = nextFollowUpDate ? daysUntilDate(nextFollowUpDate, today) : null;
+    const visaWindow = visaDays !== null && visaDays >= 120 && visaDays <= 150;
+    const followUpWindow = followUpDays !== null && followUpDays >= 120 && followUpDays <= 150;
+    return visaWindow || followUpWindow;
   });
   const pendingItems = latestSubmissionPerStudent.filter((item) =>
     ["SUBMITTED", "UNDER_REVIEW", "DOCS_REQUESTED"].includes(item.status),
@@ -281,6 +340,9 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     ...pendingDocumentProfiles.map((item) => item.studentProfileId),
   ]);
   const filteredSubmissions = submissions.filter((submission) => {
+    if (stageFilter && submission.student.studentProfile?.caseStage !== stageFilter) {
+      return false;
+    }
     if (queueFilter === "unassigned") return submission.assignedToId === null;
     if (queueFilter === "overdue") {
       const nextFollowUpDate = submission.student.studentProfile?.nextFollowUpDate;
@@ -321,32 +383,38 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     const profileId = item.student.studentProfile?.id;
     return profileId ? approvalProfileSet.has(profileId) : false;
   });
-  const slaBreachItems = latestSubmissionPerStudent.filter((item) => {
-    const pendingTooLong =
-      ["SUBMITTED", "UNDER_REVIEW", "DOCS_REQUESTED"].includes(item.status) &&
-      daysUntilDate(today, item.submittedAt) > 7;
-    const overdueFollowUp = item.student.studentProfile?.nextFollowUpDate
-      ? daysUntilDate(item.student.studentProfile.nextFollowUpDate, today) < -3
-      : false;
-    return pendingTooLong || overdueFollowUp;
-  });
-
+  const pendingApprovalsPreview = pendingDocRiskItems.slice(0, 2).map(
+    (item) => item.student.name ?? item.student.email,
+  );
+  const unassignedPreview = unassignedItems.slice(0, 2).map(
+    (item) => item.student.name ?? item.student.email,
+  );
+  const teamOverloadedPreview = staffWorkloads
+    .filter((staff) => staff.openTasks >= 8 || staff.activeCases >= 15)
+    .slice(0, 2)
+    .map((staff) => `${staff.name} - ${staff.openTasks} tasks / ${staff.activeCases} cases`);
+  const overdueFollowUpsPreview = latestSubmissionPerStudent
+    .filter((item) => {
+      const next = item.student.studentProfile?.nextFollowUpDate;
+      return next ? daysUntilDate(next, today) < 0 : false;
+    })
+    .slice(0, 2)
+    .map((item) => item.student.name ?? item.student.email);
+  const teamMembersPreview = teamMembers
+    .slice(0, 2)
+    .map((member) => member.internalStaff.name ?? member.internalStaff.email);
   return (
     <section className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">Dashboard</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          View assigned students, track applications, and manage team operations.
-        </p>
       </div>
-
-      <SubAdminHelp />
 
       <DashboardTabBar
         tabs={[
           { id: "overview", label: "Overview" },
           { id: "students", label: "Students", count: assignedStudents },
           { id: "team", label: "Team & Operations" },
+          { id: "contributions", label: "Contributions" },
         ]}
         activeTab={tab}
       />
@@ -359,11 +427,109 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
           )}
 
           <section className="grid gap-4 md:grid-cols-5">
-            <StatCard title="Pending Approvals" value={String(pendingApprovalsCount)} />
-            <StatCard title="Unassigned Cases" value={String(unassignedItems.length)} />
-            <StatCard title="Team Overloaded" value={String(overloadedStaffCount)} />
-            <StatCard title="Overdue Follow-ups" value={String(overdueFollowUpsCount)} />
-            <StatCard title="Team Members" value={String(teamMembers.length)} />
+            <StatCard
+              title="Pending Approvals"
+              value={String(pendingApprovalsCount)}
+              preview={pendingApprovalsPreview}
+            />
+            <StatCard
+              title="Unassigned Cases"
+              value={String(unassignedItems.length)}
+              preview={unassignedPreview}
+            />
+            <StatCard
+              title="Team Overloaded"
+              value={String(overloadedStaffCount)}
+              preview={teamOverloadedPreview}
+            />
+            <StatCard
+              title="Overdue Follow-ups"
+              value={String(overdueFollowUpsCount)}
+              preview={overdueFollowUpsPreview}
+            />
+            <StatCard
+              title="Team Members"
+              value={String(teamMembers.length)}
+              preview={teamMembersPreview}
+            />
+          </section>
+
+          <section className="rounded-lg border bg-white p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-semibold">Case Stage Funnel</h2>
+                <p className="mt-1 text-xs text-gray-600">
+                  {stageTotal} student{stageTotal === 1 ? "" : "s"} across the workflow
+                </p>
+              </div>
+            </div>
+            <div className="mt-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Funnel view</p>
+              <ul className="mt-2 space-y-1.5">
+                {caseStageOrder.map((stage) => {
+                  const item = stageCounts.find((c) => c.stage === stage);
+                  const count = item?.count ?? 0;
+                  const pct = stageTotal === 0 ? 0 : Math.round((count / stageTotal) * 100);
+                  return (
+                    <li key={`${stage}-funnel`} className="flex items-center gap-3">
+                      <div className="w-48 shrink-0 text-xs font-medium text-gray-700">
+                        {caseStageLabel(stage)}
+                      </div>
+                      <div className="relative h-5 flex-1 overflow-hidden rounded-md bg-gray-100">
+                        <div
+                          className="h-full rounded-md bg-gradient-to-r from-rose-400 to-blue-500"
+                          style={{ width: `${Math.max(pct, count > 0 ? 2 : 0)}%` }}
+                        />
+                      </div>
+                      <div className="w-20 shrink-0 text-right text-xs font-semibold text-gray-700">
+                        {count} ({pct}%)
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+
+            <div className="mt-4">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Workflow stages</p>
+              <div className="mt-2 flex gap-2 overflow-x-auto pb-2">
+                {caseStageOrder.map((stage) => {
+                  const item = stageCounts.find((c) => c.stage === stage);
+                  const count = item?.count ?? 0;
+                  return (
+                    <article
+                      key={stage}
+                      className={`min-w-[160px] rounded-md border p-3 ${caseStageTone(stage)}`}
+                    >
+                      <p className="text-[11px] font-semibold uppercase tracking-wide opacity-80">
+                        {caseStageLabel(stage)}
+                      </p>
+                      <p className="mt-1 text-xl font-semibold">{count}</p>
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="mt-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Outcomes / end states</p>
+              <div className="mt-2 flex gap-2 overflow-x-auto pb-2">
+                {caseStageTerminals.map((stage) => {
+                  const item = stageCounts.find((c) => c.stage === stage);
+                  const count = item?.count ?? 0;
+                  return (
+                    <article
+                      key={stage}
+                      className={`min-w-[160px] rounded-md border p-3 ${caseStageTone(stage)}`}
+                    >
+                      <p className="text-[11px] font-semibold uppercase tracking-wide opacity-80">
+                        {caseStageLabel(stage)}
+                      </p>
+                      <p className="mt-1 text-xl font-semibold">{count}</p>
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
           </section>
 
           <section className="rounded-lg border bg-white p-4">
@@ -380,7 +546,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
               <StatCard title="Conversion Rate (Enrolled)" value={`${conversionRate}%`} />
               <StatCard title="Pending Ratio" value={`${pendingRatio}%`} />
               <StatCard title="Avg Review Time" value={`${avgReviewHours}h`} />
-              <StatCard title="Escalation Queue" value={String(slaBreachItems.length)} />
+              <StatCard title="Active Cases" value={String(pendingItems.length + offerInProgressItems.length)} />
             </div>
             <div className="mt-3 grid gap-2 md:grid-cols-4">
               {trendBuckets.map((bucket) => (
@@ -418,41 +584,6 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
               </div>
             </article>
 
-            <article className="rounded-lg border bg-white p-4">
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="text-sm font-semibold">SLA Breach Alerts</h2>
-                <p className="text-xs text-gray-600">{slaBreachItems.length} flagged</p>
-              </div>
-              {slaBreachItems.length === 0 ? (
-                <p className="mt-2 text-sm text-gray-600">No SLA breaches right now.</p>
-              ) : (
-                <ul className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1">
-                  {slaBreachItems.map((item) => (
-                    <li key={item.id} className="rounded-md border border-gray-200 p-2">
-                      <p className="text-sm font-medium">{item.student.name ?? item.student.email}</p>
-                      <p className="text-xs text-gray-600">
-                        {formatSubmissionStatus(item.status)} · submitted {item.submittedAt.toLocaleDateString()}
-                      </p>
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <Link href={`/dashboard/students/${item.studentId}`} className="rounded-md border px-2 py-1 text-xs">
-                          Open
-                        </Link>
-                        <form action={escalateSubmissionAction}>
-                          <input type="hidden" name="submissionId" value={item.id} />
-                          <input type="hidden" name="reason" value="SLA breach alert from sub-admin dashboard" />
-                          <button
-                            type="submit"
-                            className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-700"
-                          >
-                            Escalate
-                          </button>
-                        </form>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </article>
           </section>
         </div>
       )}
@@ -482,6 +613,36 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
           </section>
 
           <section className="rounded-lg border bg-white p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold">Filter by Case Stage</h2>
+              <p className="text-xs text-gray-600">
+                {stageFilter
+                  ? `Showing: ${caseStageLabel(stageFilter as CaseStage)}`
+                  : "Showing all stages"}
+              </p>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <StageFilterChip label="All Stages" stage="" current={stageFilter} />
+              {caseStageOrder.map((stage) => (
+                <StageFilterChip
+                  key={stage}
+                  label={caseStageLabel(stage)}
+                  stage={stage}
+                  current={stageFilter}
+                />
+              ))}
+              {caseStageTerminals.map((stage) => (
+                <StageFilterChip
+                  key={stage}
+                  label={caseStageLabel(stage)}
+                  stage={stage}
+                  current={stageFilter}
+                />
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-lg border bg-white p-4">
             <h2 className="text-sm font-semibold">Students Categorized by Priority</h2>
             <p className="mt-1 text-xs text-gray-600">
               Click any student to open profile and update details.
@@ -494,7 +655,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                   emptyLabel="No students with upcoming visa expiry."
                 />
                 <CategoryCard
-                  title="Auto Follow-up (Visa expiring in 4-5 months)"
+                  title="Auto Follow-up (Visa or follow-up in 4-5 months)"
                   items={autoFollowUpItems}
                   emptyLabel="No students currently in the 4-5 month follow-up window."
                 />
@@ -624,6 +785,15 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                         <p className="text-xs text-gray-600">
                           Current status: {formatSubmissionStatus(submission.status)}
                         </p>
+                        {submission.student.studentProfile ? (
+                          <p className="mt-1">
+                            <span
+                              className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${caseStageTone(submission.student.studentProfile.caseStage)}`}
+                            >
+                              Stage: {caseStageLabel(submission.student.studentProfile.caseStage)}
+                            </span>
+                          </p>
+                        ) : null}
                         <p className="text-xs text-gray-600">
                           Visa:{" "}
                           {submission.student.studentProfile
@@ -860,7 +1030,104 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
           </div>
         </div>
       )}
+
+      {/* ── CONTRIBUTIONS TAB ──────────────────────────────────── */}
+      {tab === "contributions" && <SubAdminContributionsTabPanel />}
     </section>
+  );
+}
+
+async function SubAdminContributionsTabPanel() {
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+
+  const cases =
+    session.user.role === "ADMIN"
+      ? await prisma.studentProfile.findMany({
+          include: { user: { select: { id: true, name: true, email: true } } },
+          orderBy: { updatedAt: "desc" },
+          take: 20,
+        })
+      : await prisma.questionnaireSubmission.findMany({
+          where: {
+            OR: [{ assignedToId: session.user.id }, { assignedToId: null }],
+            student: { studentProfile: { isNot: null } },
+          },
+          select: {
+            student: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                studentProfile: { select: { id: true } },
+              },
+            },
+          },
+          orderBy: { updatedAt: "desc" },
+          take: 30,
+        }).then((rows) => {
+          const seen = new Set<string>();
+          return rows
+            .map((row) => row.student)
+            .filter((student) => {
+              const profileId = student.studentProfile?.id;
+              if (!profileId || seen.has(profileId)) return false;
+              seen.add(profileId);
+              return true;
+            })
+            .map((student) => ({
+              id: student.studentProfile!.id,
+              user: { id: student.id, name: student.name, email: student.email },
+            }));
+        });
+
+  return (
+    <div className="space-y-6">
+      <section className="rounded-lg border bg-white p-4">
+        <h2 className="text-sm font-semibold">Case-wise Contributions</h2>
+        <p className="mt-1 text-xs text-gray-600">
+          Contribution is shown separately for each student case.
+        </p>
+      </section>
+      {cases.length === 0 ? (
+        <section className="rounded-lg border bg-white p-4">
+          <p className="text-sm text-gray-600">No student cases available yet.</p>
+        </section>
+      ) : (
+        await Promise.all(
+          cases.map(async (studentProfile) => {
+            const data = await getContributions({ studentProfileId: studentProfile.id });
+            return (
+              <section key={studentProfile.id} className="space-y-3">
+                <div className="rounded-lg border bg-white p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">
+                        {studentProfile.user.name ?? studentProfile.user.email}
+                      </p>
+                      <p className="text-xs text-slate-600">
+                        Case contribution breakdown
+                      </p>
+                    </div>
+                    <Link
+                      href={`/dashboard/students/${studentProfile.user.id}?tab=contributions`}
+                      className="rounded-md border px-3 py-1 text-xs text-slate-700"
+                    >
+                      Open profile
+                    </Link>
+                  </div>
+                </div>
+                <ContributionLeaderboard
+                  data={data}
+                  title="Who contributed to this case"
+                  subtitle="Stages 70% · Documents 15% · Tasks 15% for this student only."
+                />
+              </section>
+            );
+          }),
+        )
+      )}
+    </div>
   );
 }
 
@@ -1010,11 +1277,22 @@ function RiskBucket({
   );
 }
 
-function StatCard({ title, value }: { title: string; value: string }) {
+function StatCard({ title, value, preview }: { title: string; value: string; preview?: string[] }) {
   return (
     <article className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{title}</p>
       <p className="mt-2 text-2xl font-bold text-slate-900">{value}</p>
+      {preview && preview.length > 0 ? (
+        <ul className="mt-2 space-y-1 text-xs text-slate-600">
+          {preview.map((line, idx) => (
+            <li key={`${idx}-${line}`} className="truncate" title={line}>
+              - {line}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 text-xs text-slate-500">No items yet</p>
+      )}
     </article>
   );
 }
@@ -1045,8 +1323,35 @@ function QueueFilterButton({
   );
 }
 
+function StageFilterChip({
+  label,
+  stage,
+  current,
+}: {
+  label: string;
+  stage: CaseStage | "";
+  current: CaseStage | "";
+}) {
+  const isActive = current === stage;
+  const base = "/dashboard/sub-admin?tab=students";
+  const href = stage === "" ? base : `${base}&stage=${stage}`;
+  return (
+    <Link
+      href={href}
+      className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+        isActive
+          ? "border-slate-900 bg-slate-900 text-white"
+          : `${stage ? caseStageTone(stage) : "border-slate-300 bg-white text-slate-700"} hover:border-slate-400`
+      }`}
+    >
+      {label}
+    </Link>
+  );
+}
+
 async function updateSubmissionStatusAction(formData: FormData) {
   "use server";
+  const returnToStudentsTab = "/dashboard/sub-admin?tab=students";
 
   const session = await auth();
   if (!session?.user || (session.user.role !== "SUB_ADMIN" && session.user.role !== "ADMIN")) {
@@ -1057,7 +1362,7 @@ async function updateSubmissionStatusAction(formData: FormData) {
   const status = String(formData.get("status") ?? "") as SubmissionStatus;
 
   if (!submissionStatuses.includes(status)) {
-    redirect("/dashboard/sub-admin");
+    redirect(returnToStudentsTab);
   }
 
   const submission = await prisma.questionnaireSubmission.findUnique({
@@ -1068,12 +1373,12 @@ async function updateSubmissionStatusAction(formData: FormData) {
   });
 
   if (!submission) {
-    redirect("/dashboard/sub-admin");
+    redirect(returnToStudentsTab);
   }
 
   if (session.user.role === "SUB_ADMIN" && submission.assignedToId !== session.user.id) {
     if (submission.assignedToId !== null) {
-      redirect("/dashboard/sub-admin");
+      redirect(returnToStudentsTab);
     }
   }
 
@@ -1101,11 +1406,12 @@ async function updateSubmissionStatusAction(formData: FormData) {
   revalidatePath("/dashboard/sub-admin");
   revalidatePath("/dashboard/admin");
   revalidatePath("/dashboard/student");
-  redirect("/dashboard/sub-admin");
+  redirect(returnToStudentsTab);
 }
 
 async function bulkUpdateSubmissionStatusAction(formData: FormData) {
   "use server";
+  const returnToStudentsTab = "/dashboard/sub-admin?tab=students";
   const session = await auth();
   if (!session?.user || (session.user.role !== "SUB_ADMIN" && session.user.role !== "ADMIN")) {
     redirect("/login");
@@ -1117,7 +1423,7 @@ async function bulkUpdateSubmissionStatusAction(formData: FormData) {
     .map((value) => String(value).trim())
     .filter(Boolean);
   if (!submissionStatuses.includes(status) || submissionIds.length === 0) {
-    redirect("/dashboard/sub-admin");
+    redirect(returnToStudentsTab);
   }
 
   const submissions = await prisma.questionnaireSubmission.findMany({
@@ -1126,13 +1432,13 @@ async function bulkUpdateSubmissionStatusAction(formData: FormData) {
       student: { include: { studentProfile: { select: { id: true } } } },
     },
   });
-  if (submissions.length === 0) redirect("/dashboard/sub-admin");
+  if (submissions.length === 0) redirect(returnToStudentsTab);
 
   const allowed = submissions.filter((submission) => {
     if (session.user.role === "ADMIN") return true;
     return submission.assignedToId === session.user.id || submission.assignedToId === null;
   });
-  if (allowed.length === 0) redirect("/dashboard/sub-admin");
+  if (allowed.length === 0) redirect(returnToStudentsTab);
 
   for (const submission of allowed) {
     await prisma.questionnaireSubmission.update({
@@ -1160,11 +1466,12 @@ async function bulkUpdateSubmissionStatusAction(formData: FormData) {
   revalidatePath("/dashboard/sub-admin");
   revalidatePath("/dashboard/admin");
   revalidatePath("/dashboard/student");
-  redirect("/dashboard/sub-admin");
+  redirect(returnToStudentsTab);
 }
 
 async function delegateStudentToInternalStaffAction(formData: FormData) {
   "use server";
+  const returnToStudentsTab = "/dashboard/sub-admin?tab=students";
 
   const session = await auth();
   if (!session?.user || (session.user.role !== "SUB_ADMIN" && session.user.role !== "ADMIN")) {
@@ -1173,19 +1480,19 @@ async function delegateStudentToInternalStaffAction(formData: FormData) {
 
   const studentId = String(formData.get("studentId") ?? "");
   const internalStaffId = String(formData.get("internalStaffId") ?? "");
-  if (!studentId || !internalStaffId) redirect("/dashboard/sub-admin");
+  if (!studentId || !internalStaffId) redirect(returnToStudentsTab);
 
   const studentProfile = await prisma.studentProfile.findUnique({
     where: { userId: studentId },
     select: { id: true },
   });
-  if (!studentProfile) redirect("/dashboard/sub-admin");
+  if (!studentProfile) redirect(returnToStudentsTab);
 
   const staff = await prisma.user.findFirst({
     where: { id: internalStaffId, role: "INTERNAL_STAFF" },
     select: { id: true },
   });
-  if (!staff) redirect("/dashboard/sub-admin");
+  if (!staff) redirect(returnToStudentsTab);
 
   await prisma.studentAssignment.updateMany({
     where: { studentProfileId: studentProfile.id, isActive: true },
@@ -1214,27 +1521,28 @@ async function delegateStudentToInternalStaffAction(formData: FormData) {
   revalidatePath("/dashboard/sub-admin");
   revalidatePath(`/dashboard/students/${studentId}`);
   revalidatePath("/dashboard/internal-staff");
-  redirect("/dashboard/sub-admin");
+  redirect(returnToStudentsTab);
 }
 
 async function claimSubmissionAction(formData: FormData) {
   "use server";
+  const returnToStudentsTab = "/dashboard/sub-admin?tab=students";
   const session = await auth();
   if (!session?.user || (session.user.role !== "SUB_ADMIN" && session.user.role !== "ADMIN")) {
     redirect("/login");
   }
 
   const submissionId = String(formData.get("submissionId") ?? "");
-  if (!submissionId) redirect("/dashboard/sub-admin");
+  if (!submissionId) redirect(returnToStudentsTab);
 
   const submission = await prisma.questionnaireSubmission.findUnique({
     where: { id: submissionId },
     select: { id: true, assignedToId: true, studentId: true },
   });
-  if (!submission) redirect("/dashboard/sub-admin");
+  if (!submission) redirect(returnToStudentsTab);
 
   if (session.user.role === "SUB_ADMIN" && submission.assignedToId && submission.assignedToId !== session.user.id) {
-    redirect("/dashboard/sub-admin");
+    redirect(returnToStudentsTab);
   }
 
   await prisma.questionnaireSubmission.update({
@@ -1248,7 +1556,7 @@ async function claimSubmissionAction(formData: FormData) {
   revalidatePath("/dashboard/sub-admin");
   revalidatePath("/dashboard/admin");
   revalidatePath(`/dashboard/students/${submission.studentId}`);
-  redirect("/dashboard/sub-admin");
+  redirect(returnToStudentsTab);
 }
 
 async function escalateSubmissionAction(formData: FormData) {

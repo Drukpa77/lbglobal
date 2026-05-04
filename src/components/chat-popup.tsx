@@ -35,6 +35,8 @@ const ROLE_LABELS: Record<string, string> = {
   INTERNAL_STAFF: "Case Manager",
   USER: "Applicant",
 };
+const CHAT_MESSAGES_POLL_MS = process.env.NODE_ENV === "development" ? 20_000 : 10_000;
+const CHAT_UNREAD_POLL_MS = process.env.NODE_ENV === "development" ? 20_000 : 8_000;
 
 function getInitial(user: ChatUser) {
   return (user.name || user.email)[0].toUpperCase();
@@ -118,7 +120,7 @@ export function ChatPopup({ currentUserId }: { currentUserId: string }) {
     [],
   );
 
-  // Poll all non-minimized open chats every 10 seconds
+  // Poll all non-minimized open chats.
   useEffect(() => {
     if (openChats.length === 0) return;
     const interval = setInterval(() => {
@@ -127,7 +129,7 @@ export function ChatPopup({ currentUserId }: { currentUserId: string }) {
           fetchMessages(chat.conversationId, true);
         }
       }
-    }, 10_000);
+    }, CHAT_MESSAGES_POLL_MS);
     return () => clearInterval(interval);
   }, [openChats.length, fetchMessages]);
 
@@ -163,7 +165,7 @@ export function ChatPopup({ currentUserId }: { currentUserId: string }) {
     };
 
     void fetchUnread();
-    const interval = setInterval(fetchUnread, 8000);
+    const interval = setInterval(fetchUnread, CHAT_UNREAD_POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(interval);

@@ -1,7 +1,7 @@
-import fs from "node:fs/promises";
 import path from "node:path";
 
 import type {
+  CaseStage,
   DocumentCategory,
   Prisma,
   TaskPriority,
@@ -14,17 +14,32 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { Breadcrumbs } from "@/components/breadcrumbs";
+import { ContributionLeaderboard } from "@/components/contribution-leaderboard";
 import { DeleteWithConfirm } from "@/components/delete-with-confirm";
-import { SectionNav } from "@/components/section-nav";
 import { StudentNoteItem } from "@/components/student-note-item";
 import { SubmitButton } from "@/components/submit-button";
+import { AuditTab } from "@/app/dashboard/students/[studentId]/tabs/audit-tab";
+import { TasksDocumentsTab } from "@/app/dashboard/students/[studentId]/tabs/tasks-documents-tab";
 import { auth } from "@/auth";
+import { getContributions } from "@/lib/contributions";
 import { calculateInvoiceTotals, normalizeInvoiceItems } from "@/lib/invoice-calculator";
 import { prisma } from "@/lib/prisma";
+import { deleteStoredFile, uploadBufferToStorage } from "@/lib/storage";
 import { renderTemplate } from "@/lib/template-renderer";
 import { formatVisaStatus, formatYearsLeft, visaStatuses } from "@/lib/student-tracking";
+import {
+  allCaseStages,
+  caseStageLabel,
+  caseStageOrder,
+  caseStageTerminals,
+  caseStageTone,
+  getNextSuggestedStages,
+  getStageProgressPercent,
+  isTerminalStage,
+} from "@/lib/case-stage";
 
 type Params = Promise<{ studentId: string }>;
+type SearchParams = Promise<{ tab?: string }>;
 
 const studentAccountSchema = z.object({
   fullName: z.string().trim().min(2).max(100),
@@ -39,8 +54,9 @@ const allowedDocumentMime = new Set([
   "image/gif",
 ]);
 
-export default async function StudentProfileManagementPage(props: { params: Params }) {
+export default async function StudentProfileManagementPage(props: { params: Params; searchParams: SearchParams }) {
   const { studentId } = await props.params;
+  const searchParams = await props.searchParams;
   const session = await auth();
 
   if (!session?.user) {
@@ -102,91 +118,144 @@ export default async function StudentProfileManagementPage(props: { params: Para
     orderBy: { submittedAt: "desc" },
   });
 
-  const [
-    internalStaffUsers,
-    currentAssignments,
-    tasks,
-    documents,
-    templates,
-    contracts,
-    invoices,
-    conversation,
-    recentMessages,
-    activityLogs,
-  ] = await Promise.all([
-    prisma.user.findMany({
-      where: { role: "INTERNAL_STAFF" },
-      select: { id: true, name: true, email: true },
-      orderBy: { createdAt: "asc" },
-    }),
-    prisma.studentAssignment.findMany({
-      where: { studentProfileId: student.studentProfile?.id ?? "__none__", isActive: true },
-      include: {
-        assignedTo: { select: { id: true, name: true, email: true, role: true } },
-        assignedBy: { select: { id: true, name: true, email: true } },
-      },
-      orderBy: { createdAt: "desc" },
-    }),
-    prisma.task.findMany({
-      where: { studentProfileId: student.studentProfile?.id ?? "__none__" },
-      include: { assignee: { select: { id: true, name: true, email: true } } },
-      orderBy: [{ status: "asc" }, { createdAt: "desc" }],
-      take: 30,
-    }),
-    prisma.studentDocument.findMany({
-      where: { studentProfileId: student.studentProfile?.id ?? "__none__" },
-      include: { uploadedBy: { select: { id: true, name: true, email: true } } },
-      orderBy: { createdAt: "desc" },
-      take: 30,
-    }),
-    prisma.emailTemplate.findMany({
-      where: { isActive: true },
-      orderBy: [{ type: "asc" }, { createdAt: "desc" }],
-      take: 50,
-    }),
-    prisma.contract.findMany({
-      where: { studentProfileId: student.studentProfile?.id ?? "__none__" },
-      include: { createdBy: { select: { id: true, name: true, email: true } } },
-      orderBy: { createdAt: "desc" },
-      take: 20,
-    }),
-    prisma.invoice.findMany({
-      where: { studentProfileId: student.studentProfile?.id ?? "__none__" },
-      include: {
-        lineItems: true,
-        createdBy: { select: { id: true, name: true, email: true } },
-      },
-      orderBy: { createdAt: "desc" },
-      take: 20,
-    }),
-    prisma.conversation.findFirst({
-      where: { studentProfileId: student.studentProfile?.id ?? "__none__", type: "STUDENT_THREAD" },
-      select: { id: true, title: true },
-    }),
-    prisma.message.findMany({
-      where: {
-        conversation: {
-          studentProfileId: student.studentProfile?.id ?? "__none__",
-          type: "STUDENT_THREAD",
-        },
-      },
-      include: {
-        sender: { select: { id: true, name: true, email: true } },
-      },
-      orderBy: { createdAt: "desc" },
-      take: 15,
-    }),
-    prisma.activityLog.findMany({
-      where: { targetStudentProfileId: student.studentProfile?.id ?? "__none__" },
-      include: {
-        actor: { select: { id: true, name: true, email: true } },
-      },
-      orderBy: { createdAt: "desc" },
-      take: 50,
-    }),
-  ]);
+  const tabRaw = String(searchParams.tab ?? "overview");
+  const activeTab:
+    | "overview"
+    | "profile"
+    | "tasks"
+    | "financials"
+    | "audit"
+    | "contributions" =
+    tabRaw === "profile" ||
+    tabRaw === "tasks" ||
+    tabRaw === "financials" ||
+    tabRaw === "audit" ||
+    tabRaw === "contributions"
+      ? tabRaw
+      : "overview";
+  const studentProfileId = student.studentProfile?.id ?? "__none__";
+  const needsOverviewData = activeTab === "overview";
+  const needsProfileData = activeTab === "profile";
+  const needsTasksData = activeTab === "tasks";
+  const needsFinancialData = activeTab === "financials";
+  const needsAuditData = activeTab === "audit";
+  const needsContributionData = activeTab === "contributions";
 
-  const submissionAnswers = getAnswerEntries(latestSubmission?.answers);
+  const contributionData =
+    needsContributionData && student.studentProfile
+      ? await getContributions({ studentProfileId })
+      : null;
+
+  const internalStaffUsers =
+    needsProfileData || needsFinancialData
+      ? await prisma.user.findMany({
+          where: { role: "INTERNAL_STAFF" },
+          select: { id: true, name: true, email: true },
+          orderBy: { createdAt: "asc" },
+        })
+      : [];
+
+  const delegationTeamUsers = needsProfileData
+    ? await prisma.user.findMany({
+        where: { role: { in: ["INTERNAL_STAFF", "SUB_ADMIN"] } },
+        select: { id: true, name: true, email: true, role: true },
+        orderBy: [{ role: "asc" }, { name: "asc" }],
+      })
+    : [];
+
+  const currentAssignments = needsProfileData
+    ? await prisma.studentAssignment.findMany({
+        where: { studentProfileId, isActive: true },
+        include: {
+          assignedTo: { select: { id: true, name: true, email: true, role: true } },
+          assignedBy: { select: { id: true, name: true, email: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      })
+    : [];
+
+  const tasks = needsTasksData
+    ? await prisma.task.findMany({
+        where: { studentProfileId },
+        include: { assignee: { select: { id: true, name: true, email: true } } },
+        orderBy: [{ status: "asc" }, { createdAt: "desc" }],
+        take: 30,
+      })
+    : [];
+
+  const documents = needsTasksData
+    ? await prisma.studentDocument.findMany({
+        where: { studentProfileId },
+        include: { uploadedBy: { select: { id: true, name: true, email: true } } },
+        orderBy: { createdAt: "desc" },
+        take: 30,
+      })
+    : [];
+
+  const templates = needsFinancialData
+    ? await prisma.emailTemplate.findMany({
+        where: { isActive: true },
+        orderBy: [{ type: "asc" }, { createdAt: "desc" }],
+        take: 50,
+      })
+    : [];
+
+  const contracts = needsFinancialData
+    ? await prisma.contract.findMany({
+        where: { studentProfileId },
+        include: { createdBy: { select: { id: true, name: true, email: true } } },
+        orderBy: { createdAt: "desc" },
+        take: 20,
+      })
+    : [];
+
+  const invoices = needsFinancialData
+    ? await prisma.invoice.findMany({
+        where: { studentProfileId },
+        include: {
+          lineItems: true,
+          createdBy: { select: { id: true, name: true, email: true } },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 20,
+      })
+    : [];
+
+  const conversation = needsOverviewData
+    ? await prisma.conversation.findFirst({
+        where: { studentProfileId, type: "STUDENT_THREAD" },
+        select: { id: true, title: true },
+      })
+    : null;
+
+  const recentMessages = needsOverviewData
+    ? await prisma.message.findMany({
+        where: {
+          conversation: {
+            studentProfileId,
+            type: "STUDENT_THREAD",
+          },
+        },
+        include: {
+          sender: { select: { id: true, name: true, email: true } },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 15,
+      })
+    : [];
+
+  const activityLogs = needsAuditData
+    ? await prisma.activityLog.findMany({
+        where: { targetStudentProfileId: studentProfileId },
+        include: {
+          actor: { select: { id: true, name: true, email: true } },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 50,
+      })
+    : [];
+
+  const submissionAnswers = needsProfileData ? getAnswerEntries(latestSubmission?.answers) : [];
   const backLink =
     session.user.role === "ADMIN"
       ? "/dashboard/admin"
@@ -194,6 +263,15 @@ export default async function StudentProfileManagementPage(props: { params: Para
         ? "/dashboard/sub-admin"
         : "/dashboard/internal-staff";
   const profile = student.studentProfile;
+
+  const isAssignedCaseManager = session.user.role === "INTERNAL_STAFF";
+  const canManageStudentDelegation =
+    session.user.role === "ADMIN" ||
+    session.user.role === "SUB_ADMIN" ||
+    isAssignedCaseManager;
+  const caseManagersForDelegation = delegationTeamUsers.filter((u) => u.role === "INTERNAL_STAFF");
+  const agentsForDelegation = delegationTeamUsers.filter((u) => u.role === "SUB_ADMIN");
+  const tabBase = `/dashboard/students/${student.id}`;
 
   return (
     <section className="space-y-8 text-slate-900">
@@ -218,8 +296,31 @@ export default async function StudentProfileManagementPage(props: { params: Para
         </Link>
       </div>
 
-      <SectionNav />
+      <nav className="sticky top-0 z-10 -mx-6 -mt-2 mb-6 flex flex-wrap gap-2 border-b border-slate-200 bg-white/95 px-6 py-3 backdrop-blur-sm">
+        {[
+          { id: "overview", label: "Overview & Notes" },
+          { id: "profile", label: "Profile & Assignment" },
+          { id: "tasks", label: "Tasks & Documents" },
+          { id: "financials", label: "Contracts & Invoices" },
+          { id: "audit", label: "Audit Log" },
+          { id: "contributions", label: "Contributions" },
+        ].map((tab) => (
+          <Link
+            key={tab.id}
+            href={`${tabBase}?tab=${tab.id}`}
+            className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
+              activeTab === tab.id
+                ? "bg-slate-900 text-white"
+                : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+            }`}
+          >
+            {tab.label}
+          </Link>
+        ))}
+      </nav>
 
+      {activeTab === "overview" && (
+      <>
       <section id="overview" className="scroll-mt-24 rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">Internal Note</h2>
         <p className="mt-1 text-sm text-slate-600">Add a quick note for the internal team. Notes are visible to all staff on this case.</p>
@@ -310,6 +411,17 @@ export default async function StudentProfileManagementPage(props: { params: Para
         </div>
       </div>
 
+      <CaseStageCard
+        studentId={student.id}
+        currentStage={profile?.caseStage ?? "CONSULTATION_AND_DOCUMENTATION"}
+        updatedAt={profile?.caseStageUpdatedAt ?? null}
+        action={updateCaseStageAction}
+      />
+      </>
+      )}
+
+      {activeTab === "profile" && (
+      <>
       <form id="profile" action={saveStudentProfileAction} className="scroll-mt-24 space-y-6 rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
         <input type="hidden" name="studentId" value={student.id} />
         <h2 className="text-lg font-semibold text-slate-900">Profile Details</h2>
@@ -498,25 +610,43 @@ export default async function StudentProfileManagementPage(props: { params: Para
 
       <section className="scroll-mt-24 rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">Delegation & Assigned Team</h2>
-        {session.user.role === "INTERNAL_STAFF" ? (
+        {!canManageStudentDelegation ? (
           <p className="mt-3 text-sm text-slate-600">
-            View only. Assignment changes can be made by Admin or Agent.
+            You can view assignments here. Only an admin, agent, or the assigned case manager can change who
+            owns this case.
           </p>
         ) : (
-          <form action={assignStudentToInternalStaffAction} className="mt-4 flex flex-wrap items-end gap-4">
+          <form action={assignStudentDelegationAction} className="mt-4 flex flex-wrap items-end gap-4">
             <input type="hidden" name="studentId" value={student.id} />
             <label className="block">
-              <span className="text-sm font-medium text-slate-700">Assign to case manager</span>
+              <span className="text-sm font-medium text-slate-700">Assign to case manager or agent</span>
               <select
-                name="internalStaffId"
-                className="mt-1.5 w-64 rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                name="assigneeId"
+                required
+                className="mt-1.5 min-w-64 rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                defaultValue=""
               >
-                <option value="">Select case manager</option>
-                {internalStaffUsers.map((staff) => (
-                  <option key={staff.id} value={staff.id}>
-                    {staff.name ?? staff.email}
-                  </option>
-                ))}
+                <option value="" disabled>
+                  Select case manager or agent
+                </option>
+                {caseManagersForDelegation.length > 0 ? (
+                  <optgroup label="Case managers">
+                    {caseManagersForDelegation.map((member) => (
+                      <option key={member.id} value={member.id}>
+                        {member.name ?? member.email}
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : null}
+                {agentsForDelegation.length > 0 ? (
+                  <optgroup label="Agents">
+                    {agentsForDelegation.map((member) => (
+                      <option key={member.id} value={member.id}>
+                        {member.name ?? member.email}
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : null}
               </select>
             </label>
             <label className="block">
@@ -554,164 +684,599 @@ export default async function StudentProfileManagementPage(props: { params: Para
           </ul>
         )}
       </section>
+      </>
+      )}
 
-      <section id="tasks" className="scroll-mt-24 rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-900">Tasks</h2>
-        <form action={createTaskAction} className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      {false && (
+      <section id="sales" className="scroll-mt-24 rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
+        <h2 className="text-lg font-semibold text-slate-900">Lead Management Workflow</h2>
+        <p className="mt-1 text-sm text-slate-600">
+          Progression: New → Contacted → Qualified/Nurture/Disqualified → Converted
+        </p>
+
+        <form action={createLeadAction} className="mt-4 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
           <input type="hidden" name="studentId" value={student.id} />
-          <input
-            name="title"
-            required
-            placeholder="Task title"
-            className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400 lg:col-span-2"
-          />
-          <select
-            name="assigneeId"
-            className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-          >
-            <option value="">Select assignee</option>
-            {currentAssignments.map((assignment) => (
-              <option key={assignment.id} value={assignment.assignedTo.id}>
-                {assignment.assignedTo.name ?? assignment.assignedTo.email}
-              </option>
-            ))}
-          </select>
-          <select
-            name="priority"
-            defaultValue="MEDIUM"
-            className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-          >
-            <option value="LOW">Low</option>
-            <option value="MEDIUM">Medium</option>
-            <option value="HIGH">High</option>
-            <option value="URGENT">Urgent</option>
-          </select>
-          <button
-            type="submit"
-            className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
-          >
-            Create task
-          </button>
+          <p className="font-medium text-slate-900">Create Lead (Salesforce-style intake)</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <input
+              name="leadName"
+              required
+              placeholder="Lead Name"
+              className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+            />
+            <input
+              name="phone"
+              placeholder="Phone"
+              className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+            />
+            <input
+              type="email"
+              name="email"
+              placeholder="Email"
+              className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+            />
+            <input
+              name="source"
+              placeholder="Source"
+              className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+            />
+            <input
+              name="sourceChannel"
+              placeholder="Source Channel (e.g. Facebook)"
+              className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+            />
+            <input
+              name="campaignName"
+              placeholder="Campaign (optional)"
+              className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+            />
+            <select
+              name="accountSelection"
+              defaultValue="CREATE_NEW"
+              className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+            >
+              <option value="CREATE_NEW">Create New Account</option>
+              <option value="USE_EXISTING">Use Existing Account</option>
+            </select>
+            <select
+              name="existingAccountId"
+              defaultValue=""
+              className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+            >
+              <option value="">Existing Account (if selected)</option>
+              {crmAccounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name}
+                  {account.tag ? ` (${account.tag})` : ""}
+                </option>
+              ))}
+            </select>
+            <select
+              name="newAccountType"
+              defaultValue="STUDENT"
+              className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+            >
+              <option value="STUDENT">Student</option>
+              <option value="PARENT">Parent/Sponsor</option>
+              <option value="PARTNER">Partner</option>
+              <option value="INSTITUTION">Institution</option>
+            </select>
+            <input
+              name="newAccountName"
+              placeholder="New Account Name (if creating)"
+              className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400 sm:col-span-2 lg:col-span-2"
+            />
+            <select
+              name="ownerId"
+              defaultValue={session.user.id}
+              className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+            >
+              <option value="">Unassigned owner</option>
+              {leadOwners.map((owner) => (
+                <option key={owner.id} value={owner.id}>
+                  {(owner.name ?? owner.email) + ` (${owner.role})`}
+                </option>
+              ))}
+            </select>
+            <input
+              name="nextFollowUpAt"
+              type="date"
+              className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+            />
+            <input
+              name="leadScore"
+              type="number"
+              min={0}
+              max={100}
+              defaultValue={40}
+              placeholder="Lead Score (0-100)"
+              className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+            />
+            <input
+              name="parentName"
+              placeholder="Parent/Sponsor Name"
+              className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+            />
+            <input
+              name="parentPhone"
+              placeholder="Parent/Sponsor Phone"
+              className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+            />
+            <input
+              name="parentEmail"
+              placeholder="Parent/Sponsor Email"
+              className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+            />
+            <button
+              type="submit"
+              className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
+            >
+              Create Lead
+            </button>
+          </div>
         </form>
-        {tasks.length === 0 ? (
-          <p className="mt-4 text-base text-slate-600">No tasks yet.</p>
+
+        {leads.length === 0 ? (
+          <p className="mt-4 text-base text-slate-600">No leads yet.</p>
         ) : (
-          <div className="mt-4 max-h-72 space-y-3 overflow-y-auto pr-1">
-            {tasks.map((task) => (
-              <article key={task.id} className="rounded-lg border border-slate-200 bg-slate-50/50 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="font-medium text-slate-900">{task.title}</p>
-                    <p className="mt-0.5 text-sm text-slate-600">
-                      {task.priority} · {task.status} · {task.assignee.name ?? task.assignee.email}
-                    </p>
+          <div className="mt-4 space-y-4">
+            {leads.map((lead) => {
+              const opportunity = lead.opportunity;
+              const approvedQuoteExists =
+                opportunity?.quotes.some((quote) => quote.status === "APPROVED") ?? false;
+              const caseActivities = opportunity?.case
+                ? activityLogs.filter(
+                    (activity) =>
+                      activity.entityType === "CASE" && activity.entityId === opportunity.case?.id,
+                  )
+                : [];
+
+              return (
+                <article key={lead.id} className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-slate-900">{lead.name}</p>
+                      <p className="mt-0.5 text-sm text-slate-600">
+                        {lead.email ?? "No email"} · {lead.phone ?? "No phone"} · {lead.source ?? "No source"}
+                      </p>
+                      <p className="mt-0.5 text-sm text-slate-600">
+                        Account: {lead.account.name} ({formatCrmAccountType(lead.account.accountType)})
+                        {lead.account.tag ? ` (${lead.account.tag})` : ""}
+                      </p>
+                      <p className="mt-0.5 text-sm text-slate-600">
+                        Owner: {lead.owner?.name ?? lead.owner?.email ?? "Unassigned"} · Score:{" "}
+                        {lead.leadScore}/100
+                      </p>
+                      <p className="mt-0.5 text-sm text-slate-600">
+                        Next Follow-up: {lead.nextFollowUpAt ? lead.nextFollowUpAt.toLocaleDateString() : "Not set"}
+                      </p>
+                    </div>
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${leadStatusTone(lead.status)}`}>
+                      {formatLeadStatus(lead.status)}
+                    </span>
                   </div>
-                  <form action={updateTaskStatusAction} className="flex items-center gap-2">
-                    <input type="hidden" name="taskId" value={task.id} />
+
+                  <form action={updateLeadQualificationAction} className="mt-3 grid gap-2 sm:grid-cols-4">
+                    <input type="hidden" name="studentId" value={student.id} />
+                    <input type="hidden" name="leadId" value={lead.id} />
                     <select
-                      name="status"
-                      defaultValue={task.status}
-                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                      name="ownerId"
+                      defaultValue={lead.ownerId ?? ""}
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
                     >
-                      <option value="TODO">To Do</option>
-                      <option value="IN_PROGRESS">In Progress</option>
-                      <option value="BLOCKED">Blocked</option>
-                      <option value="DONE">Done</option>
+                      <option value="">Unassigned owner</option>
+                      {leadOwners.map((owner) => (
+                        <option key={owner.id} value={owner.id}>
+                          {(owner.name ?? owner.email) + ` (${owner.role})`}
+                        </option>
+                      ))}
                     </select>
+                    <input
+                      name="leadScore"
+                      type="number"
+                      min={0}
+                      max={100}
+                      defaultValue={lead.leadScore}
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                    />
+                    <input
+                      name="nextFollowUpAt"
+                      type="date"
+                      defaultValue={formatDateInput(lead.nextFollowUpAt)}
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                    />
+                    <input
+                      name="qualificationReason"
+                      defaultValue={lead.qualificationReason ?? ""}
+                      placeholder="Qualification reason"
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                    />
+                    <input
+                      name="qualificationNotes"
+                      defaultValue={lead.qualificationNotes ?? ""}
+                      placeholder="Qualification notes"
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400 sm:col-span-3"
+                    />
                     <button
                       type="submit"
-                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 sm:w-fit"
                     >
-                      Update
+                      Save Lead Details
                     </button>
                   </form>
-                </div>
-              </article>
-            ))}
+
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <form action={updateLeadStatusAction}>
+                      <input type="hidden" name="studentId" value={student.id} />
+                      <input type="hidden" name="leadId" value={lead.id} />
+                      <input type="hidden" name="nextStatus" value="CONTACTED" />
+                      <button
+                        type="submit"
+                        className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      >
+                        Mark Contacted
+                      </button>
+                    </form>
+                    <form action={updateLeadStatusAction}>
+                      <input type="hidden" name="studentId" value={student.id} />
+                      <input type="hidden" name="leadId" value={lead.id} />
+                      <input type="hidden" name="nextStatus" value="QUALIFIED" />
+                      <button
+                        type="submit"
+                        className="rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
+                      >
+                        Qualify
+                      </button>
+                    </form>
+                    <form action={updateLeadStatusAction}>
+                      <input type="hidden" name="studentId" value={student.id} />
+                      <input type="hidden" name="leadId" value={lead.id} />
+                      <input type="hidden" name="nextStatus" value="NURTURE" />
+                      <button
+                        type="submit"
+                        className="rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50"
+                      >
+                        Move to Nurture
+                      </button>
+                    </form>
+                    <form action={updateLeadStatusAction}>
+                      <input type="hidden" name="studentId" value={student.id} />
+                      <input type="hidden" name="leadId" value={lead.id} />
+                      <input type="hidden" name="nextStatus" value="DISQUALIFIED" />
+                      <button
+                        type="submit"
+                        className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50"
+                      >
+                        Disqualify
+                      </button>
+                    </form>
+                    {lead.status === "QUALIFIED" && !opportunity ? (
+                      <form action={convertLeadAction}>
+                        <input type="hidden" name="studentId" value={student.id} />
+                        <input type="hidden" name="leadId" value={lead.id} />
+                        <button
+                          type="submit"
+                          className="rounded-lg border border-blue-200 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50"
+                        >
+                          Convert to Opportunity
+                        </button>
+                      </form>
+                    ) : null}
+                  </div>
+
+                  {opportunity ? (
+                    <div className="mt-4 rounded-lg border border-slate-200 bg-white p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <p className="font-semibold text-slate-900">Opportunity</p>
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${opportunityStageTone(opportunity.stage)}`}>
+                          {formatOpportunityStage(opportunity.stage)}
+                        </span>
+                      </div>
+
+                      <form action={updateOpportunityPipelineAction} className="mt-3 grid gap-2 sm:grid-cols-3">
+                        <input type="hidden" name="studentId" value={student.id} />
+                        <input type="hidden" name="opportunityId" value={opportunity.id} />
+                        <input
+                          name="name"
+                          defaultValue={opportunity.name}
+                          placeholder="Opportunity name"
+                          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400 sm:col-span-2"
+                        />
+                        <input
+                          name="amount"
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          defaultValue={opportunity.amount}
+                          placeholder="Amount"
+                          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                        />
+                        <input
+                          name="probability"
+                          type="number"
+                          min={0}
+                          max={100}
+                          defaultValue={opportunity.probability}
+                          placeholder="Probability %"
+                          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                        />
+                        <input
+                          name="expectedCloseDate"
+                          type="date"
+                          defaultValue={formatDateInput(opportunity.expectedCloseDate)}
+                          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                        />
+                        <select
+                          name="forecastCategory"
+                          defaultValue={opportunity.forecastCategory}
+                          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                        >
+                          <option value="PIPELINE">Pipeline</option>
+                          <option value="BEST_CASE">Best Case</option>
+                          <option value="COMMIT">Commit</option>
+                          <option value="CLOSED">Closed</option>
+                        </select>
+                        <select
+                          name="stage"
+                          defaultValue={opportunity.stage}
+                          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                        >
+                          <option value="NEW">New</option>
+                          <option value="QUOTE_SENT">Quote Sent</option>
+                          <option value="CLOSED_WON">Closed Won</option>
+                          <option value="CLOSED_LOST">Closed Lost</option>
+                        </select>
+                        <button
+                          type="submit"
+                          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 sm:w-fit"
+                        >
+                          Save Pipeline
+                        </button>
+                      </form>
+                      <p className="mt-2 text-xs text-slate-500">
+                        Weighted pipeline value:{" "}
+                        {formatMoney("AUD", (opportunity.amount * opportunity.probability) / 100)}
+                      </p>
+
+                      <form action={createQuoteAction} className="mt-4 grid gap-2 sm:grid-cols-3">
+                        <input type="hidden" name="studentId" value={student.id} />
+                        <input type="hidden" name="opportunityId" value={opportunity.id} />
+                        <input
+                          name="amount"
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          required
+                          placeholder="Amount"
+                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                        />
+                        <input
+                          name="description"
+                          placeholder="Description"
+                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400 sm:col-span-2"
+                        />
+                        <button
+                          type="submit"
+                          className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 sm:col-span-3 sm:w-fit"
+                        >
+                          Create Quote
+                        </button>
+                      </form>
+
+                      {opportunity.quotes.length === 0 ? (
+                        <p className="mt-3 text-sm text-slate-600">No quotes yet.</p>
+                      ) : (
+                        <ul className="mt-3 space-y-2">
+                          {opportunity.quotes.map((quote) => (
+                            <li key={quote.id} className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+                              <div className="flex flex-wrap items-start justify-between gap-2">
+                                <div>
+                                  <p className="text-sm font-medium text-slate-900">
+                                    {formatMoney("AUD", quote.amount)} {quote.description ? `· ${quote.description}` : ""}
+                                  </p>
+                                  <p className="mt-0.5 text-xs text-slate-500">
+                                    {quote.createdAt.toLocaleString()}
+                                  </p>
+                                </div>
+                                <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${quoteStatusTone(quote.status)}`}>
+                                  {formatQuoteStatus(quote.status)}
+                                </span>
+                              </div>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {quote.status === "DRAFT" ? (
+                                  <form action={submitQuoteForApprovalAction}>
+                                    <input type="hidden" name="studentId" value={student.id} />
+                                    <input type="hidden" name="quoteId" value={quote.id} />
+                                    <button
+                                      type="submit"
+                                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                                    >
+                                      Submit for Approval
+                                    </button>
+                                  </form>
+                                ) : null}
+                                {quote.status === "SUBMITTED" ? (
+                                  <>
+                                    <form action={approveQuoteAction} className="flex items-center gap-2">
+                                      <input type="hidden" name="studentId" value={student.id} />
+                                      <input type="hidden" name="quoteId" value={quote.id} />
+                                      <input
+                                        name="approvalNotes"
+                                        placeholder="Approval notes"
+                                        className="rounded-lg border border-emerald-200 px-2 py-1 text-xs text-slate-900 focus:border-emerald-300 focus:outline-none focus:ring-1 focus:ring-emerald-300"
+                                      />
+                                      <button
+                                        type="submit"
+                                        className="rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
+                                      >
+                                        Approve
+                                      </button>
+                                    </form>
+                                    <form action={rejectQuoteAction} className="flex items-center gap-2">
+                                      <input type="hidden" name="studentId" value={student.id} />
+                                      <input type="hidden" name="quoteId" value={quote.id} />
+                                      <input
+                                        name="approvalNotes"
+                                        placeholder="Rejection reason"
+                                        className="rounded-lg border border-rose-200 px-2 py-1 text-xs text-slate-900 focus:border-rose-300 focus:outline-none focus:ring-1 focus:ring-rose-300"
+                                      />
+                                      <button
+                                        type="submit"
+                                        className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50"
+                                      >
+                                        Reject
+                                      </button>
+                                    </form>
+                                  </>
+                                ) : null}
+                              </div>
+                              {(quote.submittedBy || quote.approvedBy || quote.rejectedBy || quote.approvalNotes) ? (
+                                <p className="mt-2 text-xs text-slate-500">
+                                  {quote.submittedBy
+                                    ? `Submitted by ${quote.submittedBy.name ?? quote.submittedBy.email}. `
+                                    : ""}
+                                  {quote.approvedBy
+                                    ? `Approved by ${quote.approvedBy.name ?? quote.approvedBy.email}. `
+                                    : ""}
+                                  {quote.rejectedBy
+                                    ? `Rejected by ${quote.rejectedBy.name ?? quote.rejectedBy.email}. `
+                                    : ""}
+                                  {quote.approvalNotes ? `Notes: ${quote.approvalNotes}` : ""}
+                                </p>
+                              ) : null}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+
+                      {approvedQuoteExists && opportunity.stage !== "CLOSED_WON" ? (
+                        <form action={closeOpportunityAction} className="mt-3">
+                          <input type="hidden" name="studentId" value={student.id} />
+                          <input type="hidden" name="opportunityId" value={opportunity.id} />
+                          <button
+                            type="submit"
+                            className="rounded-lg border border-emerald-200 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-50"
+                          >
+                            Close Opportunity
+                          </button>
+                        </form>
+                      ) : null}
+
+                      {opportunity.stage === "CLOSED_WON" && !opportunity.case ? (
+                        <form action={convertOpportunityToCaseAction} className="mt-3">
+                          <input type="hidden" name="studentId" value={student.id} />
+                          <input type="hidden" name="opportunityId" value={opportunity.id} />
+                          <button
+                            type="submit"
+                            className="rounded-lg border border-blue-200 px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-50"
+                          >
+                            Convert to Case
+                          </button>
+                        </form>
+                      ) : null}
+
+                      {opportunity.case ? (
+                        <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50/60 p-4">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="font-semibold text-slate-900">Case</p>
+                            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${caseStatusTone(opportunity.case.status)}`}>
+                              {formatCaseStatus(opportunity.case.status)}
+                            </span>
+                          </div>
+                          <form action={updateCaseAction} className="mt-3 grid gap-3 sm:grid-cols-2">
+                            <input type="hidden" name="studentId" value={student.id} />
+                            <input type="hidden" name="caseId" value={opportunity.case.id} />
+                            <input
+                              name="title"
+                              defaultValue={opportunity.case.title}
+                              required
+                              placeholder="Case title"
+                              className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                            />
+                            <select
+                              name="status"
+                              defaultValue={opportunity.case.status}
+                              className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                            >
+                              <option value="OPEN">Open</option>
+                              <option value="IN_PROGRESS">In Progress</option>
+                              <option value="RESOLVED">Resolved</option>
+                              <option value="CLOSED">Closed</option>
+                            </select>
+                            <textarea
+                              name="description"
+                              defaultValue={opportunity.case.description ?? ""}
+                              placeholder="Case description"
+                              rows={3}
+                              className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400 sm:col-span-2"
+                            />
+                            <select
+                              name="assignedAgentId"
+                              defaultValue={opportunity.case.assignedAgentId ?? ""}
+                              className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                            >
+                              <option value="">Unassigned agent</option>
+                              {internalStaffUsers.map((staff) => (
+                                <option key={staff.id} value={staff.id}>
+                                  {staff.name ?? staff.email}
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              name="activityNote"
+                              placeholder="Activity note (optional)"
+                              className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                            />
+                            <button
+                              type="submit"
+                              className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 sm:w-fit"
+                            >
+                              Save Case Update
+                            </button>
+                          </form>
+                          <div className="mt-3">
+                            <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Case Activity Log</p>
+                            {caseActivities.length === 0 ? (
+                              <p className="mt-2 text-sm text-slate-600">No case activity yet.</p>
+                            ) : (
+                              <ul className="mt-2 space-y-2">
+                                {caseActivities.slice(0, 8).map((activity) => (
+                                  <li key={activity.id} className="rounded-lg border border-slate-200 bg-white p-3">
+                                    <p className="text-sm font-medium text-slate-900">{activity.action}</p>
+                                    <p className="mt-0.5 text-xs text-slate-500">
+                                      {activity.actor.name ?? activity.actor.email} · {activity.createdAt.toLocaleString()}
+                                    </p>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </article>
+              );
+            })}
           </div>
         )}
       </section>
+      )}
 
-      <section className="scroll-mt-24 rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-900">Documents</h2>
-        <form action={uploadStudentDocumentAction} className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <input type="hidden" name="studentId" value={student.id} />
-          <input
-            name="title"
-            required
-            placeholder="Document title"
-            className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-          />
-          <select
-            name="category"
-            defaultValue="OTHER"
-            className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-          >
-            <option value="PASSPORT">PASSPORT</option>
-            <option value="TRANSCRIPT">TRANSCRIPT</option>
-            <option value="SOP">SOP</option>
-            <option value="OFFER_LETTER">OFFER_LETTER</option>
-            <option value="VISA">VISA</option>
-            <option value="FINANCIAL">FINANCIAL</option>
-            <option value="IDENTITY">IDENTITY</option>
-            <option value="OTHER">OTHER</option>
-          </select>
-          <input
-            name="file"
-            type="file"
-            required
-            accept=".pdf,image/*"
-            className="rounded-lg border border-slate-300 px-4 py-2.5 text-base file:mr-4 file:rounded-lg file:border-0 file:bg-slate-100 file:px-4 file:py-2 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-200"
-          />
-          <button
-            type="submit"
-            className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
-          >
-            Upload
-          </button>
-        </form>
-        {documents.length === 0 ? (
-          <p className="mt-4 text-base text-slate-600">No documents uploaded yet.</p>
-        ) : (
-          <ul className="mt-4 max-h-72 space-y-3 overflow-y-auto pr-1">
-            {documents.map((doc) => (
-              <li key={doc.id} className="rounded-lg border border-slate-200 bg-slate-50/50 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="font-medium text-slate-900">
-                      {doc.title}
-                      <span className="ml-2 text-sm font-normal text-slate-500">({doc.category})</span>
-                    </p>
-                    <p className="mt-0.5 text-sm text-slate-600">
-                      Uploaded by {doc.uploadedBy.name ?? doc.uploadedBy.email} · {doc.verificationStatus}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <a
-                      href={doc.storagePath}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                    >
-                      Open
-                    </a>
-                    <DeleteWithConfirm
-                      formAction={deleteStudentDocumentAction}
-                      confirmMessage={`Delete "${doc.title}"? This cannot be undone.`}
-                      buttonLabel="Delete"
-                      buttonClassName="rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50"
-                    >
-                      <input type="hidden" name="studentId" value={student.id} />
-                      <input type="hidden" name="documentId" value={doc.id} />
-                    </DeleteWithConfirm>
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      {activeTab === "tasks" && (
+        <TasksDocumentsTab
+          studentId={student.id}
+          tasks={tasks}
+          documents={documents}
+          createTaskAction={createTaskAction}
+          updateTaskStatusAction={updateTaskStatusAction}
+          updateTaskChecklistAction={updateTaskChecklistAction}
+          uploadStudentDocumentAction={uploadStudentDocumentAction}
+          deleteStudentDocumentAction={deleteStudentDocumentAction}
+        />
+      )}
 
+      {activeTab === "financials" && (
       <section id="financials" className="scroll-mt-24 rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">Contracts & Invoices</h2>
         <p className="mt-2 text-sm text-slate-600">
@@ -916,29 +1481,26 @@ export default async function StudentProfileManagementPage(props: { params: Para
           </div>
         </div>
       </section>
+      )}
 
-      <section id="audit" className="scroll-mt-24 rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-900">Audit Log</h2>
-        <p className="mt-1 text-sm text-slate-600">
-          History of changes on this student profile. See who did what and when.
-        </p>
-        {activityLogs.length === 0 ? (
-          <p className="mt-4 text-sm text-slate-600">No activity recorded yet.</p>
+      {activeTab === "audit" && <AuditTab activityLogs={activityLogs} />}
+
+      {activeTab === "contributions" && (
+        contributionData ? (
+          <ContributionLeaderboard
+            data={contributionData}
+            title="Who contributed to this case"
+            subtitle="Stages 70% · Documents 15% · Tasks 15% — scoped to this student only."
+          />
         ) : (
-          <ul className="mt-4 max-h-80 space-y-3 overflow-y-auto pr-1">
-            {activityLogs.map((activity) => (
-              <li key={activity.id} className="rounded-lg border border-slate-200 bg-slate-50/50 p-4">
-                <p className="text-sm font-medium text-slate-900">{activity.action}</p>
-                <p className="mt-1 text-xs text-slate-500">
-                  <span className="font-medium">{activity.actor.name ?? activity.actor.email}</span>
-                  <span className="mx-1.5">·</span>
-                  <span>{activity.createdAt.toLocaleString()}</span>
-                </p>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+          <section className="rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">Contributions</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              This student does not have a profile yet, so per-case contribution data is unavailable.
+            </p>
+          </section>
+        )
+      )}
     </section>
   );
 }
@@ -955,6 +1517,133 @@ function Field({
       <span className="text-sm font-medium text-slate-700">{label}</span>
       {children}
     </label>
+  );
+}
+
+function CaseStageCard({
+  studentId,
+  currentStage,
+  updatedAt,
+  action,
+}: {
+  studentId: string;
+  currentStage: CaseStage;
+  updatedAt: Date | null;
+  action: (formData: FormData) => Promise<void>;
+}) {
+  const suggestions = getNextSuggestedStages(currentStage);
+  const defaultNext = suggestions[0] ?? currentStage;
+  const terminal = isTerminalStage(currentStage);
+  const progressPct = getStageProgressPercent(currentStage);
+  const linearIdx = caseStageOrder.indexOf(currentStage);
+
+  return (
+    <section
+      id="case-stage"
+      className="scroll-mt-24 rounded-2xl border border-rose-100 bg-white p-6 shadow-sm"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">Case Stage</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Track this student&apos;s position in the application workflow.
+          </p>
+        </div>
+        <span
+          className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${caseStageTone(currentStage)}`}
+        >
+          <span className="inline-block h-2 w-2 rounded-full bg-current opacity-70" />
+          {caseStageLabel(currentStage)}
+        </span>
+      </div>
+
+      <div className="mt-5 space-y-3">
+        <div className="flex items-center justify-between text-xs text-slate-500">
+          <span>Linear progress</span>
+          <span>
+            {terminal
+              ? "Outcome"
+              : `Step ${linearIdx + 1} of ${caseStageOrder.length}`}
+          </span>
+        </div>
+        <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+          <div
+            className={`h-full rounded-full transition-all ${
+              terminal && currentStage !== "VISA_GRANTED"
+                ? "bg-rose-500"
+                : "bg-gradient-to-r from-rose-500 to-blue-500"
+            }`}
+            style={{ width: `${progressPct}%` }}
+          />
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {caseStageOrder.map((stage, idx) => {
+            const isCurrent = stage === currentStage;
+            const isPast = !terminal && linearIdx > idx;
+            return (
+              <span
+                key={stage}
+                className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${
+                  isCurrent
+                    ? caseStageTone(stage)
+                    : isPast
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                      : "border-slate-200 bg-slate-50 text-slate-500"
+                }`}
+              >
+                {caseStageLabel(stage)}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+
+      {updatedAt ? (
+        <p className="mt-3 text-xs text-slate-500">
+          Stage last updated: {updatedAt.toLocaleString()}
+        </p>
+      ) : null}
+
+      <form
+        action={action}
+        className="mt-5 grid gap-3 sm:grid-cols-[1fr_auto_auto]"
+      >
+        <input type="hidden" name="studentId" value={studentId} />
+        <select
+          name="caseStage"
+          defaultValue={defaultNext}
+          className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+        >
+          <optgroup label="Workflow stages">
+            {caseStageOrder.map((stage) => (
+              <option key={stage} value={stage}>
+                {caseStageLabel(stage)}
+                {suggestions.includes(stage) ? " (suggested)" : ""}
+              </option>
+            ))}
+          </optgroup>
+          <optgroup label="Outcomes / end states">
+            {caseStageTerminals.map((stage) => (
+              <option key={stage} value={stage}>
+                {caseStageLabel(stage)}
+                {suggestions.includes(stage) ? " (suggested)" : ""}
+              </option>
+            ))}
+          </optgroup>
+        </select>
+        <button
+          type="submit"
+          className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
+        >
+          Move to stage
+        </button>
+        <p className="self-center text-xs text-slate-500 sm:max-w-xs">
+          Any-to-any transitions are allowed; the suggested option follows the
+          standard workflow.
+        </p>
+      </form>
+
+    </section>
   );
 }
 
@@ -1136,29 +1825,48 @@ async function deleteStudentAction(formData: FormData) {
   redirect(session.user.role === "ADMIN" ? "/dashboard/admin" : "/dashboard/sub-admin");
 }
 
-async function assignStudentToInternalStaffAction(formData: FormData) {
+async function assignStudentDelegationAction(formData: FormData) {
   "use server";
   const session = await auth();
-  if (!session?.user || (session.user.role !== "ADMIN" && session.user.role !== "SUB_ADMIN")) {
-    redirect("/login");
-  }
+  if (!session?.user) redirect("/login");
+  const returnToProfileTab = `/dashboard/students/${String(formData.get("studentId") ?? "")}?tab=profile`;
 
   const studentId = String(formData.get("studentId") ?? "");
-  const internalStaffId = String(formData.get("internalStaffId") ?? "");
+  const assigneeIdRaw =
+    String(formData.get("assigneeId") ?? "").trim() ||
+    String(formData.get("internalStaffId") ?? "").trim();
   const notes = nullableText(formData.get("notes"));
-  if (!studentId || !internalStaffId) redirect(`/dashboard/students/${studentId}`);
+  if (!studentId || !assigneeIdRaw) redirect(returnToProfileTab);
+
+  const mayDelegate =
+    session.user.role === "ADMIN" ||
+    session.user.role === "SUB_ADMIN" ||
+    session.user.role === "INTERNAL_STAFF";
+  if (!mayDelegate) redirect("/dashboard");
+
+  if (session.user.role === "INTERNAL_STAFF") {
+    const allowed = await prisma.studentAssignment.findFirst({
+      where: {
+        assignedToId: session.user.id,
+        isActive: true,
+        studentProfile: { userId: studentId },
+      },
+      select: { id: true },
+    });
+    if (!allowed) redirect("/dashboard/internal-staff");
+  }
 
   const studentProfile = await prisma.studentProfile.findUnique({
     where: { userId: studentId },
     select: { id: true },
   });
-  if (!studentProfile) redirect(`/dashboard/students/${studentId}`);
+  if (!studentProfile) redirect(returnToProfileTab);
 
-  const staff = await prisma.user.findFirst({
-    where: { id: internalStaffId, role: "INTERNAL_STAFF" },
-    select: { id: true },
+  const assignee = await prisma.user.findFirst({
+    where: { id: assigneeIdRaw, role: { in: ["INTERNAL_STAFF", "SUB_ADMIN"] } },
+    select: { id: true, role: true },
   });
-  if (!staff) redirect(`/dashboard/students/${studentId}`);
+  if (!assignee) redirect(returnToProfileTab);
 
   await prisma.studentAssignment.updateMany({
     where: { studentProfileId: studentProfile.id, isActive: true },
@@ -1168,12 +1876,19 @@ async function assignStudentToInternalStaffAction(formData: FormData) {
   await prisma.studentAssignment.create({
     data: {
       studentProfileId: studentProfile.id,
-      assignedToId: staff.id,
+      assignedToId: assignee.id,
       assignedById: session.user.id,
       notes,
       isActive: true,
     },
   });
+
+  if (assignee.role === "SUB_ADMIN") {
+    await prisma.questionnaireSubmission.updateMany({
+      where: { studentId },
+      data: { assignedToId: assignee.id },
+    });
+  }
 
   await prisma.activityLog.create({
     data: {
@@ -1181,8 +1896,11 @@ async function assignStudentToInternalStaffAction(formData: FormData) {
       targetStudentProfileId: studentProfile.id,
       entityType: "ASSIGNMENT",
       entityId: studentProfile.id,
-      action: "Assigned student to internal staff",
-      metadata: { internalStaffId: staff.id, notes },
+      action:
+        assignee.role === "SUB_ADMIN"
+          ? "Assigned student to agent"
+          : "Assigned student to case manager",
+      metadata: { assigneeId: assignee.id, assigneeRole: assignee.role, notes },
     },
   });
 
@@ -1190,7 +1908,7 @@ async function assignStudentToInternalStaffAction(formData: FormData) {
   revalidatePath("/dashboard/internal-staff");
   revalidatePath("/dashboard/sub-admin");
   revalidatePath("/dashboard/admin");
-  redirect(`/dashboard/students/${studentId}`);
+  redirect(returnToProfileTab);
 }
 
 async function createTaskAction(formData: FormData) {
@@ -1202,9 +1920,9 @@ async function createTaskAction(formData: FormData) {
 
   const studentId = String(formData.get("studentId") ?? "");
   const title = String(formData.get("title") ?? "").trim();
-  const assigneeId = String(formData.get("assigneeId") ?? "");
+  const description = nullableText(formData.get("description"));
   const priority = String(formData.get("priority") ?? "MEDIUM") as TaskPriority;
-  if (!studentId || !title || !assigneeId) redirect(`/dashboard/students/${studentId}`);
+  if (!studentId || !title) redirect(`/dashboard/students/${studentId}?tab=tasks`);
 
   const studentProfile = await prisma.studentProfile.findUnique({
     where: { userId: studentId },
@@ -1218,8 +1936,9 @@ async function createTaskAction(formData: FormData) {
   await prisma.task.create({
     data: {
       title,
+      description,
       studentProfileId: studentProfile.id,
-      assigneeId,
+      assigneeId: session.user.id,
       assignerId: session.user.id,
       priority: taskPriority,
     },
@@ -1236,7 +1955,7 @@ async function createTaskAction(formData: FormData) {
 
   revalidatePath(`/dashboard/students/${studentId}`);
   revalidatePath("/dashboard/internal-staff");
-  redirect(`/dashboard/students/${studentId}`);
+  redirect(`/dashboard/students/${studentId}?tab=tasks`);
 }
 
 async function updateTaskStatusAction(formData: FormData) {
@@ -1278,13 +1997,164 @@ async function updateTaskStatusAction(formData: FormData) {
 
   revalidatePath(`/dashboard/students/${task.studentProfile.userId}`);
   revalidatePath("/dashboard/internal-staff");
-  redirect(`/dashboard/students/${task.studentProfile.userId}`);
+  redirect(`/dashboard/students/${task.studentProfile.userId}?tab=tasks`);
+}
+
+async function updateTaskChecklistAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+
+  const studentId = String(formData.get("studentId") ?? "");
+  const taskIds = formData
+    .getAll("taskIds")
+    .map((value) => String(value))
+    .filter(Boolean);
+  const status = String(formData.get("status") ?? "DONE") as TaskStatus;
+  const safeStatus: TaskStatus = ["TODO", "IN_PROGRESS", "BLOCKED", "DONE"].includes(status)
+    ? status
+    : "DONE";
+
+  if (!studentId || taskIds.length === 0) {
+    redirect(`/dashboard/students/${studentId}?tab=tasks`);
+  }
+
+  const selectedTasks = await prisma.task.findMany({
+    where: { id: { in: taskIds } },
+    include: {
+      studentProfile: { select: { id: true, userId: true } },
+    },
+  });
+
+  const allowedTasks = selectedTasks.filter((task) => {
+    if (task.studentProfile.userId !== studentId) return false;
+    return (
+      session.user.role === "ADMIN" ||
+      session.user.id === task.assigneeId ||
+      session.user.id === task.assignerId
+    );
+  });
+
+  if (allowedTasks.length === 0) {
+    redirect(`/dashboard/students/${studentId}?tab=tasks`);
+  }
+
+  const allowedTaskIds = allowedTasks.map((task) => task.id);
+  const targetStudentProfileId = allowedTasks[0].studentProfileId;
+
+  await prisma.task.updateMany({
+    where: { id: { in: allowedTaskIds } },
+    data: { status: safeStatus },
+  });
+
+  await prisma.activityLog.createMany({
+    data: allowedTaskIds.map((taskId) => ({
+      actorId: session.user.id,
+      targetStudentProfileId,
+      entityType: "TASK",
+      entityId: taskId,
+      action: `Updated task status from checklist to ${safeStatus}`,
+    })),
+  });
+
+  revalidatePath(`/dashboard/students/${studentId}`);
+  revalidatePath("/dashboard/internal-staff");
+  revalidatePath("/dashboard/sub-admin");
+  revalidatePath("/dashboard/admin");
+  redirect(`/dashboard/students/${studentId}?tab=tasks`);
+}
+
+async function updateCaseStageAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+  if (
+    session.user.role !== "ADMIN" &&
+    session.user.role !== "SUB_ADMIN" &&
+    session.user.role !== "INTERNAL_STAFF"
+  ) {
+    redirect("/dashboard");
+  }
+
+  const studentId = String(formData.get("studentId") ?? "");
+  const stageRaw = String(formData.get("caseStage") ?? "") as CaseStage;
+  if (!studentId) redirect("/dashboard");
+  if (!allCaseStages.includes(stageRaw)) {
+    redirect(`/dashboard/students/${studentId}`);
+  }
+
+  const profile = await prisma.studentProfile.findUnique({
+    where: { userId: studentId },
+    select: {
+      id: true,
+      caseStage: true,
+      assignments: {
+        where: { isActive: true },
+        select: { assignedToId: true },
+      },
+    },
+  });
+  if (!profile) redirect(`/dashboard/students/${studentId}`);
+
+  if (session.user.role === "INTERNAL_STAFF") {
+    const isAssigned = profile.assignments.some(
+      (assignment) => assignment.assignedToId === session.user.id,
+    );
+    if (!isAssigned) redirect("/dashboard/internal-staff");
+  }
+
+  if (session.user.role === "SUB_ADMIN") {
+    const allowed = await prisma.questionnaireSubmission.findFirst({
+      where: {
+        studentId,
+        OR: [{ assignedToId: session.user.id }, { assignedToId: null }],
+      },
+      select: { id: true },
+    });
+    if (!allowed) redirect("/dashboard/sub-admin");
+  }
+
+  const previous = profile.caseStage;
+  if (previous === stageRaw) {
+    redirect(`/dashboard/students/${studentId}#case-stage`);
+  }
+
+  await prisma.studentProfile.update({
+    where: { id: profile.id },
+    data: {
+      caseStage: stageRaw,
+      caseStageUpdatedAt: new Date(),
+    },
+  });
+
+  await prisma.activityLog.create({
+    data: {
+      actorId: session.user.id,
+      targetStudentProfileId: profile.id,
+      entityType: "CASE_STAGE",
+      entityId: profile.id,
+      action: `Moved case stage: ${caseStageLabel(previous)} → ${caseStageLabel(stageRaw)}`,
+      metadata: { from: previous, to: stageRaw },
+    },
+  });
+
+  revalidatePath(`/dashboard/students/${studentId}`);
+  revalidatePath("/dashboard/admin");
+  revalidatePath("/dashboard/sub-admin");
+  revalidatePath("/dashboard/internal-staff");
+  revalidatePath("/dashboard/student");
+  redirect(`/dashboard/students/${studentId}#case-stage`);
 }
 
 async function uploadStudentDocumentAction(formData: FormData) {
   "use server";
   const session = await auth();
-  if (!session?.user || (session.user.role !== "ADMIN" && session.user.role !== "SUB_ADMIN")) {
+  if (
+    !session?.user ||
+    (session.user.role !== "ADMIN" &&
+      session.user.role !== "SUB_ADMIN" &&
+      session.user.role !== "INTERNAL_STAFF")
+  ) {
     redirect("/login");
   }
   const studentId = String(formData.get("studentId") ?? "");
@@ -1292,27 +2162,43 @@ async function uploadStudentDocumentAction(formData: FormData) {
   const category = String(formData.get("category") ?? "OTHER") as DocumentCategory;
   const file = formData.get("file");
   if (!studentId || !title || !(file instanceof File) || file.size === 0) {
-    redirect(`/dashboard/students/${studentId}`);
+    redirect(`/dashboard/students/${studentId}?tab=tasks`);
   }
   if (file.size > 20 * 1024 * 1024 || !allowedDocumentMime.has(file.type)) {
-    redirect(`/dashboard/students/${studentId}`);
+    redirect(`/dashboard/students/${studentId}?tab=tasks`);
   }
 
   const studentProfile = await prisma.studentProfile.findUnique({
     where: { userId: studentId },
     select: { id: true },
   });
-  if (!studentProfile) redirect(`/dashboard/students/${studentId}`);
+  if (!studentProfile) redirect(`/dashboard/students/${studentId}?tab=tasks`);
+
+  if (session.user.role === "INTERNAL_STAFF") {
+    const assigned = await prisma.studentAssignment.findFirst({
+      where: {
+        assignedToId: session.user.id,
+        isActive: true,
+        studentProfileId: studentProfile.id,
+      },
+      select: { id: true },
+    });
+    if (!assigned) {
+      redirect("/dashboard/internal-staff");
+    }
+  }
 
   const bytes = await file.arrayBuffer();
   const buffer = Buffer.from(bytes);
   const ext = path.extname(file.name) || mimeToExt(file.type);
   const sanitizedName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
-  const uploadDir = path.join(process.cwd(), "public", "student-docs", studentId);
-  await fs.mkdir(uploadDir, { recursive: true });
-  const absolutePath = path.join(uploadDir, sanitizedName);
-  await fs.writeFile(absolutePath, buffer);
-  const publicPath = `/student-docs/${studentId}/${sanitizedName}`;
+  const relativePath = `student-docs/${studentId}/${sanitizedName}`;
+  const publicPath = await uploadBufferToStorage({
+    buffer,
+    mimeType: file.type,
+    blobPath: relativePath,
+    localRelativePath: relativePath,
+  });
 
   const safeCategory: DocumentCategory = [
     "PASSPORT",
@@ -1350,13 +2236,18 @@ async function uploadStudentDocumentAction(formData: FormData) {
   });
 
   revalidatePath(`/dashboard/students/${studentId}`);
-  redirect(`/dashboard/students/${studentId}`);
+  redirect(`/dashboard/students/${studentId}?tab=tasks`);
 }
 
 async function deleteStudentDocumentAction(formData: FormData) {
   "use server";
   const session = await auth();
-  if (!session?.user || (session.user.role !== "ADMIN" && session.user.role !== "SUB_ADMIN")) {
+  if (
+    !session?.user ||
+    (session.user.role !== "ADMIN" &&
+      session.user.role !== "SUB_ADMIN" &&
+      session.user.role !== "INTERNAL_STAFF")
+  ) {
     redirect("/login");
   }
   const studentId = String(formData.get("studentId") ?? "");
@@ -1365,10 +2256,23 @@ async function deleteStudentDocumentAction(formData: FormData) {
     where: { id: documentId },
     select: { id: true, storagePath: true, studentProfileId: true },
   });
-  if (!doc) redirect(`/dashboard/students/${studentId}`);
+  if (!doc) redirect(`/dashboard/students/${studentId}?tab=tasks`);
 
-  const localPath = path.join(process.cwd(), "public", doc.storagePath.replace(/^\//, ""));
-  await fs.unlink(localPath).catch(() => undefined);
+  if (session.user.role === "INTERNAL_STAFF") {
+    const assigned = await prisma.studentAssignment.findFirst({
+      where: {
+        assignedToId: session.user.id,
+        isActive: true,
+        studentProfileId: doc.studentProfileId,
+      },
+      select: { id: true },
+    });
+    if (!assigned) {
+      redirect("/dashboard/internal-staff");
+    }
+  }
+
+  await deleteStoredFile(doc.storagePath);
   await prisma.studentDocument.delete({ where: { id: doc.id } });
   await prisma.activityLog.create({
     data: {
@@ -1381,7 +2285,7 @@ async function deleteStudentDocumentAction(formData: FormData) {
   });
 
   revalidatePath(`/dashboard/students/${studentId}`);
-  redirect(`/dashboard/students/${studentId}`);
+  redirect(`/dashboard/students/${studentId}?tab=tasks`);
 }
 
 async function createContractPreviewAction(formData: FormData) {
@@ -1860,6 +2764,752 @@ async function deleteInvoiceAction(formData: FormData) {
   redirect(`/dashboard/students/${studentId}`);
 }
 
+async function createLeadAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+
+  const studentId = String(formData.get("studentId") ?? "");
+  const leadName = String(formData.get("leadName") ?? "").trim();
+  const phone = nullableText(formData.get("phone"));
+  const email = nullableText(formData.get("email"));
+  const source = nullableText(formData.get("source"));
+  const sourceChannel = nullableText(formData.get("sourceChannel"));
+  const campaignName = nullableText(formData.get("campaignName"));
+  const accountSelection = String(formData.get("accountSelection") ?? "CREATE_NEW");
+  const newAccountTypeRaw = String(formData.get("newAccountType") ?? "STUDENT");
+  const newAccountName = String(formData.get("newAccountName") ?? "").trim();
+  const existingAccountId = String(formData.get("existingAccountId") ?? "");
+  const ownerIdRaw = String(formData.get("ownerId") ?? "");
+  const ownerId = ownerIdRaw || null;
+  const leadScore = clampLeadScore(Number(formData.get("leadScore") ?? 0));
+  const parentName = nullableText(formData.get("parentName"));
+  const parentPhone = nullableText(formData.get("parentPhone"));
+  const parentEmail = nullableText(formData.get("parentEmail"));
+  const nextFollowUpAt = parseOptionalDate(String(formData.get("nextFollowUpAt") ?? "").trim());
+  const newAccountType =
+    newAccountTypeRaw === "PARENT" ||
+    newAccountTypeRaw === "PARTNER" ||
+    newAccountTypeRaw === "INSTITUTION"
+      ? newAccountTypeRaw
+      : "STUDENT";
+
+  if (!studentId || !leadName) redirect(`/dashboard/students/${studentId}`);
+  const access = await ensureLeadWorkflowAccess(studentId, session.user, true);
+
+  if (ownerId) {
+    const ownerExists = await prisma.user.findFirst({
+      where: { id: ownerId, role: { in: ["ADMIN", "SUB_ADMIN", "INTERNAL_STAFF"] } },
+      select: { id: true },
+    });
+    if (!ownerExists) redirect(`/dashboard/students/${studentId}`);
+  }
+
+  let accountId = "";
+  if (accountSelection === "USE_EXISTING") {
+    const existingAccount = await prisma.crmAccount.findUnique({
+      where: { id: existingAccountId },
+      select: { id: true },
+    });
+    if (!existingAccount) redirect(`/dashboard/students/${studentId}`);
+    accountId = existingAccount.id;
+  } else {
+    if (!newAccountName) redirect(`/dashboard/students/${studentId}`);
+    const tag = newAccountName.toLowerCase().includes("educationpro") ? "EducationPro" : null;
+    const createdAccount = await prisma.crmAccount.create({
+      data: {
+        name: newAccountName,
+        accountType: newAccountType,
+        phone,
+        email,
+        source,
+        tag,
+      },
+      select: { id: true },
+    });
+    accountId = createdAccount.id;
+  }
+
+  const lead = await prisma.lead.create({
+    data: {
+      name: leadName,
+      phone,
+      email,
+      source,
+      sourceChannel,
+      campaignName,
+      status: "NEW",
+      ownerId,
+      assignedAt: ownerId ? new Date() : null,
+      leadScore,
+      nextFollowUpAt,
+      parentName,
+      parentPhone,
+      parentEmail,
+      studentProfileId: access.studentProfileId,
+      accountId,
+    },
+    select: { id: true },
+  });
+
+  await prisma.activityLog.create({
+    data: {
+      actorId: session.user.id,
+      targetStudentProfileId: access.studentProfileId,
+      entityType: "LEAD",
+      entityId: lead.id,
+      action: "Lead created",
+      metadata: {
+        leadName,
+        status: "NEW",
+        accountSelection,
+        accountId,
+        ownerId,
+        leadScore,
+      },
+    },
+  });
+
+  revalidatePath(`/dashboard/students/${studentId}`);
+  revalidatePath("/dashboard/admin");
+  revalidatePath("/dashboard/sub-admin");
+  redirect(`/dashboard/students/${studentId}`);
+}
+
+async function convertLeadAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+
+  const studentId = String(formData.get("studentId") ?? "");
+  const leadId = String(formData.get("leadId") ?? "");
+  if (!studentId || !leadId) redirect(`/dashboard/students/${studentId}`);
+
+  const access = await ensureLeadWorkflowAccess(studentId, session.user);
+  const lead = await prisma.lead.findUnique({
+    where: { id: leadId },
+    include: { opportunity: true },
+  });
+  if (!lead || lead.studentProfileId !== access.studentProfileId) {
+    redirect(`/dashboard/students/${studentId}`);
+  }
+  if (!canManageLead(session.user, lead.ownerId)) {
+    redirect(`/dashboard/students/${studentId}`);
+  }
+  if (lead.status !== "QUALIFIED") {
+    redirect(`/dashboard/students/${studentId}`);
+  }
+
+  if (!lead.opportunity) {
+    await prisma.$transaction([
+      prisma.opportunity.create({
+        data: {
+          leadId: lead.id,
+          accountId: lead.accountId,
+          name: `${lead.name} Opportunity`,
+          amount: 0,
+          probability: 25,
+          expectedCloseDate: lead.nextFollowUpAt ?? null,
+          forecastCategory: "PIPELINE",
+          stage: "NEW",
+        },
+      }),
+      prisma.lead.update({
+        where: { id: lead.id },
+        data: { status: "CONVERTED", convertedAt: new Date() },
+      }),
+    ]);
+  }
+
+  await prisma.activityLog.create({
+    data: {
+      actorId: session.user.id,
+      targetStudentProfileId: access.studentProfileId,
+      entityType: "LEAD",
+      entityId: lead.id,
+      action: "Lead converted to opportunity",
+      metadata: { fromStatus: "QUALIFIED", toStatus: "CONVERTED" },
+    },
+  });
+
+  revalidatePath(`/dashboard/students/${studentId}`);
+  redirect(`/dashboard/students/${studentId}`);
+}
+
+async function updateLeadQualificationAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+
+  const studentId = String(formData.get("studentId") ?? "");
+  const leadId = String(formData.get("leadId") ?? "");
+  if (!studentId || !leadId) redirect(`/dashboard/students/${studentId}`);
+  const access = await ensureLeadWorkflowAccess(studentId, session.user);
+
+  const lead = await prisma.lead.findUnique({
+    where: { id: leadId },
+    select: { id: true, studentProfileId: true, ownerId: true },
+  });
+  if (!lead || lead.studentProfileId !== access.studentProfileId) {
+    redirect(`/dashboard/students/${studentId}`);
+  }
+  if (!canManageLead(session.user, lead.ownerId)) {
+    redirect(`/dashboard/students/${studentId}`);
+  }
+
+  const ownerIdRaw = String(formData.get("ownerId") ?? "");
+  const ownerId = ownerIdRaw || null;
+  if (ownerId) {
+    const ownerExists = await prisma.user.findFirst({
+      where: { id: ownerId, role: { in: ["ADMIN", "SUB_ADMIN", "INTERNAL_STAFF"] } },
+      select: { id: true },
+    });
+    if (!ownerExists) redirect(`/dashboard/students/${studentId}`);
+  }
+
+  const nextFollowUpAt = parseOptionalDate(String(formData.get("nextFollowUpAt") ?? "").trim());
+  const leadScore = clampLeadScore(Number(formData.get("leadScore") ?? 0));
+  const qualificationReason = nullableText(formData.get("qualificationReason"));
+  const qualificationNotes = nullableText(formData.get("qualificationNotes"));
+
+  await prisma.lead.update({
+    where: { id: leadId },
+    data: {
+      ownerId,
+      assignedAt: ownerId ? new Date() : null,
+      nextFollowUpAt,
+      leadScore,
+      qualificationReason,
+      qualificationNotes,
+    },
+  });
+
+  await prisma.activityLog.create({
+    data: {
+      actorId: session.user.id,
+      targetStudentProfileId: access.studentProfileId,
+      entityType: "LEAD",
+      entityId: leadId,
+      action: "Lead qualification details updated",
+      metadata: { ownerId, leadScore, nextFollowUpAt, qualificationReason },
+    },
+  });
+
+  revalidatePath(`/dashboard/students/${studentId}`);
+  redirect(`/dashboard/students/${studentId}`);
+}
+
+async function updateLeadStatusAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+
+  const studentId = String(formData.get("studentId") ?? "");
+  const leadId = String(formData.get("leadId") ?? "");
+  const nextStatusRaw = String(formData.get("nextStatus") ?? "NEW") as LeadStatus;
+  if (!studentId || !leadId) redirect(`/dashboard/students/${studentId}`);
+  const access = await ensureLeadWorkflowAccess(studentId, session.user);
+
+  const lead = await prisma.lead.findUnique({
+    where: { id: leadId },
+    select: { id: true, studentProfileId: true, status: true, ownerId: true, firstResponseAt: true },
+  });
+  if (!lead || lead.studentProfileId !== access.studentProfileId) {
+    redirect(`/dashboard/students/${studentId}`);
+  }
+  if (!canManageLead(session.user, lead.ownerId)) {
+    redirect(`/dashboard/students/${studentId}`);
+  }
+  const nextStatus = sanitizeLeadStatus(nextStatusRaw);
+  if (!canTransitionLeadStatus(lead.status, nextStatus)) {
+    redirect(`/dashboard/students/${studentId}`);
+  }
+
+  await prisma.lead.update({
+    where: { id: leadId },
+    data: {
+      status: nextStatus,
+      convertedAt: nextStatus === "CONVERTED" ? new Date() : undefined,
+      lastContactAt:
+        nextStatus === "CONTACTED" || nextStatus === "QUALIFIED" || nextStatus === "NURTURE"
+          ? new Date()
+          : undefined,
+      firstResponseAt:
+        !lead.firstResponseAt &&
+        (nextStatus === "CONTACTED" || nextStatus === "QUALIFIED" || nextStatus === "NURTURE")
+          ? new Date()
+          : undefined,
+    },
+  });
+
+  await prisma.activityLog.create({
+    data: {
+      actorId: session.user.id,
+      targetStudentProfileId: access.studentProfileId,
+      entityType: "LEAD",
+      entityId: leadId,
+      action: `Lead status changed: ${formatLeadStatus(lead.status)} -> ${formatLeadStatus(nextStatus)}`,
+      metadata: { fromStatus: lead.status, toStatus: nextStatus },
+    },
+  });
+
+  revalidatePath(`/dashboard/students/${studentId}`);
+  redirect(`/dashboard/students/${studentId}`);
+}
+
+async function updateOpportunityPipelineAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+
+  const studentId = String(formData.get("studentId") ?? "");
+  const opportunityId = String(formData.get("opportunityId") ?? "");
+  const name = String(formData.get("name") ?? "").trim() || "Opportunity";
+  const amount = Number(formData.get("amount") ?? 0);
+  const probability = clampPercent(Number(formData.get("probability") ?? 0));
+  const expectedCloseDate = parseOptionalDate(String(formData.get("expectedCloseDate") ?? "").trim());
+  const forecastCategoryRaw = String(formData.get("forecastCategory") ?? "PIPELINE");
+  const stage = String(formData.get("stage") ?? "NEW") as OpportunityStage;
+  const safeStage: OpportunityStage = ["NEW", "QUOTE_SENT", "CLOSED_WON", "CLOSED_LOST"].includes(stage)
+    ? stage
+    : "NEW";
+  const forecastCategory: OpportunityForecastCategory =
+    forecastCategoryRaw === "BEST_CASE" ||
+    forecastCategoryRaw === "COMMIT" ||
+    forecastCategoryRaw === "CLOSED"
+      ? forecastCategoryRaw
+      : "PIPELINE";
+
+  if (!studentId || !opportunityId) redirect(`/dashboard/students/${studentId}`);
+  const access = await ensureLeadWorkflowAccess(studentId, session.user);
+  const opportunity = await prisma.opportunity.findUnique({
+    where: { id: opportunityId },
+    include: { lead: { select: { studentProfileId: true } } },
+  });
+  if (!opportunity || opportunity.lead.studentProfileId !== access.studentProfileId) {
+    redirect(`/dashboard/students/${studentId}`);
+  }
+
+  await prisma.opportunity.update({
+    where: { id: opportunityId },
+    data: {
+      name,
+      amount: Number.isFinite(amount) && amount >= 0 ? amount : 0,
+      probability,
+      expectedCloseDate,
+      forecastCategory,
+      stage: safeStage,
+      closedAt: safeStage === "CLOSED_WON" || safeStage === "CLOSED_LOST" ? new Date() : null,
+    },
+  });
+
+  await prisma.activityLog.create({
+    data: {
+      actorId: session.user.id,
+      targetStudentProfileId: access.studentProfileId,
+      entityType: "OPPORTUNITY",
+      entityId: opportunityId,
+      action: "Opportunity pipeline updated",
+      metadata: {
+        stage: safeStage,
+        amount,
+        probability,
+        expectedCloseDate,
+        forecastCategory,
+      },
+    },
+  });
+
+  revalidatePath(`/dashboard/students/${studentId}`);
+  redirect(`/dashboard/students/${studentId}`);
+}
+
+async function createQuoteAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+
+  const studentId = String(formData.get("studentId") ?? "");
+  const opportunityId = String(formData.get("opportunityId") ?? "");
+  const amount = Number(formData.get("amount") ?? 0);
+  const description = nullableText(formData.get("description"));
+  if (!studentId || !opportunityId || !Number.isFinite(amount) || amount < 0) {
+    redirect(`/dashboard/students/${studentId}`);
+  }
+
+  const access = await ensureLeadWorkflowAccess(studentId, session.user);
+  const opportunity = await prisma.opportunity.findUnique({
+    where: { id: opportunityId },
+    include: { lead: { select: { studentProfileId: true } } },
+  });
+  if (!opportunity || opportunity.lead.studentProfileId !== access.studentProfileId) {
+    redirect(`/dashboard/students/${studentId}`);
+  }
+
+  const quote = await prisma.quote.create({
+    data: {
+      opportunityId,
+      amount,
+      description,
+      status: "DRAFT",
+    },
+    select: { id: true },
+  });
+  await prisma.activityLog.create({
+    data: {
+      actorId: session.user.id,
+      targetStudentProfileId: access.studentProfileId,
+      entityType: "QUOTE",
+      entityId: quote.id,
+      action: "Created quote draft",
+      metadata: { amount },
+    },
+  });
+
+  revalidatePath(`/dashboard/students/${studentId}`);
+  redirect(`/dashboard/students/${studentId}`);
+}
+
+async function submitQuoteForApprovalAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+
+  const studentId = String(formData.get("studentId") ?? "");
+  const quoteId = String(formData.get("quoteId") ?? "");
+  if (!studentId || !quoteId) redirect(`/dashboard/students/${studentId}`);
+
+  const access = await ensureLeadWorkflowAccess(studentId, session.user);
+  const quote = await prisma.quote.findUnique({
+    where: { id: quoteId },
+    include: { opportunity: { include: { lead: { select: { studentProfileId: true } } } } },
+  });
+  if (!quote || quote.opportunity.lead.studentProfileId !== access.studentProfileId) {
+    redirect(`/dashboard/students/${studentId}`);
+  }
+
+  await prisma.$transaction([
+    prisma.quote.update({
+      where: { id: quoteId },
+      data: {
+        status: "SUBMITTED",
+        submittedAt: new Date(),
+        submittedById: session.user.id,
+      },
+    }),
+    prisma.opportunity.update({
+      where: { id: quote.opportunityId },
+      data: { stage: "QUOTE_SENT" },
+    }),
+  ]);
+
+  await prisma.activityLog.create({
+    data: {
+      actorId: session.user.id,
+      targetStudentProfileId: access.studentProfileId,
+      entityType: "QUOTE",
+      entityId: quoteId,
+      action: "Submitted quote for approval",
+    },
+  });
+
+  revalidatePath(`/dashboard/students/${studentId}`);
+  redirect(`/dashboard/students/${studentId}`);
+}
+
+async function approveQuoteAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+
+  const studentId = String(formData.get("studentId") ?? "");
+  const quoteId = String(formData.get("quoteId") ?? "");
+  const approvalNotes = nullableText(formData.get("approvalNotes"));
+  if (!studentId || !quoteId) redirect(`/dashboard/students/${studentId}`);
+
+  const access = await ensureLeadWorkflowAccess(studentId, session.user);
+  const quote = await prisma.quote.findUnique({
+    where: { id: quoteId },
+    include: { opportunity: { include: { lead: { select: { studentProfileId: true } } } } },
+  });
+  if (!quote || quote.opportunity.lead.studentProfileId !== access.studentProfileId) {
+    redirect(`/dashboard/students/${studentId}`);
+  }
+
+  await prisma.quote.update({
+    where: { id: quoteId },
+    data: {
+      status: "APPROVED",
+      approvedAt: new Date(),
+      approvedById: session.user.id,
+      decisionedAt: new Date(),
+      approvalNotes,
+    },
+  });
+
+  await prisma.activityLog.create({
+    data: {
+      actorId: session.user.id,
+      targetStudentProfileId: access.studentProfileId,
+      entityType: "QUOTE",
+      entityId: quoteId,
+      action: "Quote approved",
+      metadata: { approvalNotes },
+    },
+  });
+
+  revalidatePath(`/dashboard/students/${studentId}`);
+  redirect(`/dashboard/students/${studentId}`);
+}
+
+async function rejectQuoteAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+
+  const studentId = String(formData.get("studentId") ?? "");
+  const quoteId = String(formData.get("quoteId") ?? "");
+  const approvalNotes = nullableText(formData.get("approvalNotes"));
+  if (!studentId || !quoteId) redirect(`/dashboard/students/${studentId}`);
+
+  const access = await ensureLeadWorkflowAccess(studentId, session.user);
+  const quote = await prisma.quote.findUnique({
+    where: { id: quoteId },
+    include: { opportunity: { include: { lead: { select: { studentProfileId: true } } } } },
+  });
+  if (!quote || quote.opportunity.lead.studentProfileId !== access.studentProfileId) {
+    redirect(`/dashboard/students/${studentId}`);
+  }
+
+  await prisma.quote.update({
+    where: { id: quoteId },
+    data: {
+      status: "REJECTED",
+      rejectedById: session.user.id,
+      decisionedAt: new Date(),
+      approvalNotes,
+    },
+  });
+
+  await prisma.activityLog.create({
+    data: {
+      actorId: session.user.id,
+      targetStudentProfileId: access.studentProfileId,
+      entityType: "QUOTE",
+      entityId: quoteId,
+      action: "Quote rejected",
+      metadata: { approvalNotes },
+    },
+  });
+
+  revalidatePath(`/dashboard/students/${studentId}`);
+  redirect(`/dashboard/students/${studentId}`);
+}
+
+async function closeOpportunityAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+
+  const studentId = String(formData.get("studentId") ?? "");
+  const opportunityId = String(formData.get("opportunityId") ?? "");
+  if (!studentId || !opportunityId) redirect(`/dashboard/students/${studentId}`);
+
+  const access = await ensureLeadWorkflowAccess(studentId, session.user);
+  const opportunity = await prisma.opportunity.findUnique({
+    where: { id: opportunityId },
+    include: {
+      lead: { select: { studentProfileId: true } },
+      quotes: { select: { status: true } },
+    },
+  });
+  if (!opportunity || opportunity.lead.studentProfileId !== access.studentProfileId) {
+    redirect(`/dashboard/students/${studentId}`);
+  }
+  const approvedQuoteExists = opportunity.quotes.some((quote) => quote.status === "APPROVED");
+  if (!approvedQuoteExists) redirect(`/dashboard/students/${studentId}`);
+
+  await prisma.opportunity.update({
+    where: { id: opportunityId },
+    data: { stage: "CLOSED_WON", closedAt: new Date(), forecastCategory: "CLOSED", probability: 100 },
+  });
+  await prisma.activityLog.create({
+    data: {
+      actorId: session.user.id,
+      targetStudentProfileId: access.studentProfileId,
+      entityType: "OPPORTUNITY",
+      entityId: opportunityId,
+      action: "Closed opportunity as won",
+    },
+  });
+
+  revalidatePath(`/dashboard/students/${studentId}`);
+  redirect(`/dashboard/students/${studentId}`);
+}
+
+async function convertOpportunityToCaseAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+
+  const studentId = String(formData.get("studentId") ?? "");
+  const opportunityId = String(formData.get("opportunityId") ?? "");
+  if (!studentId || !opportunityId) redirect(`/dashboard/students/${studentId}`);
+
+  const access = await ensureLeadWorkflowAccess(studentId, session.user);
+  const opportunity = await prisma.opportunity.findUnique({
+    where: { id: opportunityId },
+    include: {
+      lead: { select: { id: true, name: true, studentProfileId: true } },
+      case: { select: { id: true } },
+    },
+  });
+  if (!opportunity || opportunity.lead.studentProfileId !== access.studentProfileId) {
+    redirect(`/dashboard/students/${studentId}`);
+  }
+  if (opportunity.stage !== "CLOSED_WON" || opportunity.case) {
+    redirect(`/dashboard/students/${studentId}`);
+  }
+
+  const createdCase = await prisma.case.create({
+    data: {
+      opportunityId,
+      accountId: opportunity.accountId,
+      title: `${opportunity.lead.name} Case`,
+      description: "Case created from won opportunity.",
+      status: "OPEN",
+    },
+    select: { id: true },
+  });
+
+  await prisma.activityLog.create({
+    data: {
+      actorId: session.user.id,
+      targetStudentProfileId: access.studentProfileId,
+      entityType: "CASE",
+      entityId: createdCase.id,
+      action: "Converted won opportunity to case",
+    },
+  });
+
+  revalidatePath(`/dashboard/students/${studentId}`);
+  redirect(`/dashboard/students/${studentId}`);
+}
+
+async function updateCaseAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+
+  const studentId = String(formData.get("studentId") ?? "");
+  const caseId = String(formData.get("caseId") ?? "");
+  const title = String(formData.get("title") ?? "").trim();
+  const description = nullableText(formData.get("description"));
+  const status = String(formData.get("status") ?? "OPEN") as CaseStatus;
+  const assignedAgentIdRaw = String(formData.get("assignedAgentId") ?? "");
+  const activityNote = nullableText(formData.get("activityNote"));
+  const safeStatus: CaseStatus = ["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"].includes(status)
+    ? status
+    : "OPEN";
+  const assignedAgentId = assignedAgentIdRaw || null;
+  if (!studentId || !caseId || !title) redirect(`/dashboard/students/${studentId}`);
+
+  const access = await ensureLeadWorkflowAccess(studentId, session.user);
+  const existingCase = await prisma.case.findUnique({
+    where: { id: caseId },
+    include: {
+      opportunity: { include: { lead: { select: { studentProfileId: true } } } },
+    },
+  });
+  if (!existingCase || existingCase.opportunity.lead.studentProfileId !== access.studentProfileId) {
+    redirect(`/dashboard/students/${studentId}`);
+  }
+
+  if (assignedAgentId) {
+    const assignedAgent = await prisma.user.findFirst({
+      where: { id: assignedAgentId, role: "INTERNAL_STAFF" },
+      select: { id: true },
+    });
+    if (!assignedAgent) redirect(`/dashboard/students/${studentId}`);
+  }
+
+  await prisma.case.update({
+    where: { id: caseId },
+    data: {
+      title,
+      description,
+      status: safeStatus,
+      assignedAgentId,
+    },
+  });
+  await prisma.activityLog.create({
+    data: {
+      actorId: session.user.id,
+      targetStudentProfileId: access.studentProfileId,
+      entityType: "CASE",
+      entityId: caseId,
+      action: activityNote ? `Updated case: ${activityNote}` : "Updated case details",
+      metadata: { status: safeStatus, assignedAgentId },
+    },
+  });
+
+  revalidatePath(`/dashboard/students/${studentId}`);
+  redirect(`/dashboard/students/${studentId}`);
+}
+
+async function ensureLeadWorkflowAccess(
+  studentId: string,
+  user: { id: string; role: string },
+  createProfileIfMissing = false,
+) {
+  if (user.role !== "ADMIN" && user.role !== "SUB_ADMIN" && user.role !== "INTERNAL_STAFF") {
+    redirect("/dashboard");
+  }
+  const student = await prisma.user.findFirst({
+    where: { id: studentId, role: "USER" },
+    select: { id: true, studentProfile: { select: { id: true } } },
+  });
+  if (!student) {
+    redirect("/dashboard");
+  }
+
+  if (user.role === "SUB_ADMIN") {
+    const assigned = await prisma.questionnaireSubmission.findFirst({
+      where: {
+        studentId,
+        OR: [{ assignedToId: user.id }, { assignedToId: null }],
+      },
+      select: { id: true },
+    });
+    if (!assigned) redirect("/dashboard/sub-admin");
+  }
+
+  if (user.role === "INTERNAL_STAFF") {
+    const assigned = await prisma.studentAssignment.findFirst({
+      where: {
+        assignedToId: user.id,
+        isActive: true,
+        studentProfile: { userId: studentId },
+      },
+      select: { id: true },
+    });
+    if (!assigned) redirect("/dashboard/internal-staff");
+  }
+
+  if (student.studentProfile) {
+    return { studentProfileId: student.studentProfile.id };
+  }
+  if (!createProfileIfMissing) {
+    redirect(`/dashboard/students/${studentId}`);
+  }
+
+  const createdProfile = await prisma.studentProfile.create({
+    data: { userId: studentId },
+    select: { id: true },
+  });
+  return { studentProfileId: createdProfile.id };
+}
+
 function nullableText(value: FormDataEntryValue | null) {
   const text = String(value ?? "").trim();
   return text.length > 0 ? text : null;
@@ -1878,6 +3528,115 @@ function mimeToExt(mime: string) {
   if (mime.includes("webp")) return ".webp";
   if (mime.includes("gif")) return ".gif";
   return ".bin";
+}
+
+function sanitizeLeadStatus(status: LeadStatus): LeadStatus {
+  if (
+    status === "CONTACTED" ||
+    status === "QUALIFIED" ||
+    status === "NURTURE" ||
+    status === "DISQUALIFIED" ||
+    status === "CONVERTED"
+  ) {
+    return status;
+  }
+  return "NEW";
+}
+
+function canTransitionLeadStatus(current: LeadStatus, next: LeadStatus) {
+  if (current === next) return true;
+  const allowed: Record<LeadStatus, LeadStatus[]> = {
+    NEW: ["CONTACTED", "QUALIFIED", "NURTURE", "DISQUALIFIED"],
+    CONTACTED: ["QUALIFIED", "NURTURE", "DISQUALIFIED"],
+    QUALIFIED: ["NURTURE", "DISQUALIFIED", "CONVERTED"],
+    NURTURE: ["CONTACTED", "QUALIFIED", "DISQUALIFIED"],
+    DISQUALIFIED: ["NURTURE", "CONTACTED"],
+    CONVERTED: [],
+  };
+  return allowed[current].includes(next);
+}
+
+function canManageLead(user: { id: string; role: string }, ownerId?: string | null) {
+  if (user.role === "ADMIN" || user.role === "SUB_ADMIN") return true;
+  if (user.role === "INTERNAL_STAFF") return !ownerId || ownerId === user.id;
+  return false;
+}
+
+function clampLeadScore(raw: number) {
+  if (!Number.isFinite(raw)) return 0;
+  return Math.max(0, Math.min(100, Math.round(raw)));
+}
+
+function clampPercent(raw: number) {
+  if (!Number.isFinite(raw)) return 0;
+  return Math.max(0, Math.min(100, Math.round(raw)));
+}
+
+function formatCrmAccountType(type: CrmAccountType) {
+  if (type === "INSTITUTION") return "Institution";
+  if (type === "PARENT") return "Parent/Sponsor";
+  if (type === "PARTNER") return "Partner";
+  return "Student";
+}
+
+function formatLeadStatus(status: LeadStatus) {
+  if (status === "CONTACTED") return "Contacted";
+  if (status === "QUALIFIED") return "Qualified";
+  if (status === "NURTURE") return "Nurture";
+  if (status === "DISQUALIFIED") return "Disqualified";
+  if (status === "CONVERTED") return "Converted";
+  return "New";
+}
+
+function leadStatusTone(status: LeadStatus) {
+  if (status === "CONTACTED") return "bg-blue-50 text-blue-700";
+  if (status === "QUALIFIED") return "bg-emerald-50 text-emerald-700";
+  if (status === "NURTURE") return "bg-amber-50 text-amber-700";
+  if (status === "DISQUALIFIED") return "bg-rose-50 text-rose-700";
+  if (status === "CONVERTED") return "bg-emerald-50 text-emerald-700";
+  return "bg-slate-100 text-slate-700";
+}
+
+function formatOpportunityStage(stage: OpportunityStage) {
+  if (stage === "QUOTE_SENT") return "Quote Sent";
+  if (stage === "CLOSED_WON") return "Closed Won";
+  if (stage === "CLOSED_LOST") return "Closed Lost";
+  return "New";
+}
+
+function opportunityStageTone(stage: OpportunityStage) {
+  if (stage === "QUOTE_SENT") return "bg-blue-50 text-blue-700";
+  if (stage === "CLOSED_WON") return "bg-emerald-50 text-emerald-700";
+  if (stage === "CLOSED_LOST") return "bg-rose-50 text-rose-700";
+  return "bg-slate-100 text-slate-700";
+}
+
+function formatQuoteStatus(status: QuoteStatus) {
+  if (status === "SUBMITTED") return "Submitted";
+  if (status === "APPROVED") return "Approved";
+  if (status === "REJECTED") return "Rejected";
+  return "Draft";
+}
+
+function quoteStatusTone(status: QuoteStatus) {
+  if (status === "SUBMITTED") return "bg-blue-50 text-blue-700";
+  if (status === "APPROVED") return "bg-emerald-50 text-emerald-700";
+  if (status === "REJECTED") return "bg-rose-50 text-rose-700";
+  return "bg-slate-100 text-slate-700";
+}
+
+function formatCaseStatus(status: CaseStatus) {
+  if (status === "IN_PROGRESS") return "In Progress";
+  if (status === "RESOLVED") return "Resolved";
+  if (status === "CLOSED") return "Closed";
+  return "Open";
+}
+
+function caseStatusTone(status: CaseStatus) {
+  if (status === "IN_PROGRESS") return "bg-blue-50 text-blue-700";
+  if (status === "RESOLVED") return "bg-emerald-50 text-emerald-700";
+  if (status === "CLOSED") return "bg-slate-200 text-slate-700";
+  return "bg-slate-100 text-slate-700";
 }
 
 function formatMoney(currency: string, amount: number) {

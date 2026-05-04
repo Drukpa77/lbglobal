@@ -1,14 +1,22 @@
 import Link from "next/link";
-import type { DocumentVerificationStatus, TaskPriority, TaskStatus } from "@prisma/client";
+import type { DocumentVerificationStatus, TaskStatus } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
+import { ContributionLeaderboard } from "@/components/contribution-leaderboard";
 import { DashboardTabBar } from "@/components/dashboard-tab-bar";
-import { InternalStaffHelp } from "@/components/internal-staff-help";
 import { RemindersWidget } from "@/components/reminders-widget";
+import { getContributions } from "@/lib/contributions";
 import { prisma } from "@/lib/prisma";
 import { getRemindersForUser } from "@/lib/reminders";
+import {
+  allCaseStages,
+  caseStageLabel,
+  caseStageOrder,
+  caseStageTerminals,
+  caseStageTone,
+} from "@/lib/case-stage";
 
 type SearchParams = Promise<{ filter?: string; tab?: string }>;
 
@@ -19,7 +27,12 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
     redirect("/dashboard");
   }
   const searchParams = await props.searchParams;
-  const tab = (searchParams.tab ?? "overview") as "overview" | "queue" | "tasks" | "students";
+  const tab = (searchParams.tab ?? "overview") as
+    | "overview"
+    | "queue"
+    | "tasks"
+    | "students"
+    | "contributions";
   const filterRaw = String(searchParams.filter ?? "all");
   const filter: "all" | "overdue" | "today" =
     filterRaw === "overdue" || filterRaw === "today" ? filterRaw : "all";
@@ -28,7 +41,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
   const today = new Date();
   const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
 
-  const [reminders, assignments, tasks, conversations, followUps, pendingDocuments] = await Promise.all([
+  const [reminders, assignments, stagePipelineCounts, tasks, conversations, followUps, pendingDocuments] = await Promise.all([
     getRemindersForUser(session.user.role as "ADMIN" | "INTERNAL_STAFF", session.user.id),
     prisma.studentAssignment.findMany({
       where: isAdmin ? { isActive: true } : { isActive: true, assignedToId: session.user.id },
@@ -61,6 +74,14 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
       },
       orderBy: { createdAt: "desc" },
       take: 50,
+    }),
+    // Pipeline counts across the entire visible scope (not just first 50 cases)
+    prisma.studentProfile.groupBy({
+      by: ["caseStage"],
+      where: isAdmin
+        ? undefined
+        : { assignments: { some: { assignedToId: session.user.id, isActive: true } } },
+      _count: { _all: true },
     }),
     prisma.task.findMany({
       where: isAdmin ? undefined : { assigneeId: session.user.id },
@@ -128,19 +149,42 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
     (profile) => profile.nextFollowUpDate && profile.nextFollowUpDate < startOfToday,
   );
   const caseRows = assignments.map((assignment) => {
-    const stage = getCaseStage(assignment.studentProfile);
     return {
       assignment,
-      stage,
+      stage: assignment.studentProfile.caseStage,
       openTaskCount: assignment.studentProfile.tasks.length,
       pendingDocCount: assignment.studentProfile.documents.length,
       latestContract: assignment.studentProfile.contracts[0],
       latestInvoice: assignment.studentProfile.invoices[0],
     };
   });
-  const stageCounts = stageOrder.map((stage) => ({
+  const activeCasePreview = caseRows.slice(0, 2).map((row) => {
+    const studentName = row.assignment.studentProfile.user.name ?? row.assignment.studentProfile.user.email;
+    return `${studentName} - ${caseStageLabel(row.stage)}`;
+  });
+  const openTaskPreview = openTasks.slice(0, 2).map((task) => {
+    const studentName = task.studentProfile.user.name ?? task.studentProfile.user.email;
+    return `${task.title} - ${studentName}`;
+  });
+  const overdueTaskPreview = overdueTasks.slice(0, 1).map((task) => {
+    const studentName = task.studentProfile.user.name ?? task.studentProfile.user.email;
+    return `${task.title} - ${studentName}`;
+  });
+  const overdueFollowUpPreview = overdueFollowUps.slice(0, 1).map((profile) => {
+    const studentName = profile.user.name ?? profile.user.email;
+    return `Follow-up overdue - ${studentName}`;
+  });
+  const overduePreview = [...overdueTaskPreview, ...overdueFollowUpPreview].slice(0, 2);
+  const pendingDocPreview = pendingDocuments.slice(0, 2).map((doc) => {
+    const studentName = doc.studentProfile.user.name ?? doc.studentProfile.user.email;
+    return `${doc.title} - ${studentName}`;
+  });
+  const stageCountMap = new Map<string, number>(
+    stagePipelineCounts.map((row) => [row.caseStage, row._count._all]),
+  );
+  const stageCounts = allCaseStages.map((stage) => ({
     stage,
-    count: caseRows.filter((row) => row.stage === stage).length,
+    count: stageCountMap.get(stage) ?? 0,
   }));
   const filteredOpenTasks = filterOpenTasks(openTasks, filter, startOfToday);
   const filteredFollowUps = filterFollowUps(followUps, filter, startOfToday);
@@ -212,12 +256,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
     <section className="space-y-6 text-gray-900">
       <div>
         <h1 className="text-2xl font-semibold">Internal Staff Dashboard</h1>
-        <p className="mt-1 text-sm text-gray-600">
-          Manage your case queue, deadlines, documents, and communication from one place.
-        </p>
       </div>
-
-      <InternalStaffHelp />
 
       <DashboardTabBar
         tabs={[
@@ -225,6 +264,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
           { id: "queue", label: "Work Queue", count: filteredOpenTasks.length },
           { id: "tasks", label: "Tasks & Docs", count: tasks.length + filteredPendingDocuments.length },
           { id: "students", label: "Students", count: assignments.length },
+          { id: "contributions", label: "Contributions" },
         ]}
         activeTab={tab}
       />
@@ -237,10 +277,15 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
           )}
 
           <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <MetricCard title="Active Cases" value={assignments.length} tone="neutral" />
-            <MetricCard title="Open Tasks" value={openTasks.length} tone="blue" />
-            <MetricCard title="Overdue Items" value={overdueTasks.length + overdueFollowUps.length} tone="amber" />
-            <MetricCard title="Docs Pending Review" value={pendingDocuments.length} tone="rose" />
+            <MetricCard title="Active Cases" value={assignments.length} tone="neutral" preview={activeCasePreview} />
+            <MetricCard title="Open Tasks" value={openTasks.length} tone="blue" preview={openTaskPreview} />
+            <MetricCard
+              title="Overdue Items"
+              value={overdueTasks.length + overdueFollowUps.length}
+              tone="amber"
+              preview={overduePreview}
+            />
+            <MetricCard title="Docs Pending Review" value={pendingDocuments.length} tone="rose" preview={pendingDocPreview} />
           </section>
 
           <section className="rounded-lg border bg-white p-4">
@@ -261,57 +306,50 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
           <section className="rounded-lg border bg-white p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-sm font-semibold">Case Stage Pipeline</h2>
-              <p className="text-xs text-gray-500">Auto-derived from current case activity</p>
+              <p className="text-xs text-gray-500">Counts of students currently at each stage</p>
             </div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
-              {stageCounts.map((item) => (
-                <article key={item.stage} className="rounded-md border border-gray-200 bg-gray-50 p-3">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-600">{stageLabel(item.stage)}</p>
-                  <p className="mt-1 text-xl font-semibold text-gray-900">{item.count}</p>
-                </article>
-              ))}
+            <div className="mt-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Workflow stages</p>
+              <div className="mt-2 flex gap-2 overflow-x-auto pb-2">
+                {caseStageOrder.map((stage) => {
+                  const item = stageCounts.find((c) => c.stage === stage);
+                  const count = item?.count ?? 0;
+                  return (
+                    <article
+                      key={stage}
+                      className={`min-w-[180px] rounded-md border p-3 ${caseStageTone(stage)}`}
+                    >
+                      <p className="text-[11px] font-semibold uppercase tracking-wide opacity-80">
+                        {caseStageLabel(stage)}
+                      </p>
+                      <p className="mt-1 text-xl font-semibold">{count}</p>
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="mt-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Outcomes / end states</p>
+              <div className="mt-2 flex gap-2 overflow-x-auto pb-2">
+                {caseStageTerminals.map((stage) => {
+                  const item = stageCounts.find((c) => c.stage === stage);
+                  const count = item?.count ?? 0;
+                  return (
+                    <article
+                      key={stage}
+                      className={`min-w-[180px] rounded-md border p-3 ${caseStageTone(stage)}`}
+                    >
+                      <p className="text-[11px] font-semibold uppercase tracking-wide opacity-80">
+                        {caseStageLabel(stage)}
+                      </p>
+                      <p className="mt-1 text-xl font-semibold">{count}</p>
+                    </article>
+                  );
+                })}
+              </div>
             </div>
           </section>
 
-          <section className="rounded-lg border bg-white p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold">SOP Task Templates</h2>
-              <p className="text-xs text-gray-500">Generate standard checklists for consistency</p>
-            </div>
-            {assignments.length === 0 ? (
-              <p className="mt-2 text-sm text-gray-600">No active cases available for SOP task generation.</p>
-            ) : (
-              <form action={createSopTasksAction} className="mt-3 grid gap-2 md:grid-cols-4">
-                <select name="studentProfileId" required className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm">
-                  <option value="">Select student case</option>
-                  {assignments.map((assignment) => (
-                    <option key={assignment.studentProfile.id} value={assignment.studentProfile.id}>
-                      {assignment.studentProfile.user.name ?? assignment.studentProfile.user.email}
-                    </option>
-                  ))}
-                </select>
-                <select name="templateKey" required className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm">
-                  <option value="">Select SOP template</option>
-                  {Object.entries(sopTemplates).map(([key, template]) => (
-                    <option key={key} value={key}>
-                      {template.label}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  name="startInDays"
-                  type="number"
-                  min={0}
-                  defaultValue={0}
-                  className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
-                  placeholder="Start offset in days"
-                />
-                <button type="submit" className="rounded-md bg-black px-3 py-2 text-sm font-medium text-white">
-                  Generate SOP Tasks
-                </button>
-              </form>
-            )}
-          </section>
         </div>
       )}
 
@@ -627,11 +665,11 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
                         </p>
                         {row.assignment.notes ? <p className="mt-1 text-xs text-gray-600">{row.assignment.notes}</p> : null}
                         <p className="mt-1 text-xs text-gray-700">
-                          Stage: {stageLabel(row.stage)} · Open tasks: {row.openTaskCount} · Pending docs: {row.pendingDocCount}
+                          Stage: {caseStageLabel(row.stage)} · Open tasks: {row.openTaskCount} · Pending docs: {row.pendingDocCount}
                         </p>
                       </div>
-                      <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${stageTone(row.stage)}`}>
-                        {stageLabel(row.stage)}
+                      <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${caseStageTone(row.stage)}`}>
+                        {caseStageLabel(row.stage)}
                       </span>
                     </div>
                     <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -691,7 +729,82 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
           </section>
         </div>
       )}
+
+      {/* ── CONTRIBUTIONS TAB ──────────────────────────────────── */}
+      {tab === "contributions" && <InternalStaffContributionsTabPanel />}
     </section>
+  );
+}
+
+async function InternalStaffContributionsTabPanel() {
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+
+  const cases =
+    session.user.role === "ADMIN"
+      ? await prisma.studentProfile.findMany({
+          include: { user: { select: { id: true, name: true, email: true } } },
+          orderBy: { updatedAt: "desc" },
+          take: 20,
+        })
+      : await prisma.studentAssignment.findMany({
+          where: { isActive: true, assignedToId: session.user.id },
+          include: {
+            studentProfile: {
+              include: { user: { select: { id: true, name: true, email: true } } },
+            },
+          },
+          orderBy: { createdAt: "desc" },
+          take: 20,
+        }).then((rows) => rows.map((row) => row.studentProfile));
+
+  return (
+    <div className="space-y-6">
+      <section className="rounded-lg border bg-white p-4">
+        <h2 className="text-sm font-semibold">Case-wise Contributions</h2>
+        <p className="mt-1 text-xs text-gray-600">
+          Contribution is shown separately for each student case.
+        </p>
+      </section>
+      {cases.length === 0 ? (
+        <section className="rounded-lg border bg-white p-4">
+          <p className="text-sm text-gray-600">No student cases available yet.</p>
+        </section>
+      ) : (
+        await Promise.all(
+          cases.map(async (studentProfile) => {
+            const data = await getContributions({ studentProfileId: studentProfile.id });
+            return (
+              <section key={studentProfile.id} className="space-y-3">
+                <div className="rounded-lg border bg-white p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">
+                        {studentProfile.user.name ?? studentProfile.user.email}
+                      </p>
+                      <p className="text-xs text-slate-600">
+                        Case contribution breakdown
+                      </p>
+                    </div>
+                    <Link
+                      href={`/dashboard/students/${studentProfile.user.id}?tab=contributions`}
+                      className="rounded-md border px-3 py-1 text-xs text-slate-700"
+                    >
+                      Open profile
+                    </Link>
+                  </div>
+                </div>
+                <ContributionLeaderboard
+                  data={data}
+                  title="Who contributed to this case"
+                  subtitle="Stages 70% · Documents 15% · Tasks 15% for this student only."
+                />
+              </section>
+            );
+          }),
+        )
+      )}
+    </div>
   );
 }
 
@@ -699,10 +812,12 @@ function MetricCard({
   title,
   value,
   tone,
+  preview,
 }: {
   title: string;
   value: number;
   tone: "neutral" | "blue" | "amber" | "rose";
+  preview?: string[];
 }) {
   const toneClasses =
     tone === "blue"
@@ -716,6 +831,17 @@ function MetricCard({
     <article className={`rounded-lg border p-4 ${toneClasses}`}>
       <p className="text-xs font-medium uppercase tracking-wide">{title}</p>
       <p className="mt-2 text-2xl font-semibold">{value}</p>
+      {preview && preview.length > 0 ? (
+        <ul className="mt-2 space-y-1 text-xs opacity-80">
+          {preview.map((line, idx) => (
+            <li key={`${idx}-${line}`} className="truncate" title={line}>
+              - {line}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 text-xs opacity-70">No items yet</p>
+      )}
     </article>
   );
 }
@@ -724,43 +850,6 @@ function taskStatusTone(status: string) {
   if (status === "DONE") return "bg-emerald-50 text-emerald-700";
   if (status === "IN_PROGRESS") return "bg-blue-50 text-blue-700";
   if (status === "BLOCKED") return "bg-rose-50 text-rose-700";
-  return "bg-gray-100 text-gray-700";
-}
-
-const stageOrder = ["INTAKE", "DOCS_PENDING", "APPLICATION_PROGRESS", "CONTRACT_BILLING", "ACTIVE_FOLLOW_UP"] as const;
-type CaseStage = (typeof stageOrder)[number];
-
-function getCaseStage(profile: {
-  visaStatus: string;
-  documents: { id: string }[];
-  tasks: { id: string }[];
-  contracts: { status: string }[];
-  invoices: { status: string }[];
-}): CaseStage {
-  if (profile.documents.length > 0) return "DOCS_PENDING";
-  const hasOpenTasks = profile.tasks.length > 0;
-  const latestContract = profile.contracts[0];
-  const latestInvoice = profile.invoices[0];
-
-  if (latestContract || latestInvoice) return "CONTRACT_BILLING";
-  if (hasOpenTasks || profile.visaStatus === "IN_PROGRESS") return "APPLICATION_PROGRESS";
-  if (profile.visaStatus === "APPROVED" || profile.visaStatus === "NOT_REQUIRED") return "ACTIVE_FOLLOW_UP";
-  return "INTAKE";
-}
-
-function stageLabel(stage: CaseStage) {
-  if (stage === "DOCS_PENDING") return "Docs Pending";
-  if (stage === "APPLICATION_PROGRESS") return "Application Progress";
-  if (stage === "CONTRACT_BILLING") return "Contract & Billing";
-  if (stage === "ACTIVE_FOLLOW_UP") return "Active Follow-up";
-  return "Intake";
-}
-
-function stageTone(stage: CaseStage) {
-  if (stage === "DOCS_PENDING") return "bg-amber-50 text-amber-700";
-  if (stage === "APPLICATION_PROGRESS") return "bg-blue-50 text-blue-700";
-  if (stage === "CONTRACT_BILLING") return "bg-violet-50 text-violet-700";
-  if (stage === "ACTIVE_FOLLOW_UP") return "bg-emerald-50 text-emerald-700";
   return "bg-gray-100 text-gray-700";
 }
 
@@ -814,42 +903,6 @@ function filterFollowUps<
 function filterPendingDocuments<T>(docs: T[]) {
   return docs;
 }
-
-const sopTemplates: Record<
-  string,
-  {
-    label: string;
-    tasks: Array<{ title: string; priority: TaskPriority; dueInDays: number }>;
-  }
-> = {
-  DOC_COLLECTION: {
-    label: "Document Collection Checklist",
-    tasks: [
-      { title: "Collect passport and identity documents", priority: "HIGH", dueInDays: 1 },
-      { title: "Collect academic transcripts and certificates", priority: "HIGH", dueInDays: 2 },
-      { title: "Collect English proficiency evidence", priority: "MEDIUM", dueInDays: 3 },
-      { title: "Verify financial capacity evidence", priority: "HIGH", dueInDays: 4 },
-    ],
-  },
-  APPLICATION_PREP: {
-    label: "Application Preparation Checklist",
-    tasks: [
-      { title: "Review student profile and eligibility", priority: "HIGH", dueInDays: 1 },
-      { title: "Shortlist institutions and course options", priority: "MEDIUM", dueInDays: 2 },
-      { title: "Draft and review statement of purpose", priority: "HIGH", dueInDays: 3 },
-      { title: "Submit application package", priority: "HIGH", dueInDays: 5 },
-    ],
-  },
-  VISA_FOLLOW_UP: {
-    label: "Visa Follow-up Checklist",
-    tasks: [
-      { title: "Review visa document completeness", priority: "HIGH", dueInDays: 1 },
-      { title: "Prepare visa cover notes and checklist", priority: "MEDIUM", dueInDays: 2 },
-      { title: "Confirm biometrics/health check requirements", priority: "MEDIUM", dueInDays: 3 },
-      { title: "Schedule follow-up call with student", priority: "LOW", dueInDays: 5 },
-    ],
-  },
-};
 
 async function updateTaskStatusFromDashboardAction(formData: FormData) {
   "use server";
@@ -906,88 +959,6 @@ async function updateTaskStatusFromDashboardAction(formData: FormData) {
 
   revalidatePath("/dashboard/internal-staff");
   revalidatePath(`/dashboard/students/${task.studentProfile.userId}`);
-  redirect("/dashboard/internal-staff");
-}
-
-async function createSopTasksAction(formData: FormData) {
-  "use server";
-  const session = await auth();
-  if (!session?.user) redirect("/login");
-  if (session.user.role !== "ADMIN" && session.user.role !== "INTERNAL_STAFF") {
-    redirect("/dashboard");
-  }
-
-  const studentProfileId = String(formData.get("studentProfileId") ?? "");
-  const templateKey = String(formData.get("templateKey") ?? "");
-  const startInDaysRaw = Number(formData.get("startInDays") ?? 0);
-  const startInDays = Number.isFinite(startInDaysRaw) ? Math.max(0, Math.floor(startInDaysRaw)) : 0;
-  const template = sopTemplates[templateKey];
-
-  if (!studentProfileId || !template) {
-    redirect("/dashboard/internal-staff");
-  }
-
-  const assignment = await prisma.studentAssignment.findFirst({
-    where: { studentProfileId, isActive: true },
-    include: {
-      studentProfile: {
-        select: { id: true, userId: true },
-      },
-    },
-    orderBy: { createdAt: "desc" },
-  });
-  if (!assignment) redirect("/dashboard/internal-staff");
-
-  const isAdmin = session.user.role === "ADMIN";
-  if (!isAdmin && assignment.assignedToId !== session.user.id) {
-    redirect("/dashboard/internal-staff");
-  }
-
-  const assigneeId = isAdmin ? assignment.assignedToId : session.user.id;
-  const openExisting = await prisma.task.findMany({
-    where: {
-      studentProfileId,
-      assigneeId,
-      status: { not: "DONE" },
-      title: { in: template.tasks.map((task) => task.title) },
-    },
-    select: { title: true },
-  });
-  const existingTitles = new Set(openExisting.map((task) => task.title));
-  const now = new Date();
-  const tasksToCreate = template.tasks
-    .filter((task) => !existingTitles.has(task.title))
-    .map((task) => {
-      const dueDate = new Date(now);
-      dueDate.setDate(dueDate.getDate() + startInDays + task.dueInDays);
-      return {
-        title: task.title,
-        priority: task.priority,
-        status: "TODO" as TaskStatus,
-        dueDate,
-        studentProfileId,
-        assigneeId,
-        assignerId: session.user.id,
-      };
-    });
-
-  if (tasksToCreate.length > 0) {
-    await prisma.task.createMany({
-      data: tasksToCreate,
-    });
-    await prisma.activityLog.create({
-      data: {
-        actorId: session.user.id,
-        targetStudentProfileId: studentProfileId,
-        entityType: "TASK",
-        entityId: studentProfileId,
-        action: `Generated SOP tasks (${template.label}): ${tasksToCreate.length} created`,
-      },
-    });
-  }
-
-  revalidatePath("/dashboard/internal-staff");
-  revalidatePath(`/dashboard/students/${assignment.studentProfile.userId}`);
   redirect("/dashboard/internal-staff");
 }
 

@@ -2,6 +2,7 @@
 
 const sections = [
   { id: "overview", label: "Overview & Notes" },
+  { id: "case-stage", label: "Case Stage" },
   { id: "profile", label: "Profile & Assignment" },
   { id: "tasks", label: "Tasks & Documents" },
   { id: "financials", label: "Contracts & Invoices" },

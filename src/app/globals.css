@@ -111,6 +111,17 @@ input[type="reset"]:disabled {
   text-decoration: none;
 }
 
+.dashboard-mobile-nav .flex::-webkit-scrollbar,
+.dashboard-tab-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+
+.dashboard-mobile-nav .flex::-webkit-scrollbar-thumb,
+.dashboard-tab-scroll::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.35);
+  border-radius: 999px;
+}
+
 .home-menu-toggle,
 .home-mobile-menu {
   display: none;
@@ -176,6 +187,47 @@ input[type="reset"]:disabled {
 }
 
 @media (max-width: 768px) {
+  .dashboard-main {
+    padding-left: 14px !important;
+    padding-right: 14px !important;
+    padding-top: 16px !important;
+    padding-bottom: 20px !important;
+  }
+
+  .dashboard-main section {
+    overflow-x: hidden;
+  }
+
+  .dashboard-main .grid {
+    gap: 10px;
+  }
+
+  .dashboard-main form .flex {
+    flex-wrap: wrap;
+  }
+
+  .dashboard-main input,
+  .dashboard-main select,
+  .dashboard-main textarea,
+  .dashboard-main button {
+    max-width: 100%;
+  }
+
+  .dashboard-main .overflow-x-auto,
+  .dashboard-main [class*="overflow-x-auto"] {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .dashboard-main table {
+    min-width: 680px;
+  }
+
+  .dashboard-main .max-h-72,
+  .dashboard-main .max-h-80,
+  .dashboard-main .max-h-96 {
+    max-height: 24rem;
+  }
+
   .home-nav-inner {
     padding-top: 12px;
     padding-bottom: 12px;
@@ -218,6 +270,47 @@ input[type="reset"]:disabled {
 }
 
 @media (max-width: 480px) {
+  .dashboard-main {
+    padding-left: 10px !important;
+    padding-right: 10px !important;
+  }
+
+  .dashboard-main .rounded-2xl,
+  .dashboard-main .rounded-xl,
+  .dashboard-main .rounded-lg {
+    border-radius: 12px;
+  }
+
+  .dashboard-main .p-6 {
+    padding: 14px !important;
+  }
+
+  .dashboard-main .p-5,
+  .dashboard-main .p-4 {
+    padding: 12px !important;
+  }
+
+  .dashboard-main .text-2xl {
+    font-size: 1.25rem !important;
+    line-height: 1.75rem !important;
+  }
+
+  .dashboard-main .text-lg {
+    font-size: 1rem !important;
+    line-height: 1.5rem !important;
+  }
+
+  .dashboard-main .text-base,
+  .dashboard-main .text-sm {
+    line-height: 1.35rem;
+  }
+
+  .dashboard-main .max-h-72,
+  .dashboard-main .max-h-80,
+  .dashboard-main .max-h-96 {
+    max-height: 20rem;
+  }
+
   .home-nav-inner {
     padding-left: 14px;
     padding-right: 14px;

@@ -25,6 +25,12 @@ export function UnreadChatBadge() {
     return () => window.removeEventListener("focus", onFocus);
   }, [fetchCount]);
 
+  useEffect(() => {
+    const intervalMs = process.env.NODE_ENV === "development" ? 30_000 : 12_000;
+    const id = window.setInterval(fetchCount, intervalMs);
+    return () => window.clearInterval(id);
+  }, [fetchCount]);
+
   if (count === null) return null;
 
   return (

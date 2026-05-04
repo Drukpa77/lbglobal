@@ -4,6 +4,7 @@ import { auth } from "@/auth";
 import { buildSubmissionWhere } from "@/lib/submission-filters";
 import { formatSubmissionStatus } from "@/lib/submission";
 import { prisma } from "@/lib/prisma";
+import { caseStageLabel } from "@/lib/case-stage";
 
 export async function GET(request: Request) {
   const session = await auth();
@@ -70,6 +71,8 @@ export async function GET(request: Request) {
       "studentName",
       "studentEmail",
       "status",
+      "caseStage",
+      "caseStageUpdatedAt",
       "country",
       "city",
       "course",
@@ -85,6 +88,16 @@ export async function GET(request: Request) {
         csvCell(item.student.name ?? ""),
         csvCell(item.student.email ?? ""),
         csvCell(formatSubmissionStatus(item.status)),
+        csvCell(
+          item.student.studentProfile
+            ? caseStageLabel(item.student.studentProfile.caseStage)
+            : "",
+        ),
+        csvCell(
+          item.student.studentProfile?.caseStageUpdatedAt
+            ? item.student.studentProfile.caseStageUpdatedAt.toISOString()
+            : "",
+        ),
         csvCell(item.sourceCountry ?? ""),
         csvCell(item.sourceCity ?? ""),
         csvCell(item.intendedCourse ?? ""),

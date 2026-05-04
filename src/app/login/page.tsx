@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { signIn } from "@/auth";
 import { SubmitButton } from "@/components/submit-button";
 
-type SearchParams = Promise<{ error?: string; reset?: string }>;
+type SearchParams = Promise<{ error?: string; reset?: string; email?: string }>;
 
 export default async function LoginPage(props: { searchParams: SearchParams }) {
   const searchParams = await props.searchParams;
@@ -13,6 +13,7 @@ export default async function LoginPage(props: { searchParams: SearchParams }) {
     searchParams.error === "CredentialsSignin"
       ? "Invalid email or password."
       : undefined;
+  const attemptedEmail = searchParams.email ?? "";
   const successMessage =
     searchParams.reset === "success" ? "Password has been reset. You can now sign in." : undefined;
 
@@ -73,6 +74,7 @@ export default async function LoginPage(props: { searchParams: SearchParams }) {
                   name="email"
                   type="email"
                   required
+                  defaultValue={attemptedEmail}
                   className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
                   placeholder="name@example.com"
                 />
@@ -135,6 +137,6 @@ async function loginAction(formData: FormData) {
       redirectTo: "/dashboard",
     });
   } catch {
-    redirect("/login?error=CredentialsSignin");
+    redirect(`/login?error=CredentialsSignin&email=${encodeURIComponent(email)}`);
   }
 }

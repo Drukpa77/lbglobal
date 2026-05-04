@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { caseStageLabel } from "@/lib/case-stage";
 
 export async function GET(request: Request) {
   const session = await auth();
@@ -52,6 +53,8 @@ export async function GET(request: Request) {
       "dueDate",
       "studentName",
       "studentEmail",
+      "caseStage",
+      "caseStageUpdatedAt",
       "assignee",
       "filter",
       "generatedAt",
@@ -65,6 +68,8 @@ export async function GET(request: Request) {
         csvCell(task.dueDate ? task.dueDate.toISOString() : ""),
         csvCell(task.studentProfile.user.name ?? ""),
         csvCell(task.studentProfile.user.email ?? ""),
+        csvCell(caseStageLabel(task.studentProfile.caseStage)),
+        csvCell(task.studentProfile.caseStageUpdatedAt.toISOString()),
         csvCell(task.assignee.name ?? task.assignee.email ?? ""),
         csvCell(filter),
         csvCell(new Date().toISOString()),

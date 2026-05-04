@@ -1,7 +1,5 @@
-import fs from "node:fs/promises";
-import path from "node:path";
-
 import sharp from "sharp";
+import { uploadBufferToStorage } from "@/lib/storage";
 
 export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 export const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
@@ -38,9 +36,6 @@ function makeName(prefix: string, extension: string) {
 export async function savePostMedia(file: File, prefix = "post") {
   if (!file || file.size === 0) return null;
 
-  const uploadDir = path.join(process.cwd(), "public", "uploads");
-  await fs.mkdir(uploadDir, { recursive: true });
-
   if (ALLOWED_IMAGE_MIME.has(file.type)) {
     if (file.size > MAX_IMAGE_BYTES) {
       throw new Error("Image file exceeds maximum size (8MB).");
@@ -52,8 +47,14 @@ export async function savePostMedia(file: File, prefix = "post") {
       .webp({ quality: 78 })
       .toBuffer();
     const fileName = makeName(prefix, "webp");
-    await fs.writeFile(path.join(uploadDir, fileName), optimized);
-    return { url: `/uploads/${fileName}`, mediaType: "IMAGE" as const };
+    const relativePath = `uploads/${fileName}`;
+    const url = await uploadBufferToStorage({
+      buffer: optimized,
+      mimeType: "image/webp",
+      blobPath: relativePath,
+      localRelativePath: relativePath,
+    });
+    return { url, mediaType: "IMAGE" as const };
   }
 
   if (ALLOWED_VIDEO_MIME.has(file.type)) {
@@ -62,11 +63,14 @@ export async function savePostMedia(file: File, prefix = "post") {
     }
     const extension = safeExtFromMime(file.type);
     const fileName = makeName(prefix, extension);
-    await fs.writeFile(
-      path.join(uploadDir, fileName),
-      Buffer.from(await file.arrayBuffer()),
-    );
-    return { url: `/uploads/${fileName}`, mediaType: "VIDEO" as const };
+    const relativePath = `uploads/${fileName}`;
+    const url = await uploadBufferToStorage({
+      buffer: Buffer.from(await file.arrayBuffer()),
+      mimeType: file.type,
+      blobPath: relativePath,
+      localRelativePath: relativePath,
+    });
+    return { url, mediaType: "VIDEO" as const };
   }
 
   throw new Error("Unsupported media type.");

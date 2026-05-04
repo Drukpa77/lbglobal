@@ -6,15 +6,24 @@ import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
 import { AdminAnalyticsCharts } from "@/components/admin-analytics-charts";
+import { ContributionLeaderboard } from "@/components/contribution-leaderboard";
 import { DashboardTabBar } from "@/components/dashboard-tab-bar";
 import { DeleteWithConfirm } from "@/components/delete-with-confirm";
 import { DeleteStaffButton } from "@/components/delete-staff-button";
 import { RemindersWidget } from "@/components/reminders-widget";
+import { getContributions } from "@/lib/contributions";
 import { prisma } from "@/lib/prisma";
 import { getRemindersForUser } from "@/lib/reminders";
 import { buildSubmissionWhere } from "@/lib/submission-filters";
 import { formatSubmissionStatus } from "@/lib/submission";
 import { formatVisaStatus, formatYearsLeft } from "@/lib/student-tracking";
+import {
+  allCaseStages,
+  caseStageLabel,
+  caseStageOrder,
+  caseStageTerminals,
+  caseStageTone,
+} from "@/lib/case-stage";
 
 type SearchParams = Promise<{
   search?: string;
@@ -26,7 +35,12 @@ type SearchParams = Promise<{
 
 export default async function AdminDashboardPage(props: { searchParams: SearchParams }) {
   const searchParams = await props.searchParams;
-  const tab = (searchParams.tab ?? "overview") as "overview" | "students" | "analytics" | "staff";
+  const tab = (searchParams.tab ?? "overview") as
+    | "overview"
+    | "students"
+    | "analytics"
+    | "staff"
+    | "contributions";
   const session = await auth();
 
   if (!session?.user) {
@@ -63,6 +77,7 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
     staffTeamMemberships,
     recentAssignments,
     openTaskCount,
+    stagePipelineCounts,
   ] = await Promise.all([
     getRemindersForUser("ADMIN", session.user.id),
     prisma.user.count({ where: { role: "USER" } }),
@@ -162,7 +177,20 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
     prisma.task.count({
       where: { status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] } },
     }),
+    prisma.studentProfile.groupBy({
+      by: ["caseStage"],
+      _count: { _all: true },
+    }),
   ]);
+
+  const stageCountMap = new Map<string, number>(
+    stagePipelineCounts.map((row) => [row.caseStage, row._count._all]),
+  );
+  const stageCounts = allCaseStages.map((stage) => ({
+    stage,
+    count: stageCountMap.get(stage) ?? 0,
+  }));
+  const stageTotal = stageCounts.reduce((sum, item) => sum + item.count, 0);
 
   const filteredStudentProfileIds = filteredSubmissions
     .map((item) => item.student.studentProfile?.id)
@@ -209,9 +237,12 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
   });
   const autoFollowUpItems = latestSubmissionPerStudent.filter((item) => {
     const visaExpiryDate = item.student.studentProfile?.visaExpiryDate;
-    if (!visaExpiryDate) return false;
-    const days = daysUntilDate(visaExpiryDate, today);
-    return days >= 120 && days <= 150;
+    const nextFollowUpDate = item.student.studentProfile?.nextFollowUpDate;
+    const visaDays = visaExpiryDate ? daysUntilDate(visaExpiryDate, today) : null;
+    const followUpDays = nextFollowUpDate ? daysUntilDate(nextFollowUpDate, today) : null;
+    const visaWindow = visaDays !== null && visaDays >= 120 && visaDays <= 150;
+    const followUpWindow = followUpDays !== null && followUpDays >= 120 && followUpDays <= 150;
+    return visaWindow || followUpWindow;
   });
   const pendingItems = latestSubmissionPerStudent.filter((item) =>
     ["SUBMITTED", "UNDER_REVIEW", "DOCS_REQUESTED"].includes(item.status),
@@ -259,6 +290,43 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
           0,
           100 - Math.round(((pendingApprovalsCount + visaExpiringSoon + unresolvedCaseCount) / submissionsCount) * 100),
         );
+  const totalStudentsPreview = recentSubmissions
+    .slice(0, 2)
+    .map((submission) => getStudentDisplayName(submission.student, submission.answers));
+  const submissionsPreview = recentSubmissions
+    .slice(0, 2)
+    .map((submission) => formatSubmissionStatus(submission.status));
+  const activeSubAdminsPreview = subAdmins
+    .slice(0, 2)
+    .map((agent) => agent.name ?? agent.email);
+  const internalStaffPreview = internalStaffUsers
+    .slice(0, 2)
+    .map((staff) => staff.name ?? staff.email);
+  const openTasksPreview = recentAssignments
+    .slice(0, 2)
+    .map((assignment) => assignment.studentProfile.user.name ?? assignment.studentProfile.user.email);
+  const visaExpiringPreview = visaExpiringSoonItems
+    .slice(0, 2)
+    .map((item) => getStudentDisplayName(item.student, item.answers));
+  const pendingApprovalsPreview = pendingItems
+    .slice(0, 2)
+    .map((item) => getStudentDisplayName(item.student, item.answers));
+  const draftContractsPreview = filteredSubmissions
+    .filter((item) =>
+      item.student.studentProfile ? filteredStudentProfileIds.includes(item.student.studentProfile.id) : false,
+    )
+    .slice(0, 2)
+    .map((item) => getStudentDisplayName(item.student, item.answers));
+  const draftInvoicesPreview = offerInProgressItems
+    .slice(0, 2)
+    .map((item) => getStudentDisplayName(item.student, item.answers));
+  const pendingDocsPreview = pendingItems
+    .slice(0, 2)
+    .map((item) => getStudentDisplayName(item.student, item.answers));
+  const overloadedStaffPreview = internalStaffUsers
+    .filter((staff) => (assignmentCountByStaff.get(staff.id) ?? 0) >= 3)
+    .slice(0, 2)
+    .map((staff) => `${staff.name ?? staff.email} (${assignmentCountByStaff.get(staff.id) ?? 0} cases)`);
 
   return (
     <section className="space-y-6 text-gray-900">
@@ -276,6 +344,7 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
           { id: "students", label: "Students", count: totalStudents },
           { id: "analytics", label: "Analytics" },
           { id: "staff", label: "Staff & Content" },
+          { id: "contributions", label: "Contributions" },
         ]}
         activeTab={tab}
       />
@@ -293,22 +362,83 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
               <p className="text-xs text-gray-600">Core numbers at a glance</p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
-              <StatCard title="Total Students" value={String(totalStudents)} />
-              <StatCard title="Submissions" value={String(submissionsCount)} />
-              <StatCard title="Active Sub Admins" value={String(activeSubAdmins)} />
-              <StatCard title="Internal Staff" value={String(internalStaffUsers.length)} />
+              <StatCard title="Total Students" value={String(totalStudents)} preview={totalStudentsPreview} />
+              <StatCard title="Submissions" value={String(submissionsCount)} preview={submissionsPreview} />
+              <StatCard title="Active Sub Admins" value={String(activeSubAdmins)} preview={activeSubAdminsPreview} />
+              <StatCard title="Internal Staff" value={String(internalStaffUsers.length)} preview={internalStaffPreview} />
               <StatCard title="Offer Rate" value={offerRate} />
-              <StatCard title="Open Tasks" value={String(openTaskCount)} />
-              <StatCard title="Visa Expiring <=90d" value={String(visaExpiringSoon)} />
+              <StatCard title="Open Tasks" value={String(openTaskCount)} preview={openTasksPreview} />
+              <StatCard title="Visa Expiring <=90d" value={String(visaExpiringSoon)} preview={visaExpiringPreview} />
             </div>
           </section>
 
           <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            <StatCard title="Pending Approvals" value={String(pendingApprovalsCount)} />
-            <StatCard title="Draft Contracts" value={String(draftContractsCount)} />
-            <StatCard title="Draft Invoices" value={String(draftInvoicesCount)} />
-            <StatCard title="Pending Docs" value={String(pendingDocumentsCount)} />
-            <StatCard title="Overloaded Staff" value={String(overloadedStaffCount)} />
+            <StatCard title="Pending Approvals" value={String(pendingApprovalsCount)} preview={pendingApprovalsPreview} />
+            <StatCard title="Draft Contracts" value={String(draftContractsCount)} preview={draftContractsPreview} />
+            <StatCard title="Draft Invoices" value={String(draftInvoicesCount)} preview={draftInvoicesPreview} />
+            <StatCard title="Pending Docs" value={String(pendingDocumentsCount)} preview={pendingDocsPreview} />
+            <StatCard title="Overloaded Staff" value={String(overloadedStaffCount)} preview={overloadedStaffPreview} />
+          </section>
+
+          <section className="rounded-lg border bg-white p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-semibold">Case Stage Funnel</h2>
+                <p className="mt-1 text-xs text-gray-600">
+                  All students grouped by their current workflow stage ({stageTotal} total)
+                </p>
+              </div>
+            </div>
+            <div className="mt-3 space-y-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Workflow stages</p>
+                <ul className="mt-2 space-y-1.5">
+                  {caseStageOrder.map((stage) => {
+                    const item = stageCounts.find((c) => c.stage === stage);
+                    const count = item?.count ?? 0;
+                    const pct = stageTotal === 0 ? 0 : Math.round((count / stageTotal) * 100);
+                    return (
+                      <li key={stage} className="flex items-center gap-3">
+                        <div className="w-52 shrink-0 text-xs font-medium text-gray-700">
+                          {caseStageLabel(stage)}
+                        </div>
+                        <div className="relative h-5 flex-1 overflow-hidden rounded-md bg-gray-100">
+                          <div
+                            className="h-full rounded-md bg-gradient-to-r from-rose-400 to-blue-500"
+                            style={{ width: `${Math.max(pct, count > 0 ? 2 : 0)}%` }}
+                          />
+                        </div>
+                        <div className="w-20 shrink-0 text-right text-xs font-semibold text-gray-700">
+                          {count} ({pct}%)
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Outcomes / end states</p>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  {caseStageTerminals.map((stage) => {
+                    const item = stageCounts.find((c) => c.stage === stage);
+                    const count = item?.count ?? 0;
+                    const pct = stageTotal === 0 ? 0 : Math.round((count / stageTotal) * 100);
+                    return (
+                      <article
+                        key={stage}
+                        className={`rounded-md border p-3 ${caseStageTone(stage)}`}
+                      >
+                        <p className="text-[11px] font-semibold uppercase tracking-wide opacity-80">
+                          {caseStageLabel(stage)}
+                        </p>
+                        <p className="mt-1 text-xl font-semibold">{count}</p>
+                        <p className="text-[11px] opacity-80">{pct}% of total</p>
+                      </article>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
           </section>
 
           <section className="rounded-lg border bg-white p-4">
@@ -369,7 +499,7 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
                   emptyLabel="No students with upcoming visa expiry."
                 />
                 <CategoryCard
-                  title="Auto Follow-up (Visa expiring in 4-5 months)"
+                  title="Auto Follow-up (Visa or follow-up in 4-5 months)"
                   items={autoFollowUpItems}
                   emptyLabel="No students currently in the 4-5 month follow-up window."
                 />
@@ -464,6 +594,15 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
                         <p className="text-xs text-gray-600">
                           Status: {formatSubmissionStatus(submission.status)}
                         </p>
+                        {submission.student.studentProfile ? (
+                          <p className="mt-1">
+                            <span
+                              className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${caseStageTone(submission.student.studentProfile.caseStage)}`}
+                            >
+                              Stage: {caseStageLabel(submission.student.studentProfile.caseStage)}
+                            </span>
+                          </p>
+                        ) : null}
                         <p className="text-xs text-gray-600">
                           Visa:{" "}
                           {submission.student.studentProfile
@@ -537,9 +676,18 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
             ) : (
               <ul className="mt-3 space-y-2 text-sm text-gray-700">
                 {recentSubmissions.map((submission) => (
-                  <li key={submission.id}>
-                    {getStudentDisplayName(submission.student, submission.answers)} submitted from{" "}
-                    {submission.sourceCountry ?? "Unknown"} ({formatSubmissionStatus(submission.status)})
+                  <li key={submission.id} className="flex flex-wrap items-center gap-2">
+                    <span>
+                      {getStudentDisplayName(submission.student, submission.answers)} submitted from{" "}
+                      {submission.sourceCountry ?? "Unknown"} ({formatSubmissionStatus(submission.status)})
+                    </span>
+                    {submission.student.studentProfile ? (
+                      <span
+                        className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${caseStageTone(submission.student.studentProfile.caseStage)}`}
+                      >
+                        {caseStageLabel(submission.student.studentProfile.caseStage)}
+                      </span>
+                    ) : null}
                   </li>
                 ))}
               </ul>
@@ -1004,7 +1152,67 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
           </section>
         </div>
       )}
+
+      {/* ── CONTRIBUTIONS TAB ──────────────────────────────────── */}
+      {tab === "contributions" && <ContributionsTabPanel />}
     </section>
+  );
+}
+
+async function ContributionsTabPanel() {
+  const cases = await prisma.studentProfile.findMany({
+    include: { user: { select: { id: true, name: true, email: true } } },
+    orderBy: { updatedAt: "desc" },
+    take: 20,
+  });
+
+  return (
+    <div className="space-y-6">
+      <section className="rounded-lg border bg-white p-4">
+        <h2 className="text-sm font-semibold">Case-wise Contributions</h2>
+        <p className="mt-1 text-xs text-gray-600">
+          Contribution is shown separately for each student case.
+        </p>
+      </section>
+      {cases.length === 0 ? (
+        <section className="rounded-lg border bg-white p-4">
+          <p className="text-sm text-gray-600">No student cases available yet.</p>
+        </section>
+      ) : (
+        await Promise.all(
+          cases.map(async (studentProfile) => {
+            const data = await getContributions({ studentProfileId: studentProfile.id });
+            return (
+              <section key={studentProfile.id} className="space-y-3">
+                <div className="rounded-lg border bg-white p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">
+                        {studentProfile.user.name ?? studentProfile.user.email}
+                      </p>
+                      <p className="text-xs text-slate-600">
+                        Case contribution breakdown
+                      </p>
+                    </div>
+                    <Link
+                      href={`/dashboard/students/${studentProfile.user.id}?tab=contributions`}
+                      className="rounded-md border px-3 py-1 text-xs text-slate-700"
+                    >
+                      Open profile
+                    </Link>
+                  </div>
+                </div>
+                <ContributionLeaderboard
+                  data={data}
+                  title="Who contributed to this case"
+                  subtitle="Stages 70% · Documents 15% · Tasks 15% for this student only."
+                />
+              </section>
+            );
+          }),
+        )
+      )}
+    </div>
   );
 }
 
@@ -1108,11 +1316,20 @@ function getFollowUpLabel(visaExpiryDate: Date | null | undefined, now: Date) {
   return "Auto Follow-up: Visa already expired";
 }
 
-function StatCard({ title, value }: { title: string; value: string }) {
+function StatCard({ title, value, preview }: { title: string; value: string; preview?: string[] }) {
   return (
     <article className="rounded-lg border bg-white p-4">
       <p className="text-xs text-gray-500">{title}</p>
       <p className="mt-2 text-lg font-semibold">{value}</p>
+      {preview && preview.length > 0 ? (
+        <ul className="mt-2 space-y-1 text-xs text-gray-600">
+          {preview.map((line, idx) => (
+            <li key={`${idx}-${line}`} className="truncate" title={line}>
+              - {line}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </article>
   );
 }
