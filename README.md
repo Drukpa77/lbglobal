@@ -1,8 +1,7 @@
 # L&B Global Web App
 
-Next.js platform for students applying to Australia with three access levels:
+Next.js platform for students applying to Australia with two access levels:
 
-- Student (`USER`)
 - Consultancy agent (`SUB_ADMIN`)
 - Platform owner (`ADMIN`)
 
