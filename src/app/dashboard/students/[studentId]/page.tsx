@@ -2,8 +2,14 @@ import path from "node:path";
 
 import type {
   CaseStage,
+  CaseStatus,
+  CrmAccountType,
   DocumentCategory,
+  LeadStatus,
+  OpportunityForecastCategory,
+  OpportunityStage,
   Prisma,
+  QuoteStatus,
   TaskPriority,
   TaskStatus,
   VisaStatus,
@@ -11,11 +17,13 @@ import type {
 import { revalidatePath } from "next/cache";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 import { z } from "zod";
 
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { ContributionLeaderboard } from "@/components/contribution-leaderboard";
 import { DeleteWithConfirm } from "@/components/delete-with-confirm";
+import { VisaStatusSavedToast } from "@/components/visa-status-saved-toast";
 import { StudentNoteItem } from "@/components/student-note-item";
 import { SubmitButton } from "@/components/submit-button";
 import { AuditTab } from "@/app/dashboard/students/[studentId]/tabs/audit-tab";
@@ -70,6 +78,13 @@ export default async function StudentProfileManagementPage(props: { params: Para
   ) {
     redirect("/dashboard");
   }
+
+  const currentUserId = session.user.id;
+
+  /** Referenced only by disabled `{false && (...)}` sales UI; keeps `tsc` satisfied. */
+  const crmAccounts: { id: string; name: string; tag: string | null }[] = [];
+  const leadOwners: { id: string; name: string | null; email: string | null; role: string }[] = [];
+  const leads: unknown[] = [];
 
   if (session.user.role === "SUB_ADMIN") {
     const assigned = await prisma.questionnaireSubmission.findFirst({
@@ -271,7 +286,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
     isAssignedCaseManager;
   const caseManagersForDelegation = delegationTeamUsers.filter((u) => u.role === "INTERNAL_STAFF");
   const agentsForDelegation = delegationTeamUsers.filter((u) => u.role === "SUB_ADMIN");
-  const tabBase = `/dashboard/students/${student.id}`;
+  const tabBase = `/dashboard/students/${studentId}`;
 
   return (
     <section className="space-y-8 text-slate-900">
@@ -318,6 +333,9 @@ export default async function StudentProfileManagementPage(props: { params: Para
           </Link>
         ))}
       </nav>
+      <Suspense fallback={null}>
+        <VisaStatusSavedToast />
+      </Suspense>
 
       {activeTab === "overview" && (
       <>
@@ -325,7 +343,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
         <h2 className="text-lg font-semibold text-slate-900">Internal Note</h2>
         <p className="mt-1 text-sm text-slate-600">Add a quick note for the internal team. Notes are visible to all staff on this case.</p>
         <form action={addStudentThreadMessageAction} className="mt-4 flex flex-wrap gap-3">
-          <input type="hidden" name="studentId" value={student.id} />
+          <input type="hidden" name="studentId" value={studentId} />
           <input
             name="content"
             required
@@ -349,7 +367,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
                   message={message}
                   currentUserId={session.user.id}
                   canEditAny={session.user.role === "ADMIN" || session.user.role === "SUB_ADMIN"}
-                  studentId={student.id}
+                  studentId={studentId}
                   updateAction={updateStudentNoteAction}
                   deleteAction={deleteStudentNoteAction}
                 />
@@ -412,7 +430,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
       </div>
 
       <CaseStageCard
-        studentId={student.id}
+        studentId={studentId}
         currentStage={profile?.caseStage ?? "CONSULTATION_AND_DOCUMENTATION"}
         updatedAt={profile?.caseStageUpdatedAt ?? null}
         action={updateCaseStageAction}
@@ -423,7 +441,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
       {activeTab === "profile" && (
       <>
       <form id="profile" action={saveStudentProfileAction} className="scroll-mt-24 space-y-6 rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
-        <input type="hidden" name="studentId" value={student.id} />
+        <input type="hidden" name="studentId" value={studentId} />
         <h2 className="text-lg font-semibold text-slate-900">Profile Details</h2>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Full Name">
@@ -588,7 +606,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
           buttonLabel="Delete Student"
           buttonClassName="rounded-lg border border-red-200 bg-white px-5 py-2.5 text-sm font-medium text-red-600 transition hover:bg-red-50"
         >
-          <input type="hidden" name="studentId" value={student.id} />
+          <input type="hidden" name="studentId" value={studentId} />
         </DeleteWithConfirm>
       </div>
 
@@ -617,7 +635,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
           </p>
         ) : (
           <form action={assignStudentDelegationAction} className="mt-4 flex flex-wrap items-end gap-4">
-            <input type="hidden" name="studentId" value={student.id} />
+            <input type="hidden" name="studentId" value={studentId} />
             <label className="block">
               <span className="text-sm font-medium text-slate-700">Assign to case manager or agent</span>
               <select
@@ -695,7 +713,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
         </p>
 
         <form action={createLeadAction} className="mt-4 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
-          <input type="hidden" name="studentId" value={student.id} />
+          <input type="hidden" name="studentId" value={studentId} />
           <p className="font-medium text-slate-900">Create Lead (Salesforce-style intake)</p>
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <input
@@ -768,7 +786,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
             />
             <select
               name="ownerId"
-              defaultValue={session.user.id}
+              defaultValue={currentUserId}
               className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
             >
               <option value="">Unassigned owner</option>
@@ -857,7 +875,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
                   </div>
 
                   <form action={updateLeadQualificationAction} className="mt-3 grid gap-2 sm:grid-cols-4">
-                    <input type="hidden" name="studentId" value={student.id} />
+                    <input type="hidden" name="studentId" value={studentId} />
                     <input type="hidden" name="leadId" value={lead.id} />
                     <select
                       name="ownerId"
@@ -907,7 +925,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
 
                   <div className="mt-2 flex flex-wrap gap-2">
                     <form action={updateLeadStatusAction}>
-                      <input type="hidden" name="studentId" value={student.id} />
+                      <input type="hidden" name="studentId" value={studentId} />
                       <input type="hidden" name="leadId" value={lead.id} />
                       <input type="hidden" name="nextStatus" value="CONTACTED" />
                       <button
@@ -918,7 +936,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
                       </button>
                     </form>
                     <form action={updateLeadStatusAction}>
-                      <input type="hidden" name="studentId" value={student.id} />
+                      <input type="hidden" name="studentId" value={studentId} />
                       <input type="hidden" name="leadId" value={lead.id} />
                       <input type="hidden" name="nextStatus" value="QUALIFIED" />
                       <button
@@ -929,7 +947,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
                       </button>
                     </form>
                     <form action={updateLeadStatusAction}>
-                      <input type="hidden" name="studentId" value={student.id} />
+                      <input type="hidden" name="studentId" value={studentId} />
                       <input type="hidden" name="leadId" value={lead.id} />
                       <input type="hidden" name="nextStatus" value="NURTURE" />
                       <button
@@ -940,7 +958,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
                       </button>
                     </form>
                     <form action={updateLeadStatusAction}>
-                      <input type="hidden" name="studentId" value={student.id} />
+                      <input type="hidden" name="studentId" value={studentId} />
                       <input type="hidden" name="leadId" value={lead.id} />
                       <input type="hidden" name="nextStatus" value="DISQUALIFIED" />
                       <button
@@ -952,7 +970,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
                     </form>
                     {lead.status === "QUALIFIED" && !opportunity ? (
                       <form action={convertLeadAction}>
-                        <input type="hidden" name="studentId" value={student.id} />
+                        <input type="hidden" name="studentId" value={studentId} />
                         <input type="hidden" name="leadId" value={lead.id} />
                         <button
                           type="submit"
@@ -974,7 +992,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
                       </div>
 
                       <form action={updateOpportunityPipelineAction} className="mt-3 grid gap-2 sm:grid-cols-3">
-                        <input type="hidden" name="studentId" value={student.id} />
+                        <input type="hidden" name="studentId" value={studentId} />
                         <input type="hidden" name="opportunityId" value={opportunity.id} />
                         <input
                           name="name"
@@ -1039,7 +1057,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
                       </p>
 
                       <form action={createQuoteAction} className="mt-4 grid gap-2 sm:grid-cols-3">
-                        <input type="hidden" name="studentId" value={student.id} />
+                        <input type="hidden" name="studentId" value={studentId} />
                         <input type="hidden" name="opportunityId" value={opportunity.id} />
                         <input
                           name="amount"
@@ -1085,7 +1103,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
                               <div className="mt-2 flex flex-wrap gap-2">
                                 {quote.status === "DRAFT" ? (
                                   <form action={submitQuoteForApprovalAction}>
-                                    <input type="hidden" name="studentId" value={student.id} />
+                                    <input type="hidden" name="studentId" value={studentId} />
                                     <input type="hidden" name="quoteId" value={quote.id} />
                                     <button
                                       type="submit"
@@ -1098,7 +1116,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
                                 {quote.status === "SUBMITTED" ? (
                                   <>
                                     <form action={approveQuoteAction} className="flex items-center gap-2">
-                                      <input type="hidden" name="studentId" value={student.id} />
+                                      <input type="hidden" name="studentId" value={studentId} />
                                       <input type="hidden" name="quoteId" value={quote.id} />
                                       <input
                                         name="approvalNotes"
@@ -1113,7 +1131,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
                                       </button>
                                     </form>
                                     <form action={rejectQuoteAction} className="flex items-center gap-2">
-                                      <input type="hidden" name="studentId" value={student.id} />
+                                      <input type="hidden" name="studentId" value={studentId} />
                                       <input type="hidden" name="quoteId" value={quote.id} />
                                       <input
                                         name="approvalNotes"
@@ -1151,7 +1169,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
 
                       {approvedQuoteExists && opportunity.stage !== "CLOSED_WON" ? (
                         <form action={closeOpportunityAction} className="mt-3">
-                          <input type="hidden" name="studentId" value={student.id} />
+                          <input type="hidden" name="studentId" value={studentId} />
                           <input type="hidden" name="opportunityId" value={opportunity.id} />
                           <button
                             type="submit"
@@ -1164,7 +1182,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
 
                       {opportunity.stage === "CLOSED_WON" && !opportunity.case ? (
                         <form action={convertOpportunityToCaseAction} className="mt-3">
-                          <input type="hidden" name="studentId" value={student.id} />
+                          <input type="hidden" name="studentId" value={studentId} />
                           <input type="hidden" name="opportunityId" value={opportunity.id} />
                           <button
                             type="submit"
@@ -1184,7 +1202,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
                             </span>
                           </div>
                           <form action={updateCaseAction} className="mt-3 grid gap-3 sm:grid-cols-2">
-                            <input type="hidden" name="studentId" value={student.id} />
+                            <input type="hidden" name="studentId" value={studentId} />
                             <input type="hidden" name="caseId" value={opportunity.case.id} />
                             <input
                               name="title"
@@ -1265,7 +1283,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
 
       {activeTab === "tasks" && (
         <TasksDocumentsTab
-          studentId={student.id}
+          studentId={studentId}
           tasks={tasks}
           documents={documents}
           createTaskAction={createTaskAction}
@@ -1284,7 +1302,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
         </p>
         <div className="mt-4 grid gap-6 sm:grid-cols-2">
           <form action={createContractPreviewAction} className="space-y-4 rounded-xl border border-slate-200 bg-slate-50/80 p-5">
-            <input type="hidden" name="studentId" value={student.id} />
+            <input type="hidden" name="studentId" value={studentId} />
             <div>
               <p className="font-semibold text-slate-900">Generate Contract Preview</p>
               <p className="mt-1 text-sm text-slate-600">
@@ -1317,7 +1335,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
           </form>
 
           <form action={createInvoicePreviewAction} className="space-y-4 rounded-xl border border-slate-200 bg-slate-50/80 p-5">
-            <input type="hidden" name="studentId" value={student.id} />
+            <input type="hidden" name="studentId" value={studentId} />
             <div>
               <p className="font-semibold text-slate-900">Generate Invoice Preview</p>
               <p className="mt-1 text-sm text-slate-600">
@@ -1426,7 +1444,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
                         buttonClassName="rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50"
                       >
                         <input type="hidden" name="contractId" value={contract.id} />
-                        <input type="hidden" name="studentId" value={student.id} />
+                        <input type="hidden" name="studentId" value={studentId} />
                       </DeleteWithConfirm>
                     </div>
                   </li>
@@ -1471,7 +1489,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
                         buttonClassName="rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50"
                       >
                         <input type="hidden" name="invoiceId" value={invoice.id} />
-                        <input type="hidden" name="studentId" value={student.id} />
+                        <input type="hidden" name="studentId" value={studentId} />
                       </DeleteWithConfirm>
                     </div>
                   </li>
@@ -1804,7 +1822,7 @@ async function saveStudentProfileAction(formData: FormData) {
   revalidatePath("/dashboard/sub-admin");
   revalidatePath("/dashboard/internal-staff");
   revalidatePath("/dashboard/student");
-  redirect(`/dashboard/students/${studentId}`);
+  redirect(`/dashboard/students/${studentId}?tab=profile&profileSaved=1`);
 }
 
 async function deleteStudentAction(formData: FormData) {

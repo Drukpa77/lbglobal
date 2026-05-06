@@ -2,13 +2,16 @@ import type { CaseStage, SubmissionStatus } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 
 import { auth } from "@/auth";
 import { ContributionLeaderboard } from "@/components/contribution-leaderboard";
 import { DashboardTabBar } from "@/components/dashboard-tab-bar";
+import { DelegationSuccessToast } from "@/components/delegation-success-toast";
 import { RemindersWidget } from "@/components/reminders-widget";
 import { getContributions } from "@/lib/contributions";
 import { prisma } from "@/lib/prisma";
+import { redirectWithDashboardNotice, redirectWithDelegationNotice } from "@/lib/redirect-after-delegation";
 import { getRemindersForUser } from "@/lib/reminders";
 import { getDashboardPath } from "@/lib/roles";
 import { buildSubmissionWhere } from "@/lib/submission-filters";
@@ -96,7 +99,16 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
         include: {
           student: {
             include: {
-              studentProfile: true,
+              studentProfile: {
+                include: {
+                  assignments: {
+                    where: { isActive: true },
+                    take: 1,
+                    orderBy: { createdAt: "desc" },
+                    select: { assignedToId: true },
+                  },
+                },
+              },
             },
           },
           template: true,
@@ -418,6 +430,10 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
         ]}
         activeTab={tab}
       />
+
+      <Suspense fallback={null}>
+        <DelegationSuccessToast />
+      </Suspense>
 
       {/* ── OVERVIEW TAB ───────────────────────────────────────── */}
       {tab === "overview" && (
@@ -760,8 +776,16 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                   </button>
                 </form>
                 <div className="max-h-96 space-y-3 overflow-y-auto pr-1">
-                {filteredSubmissions.map((submission) => (
-                  <article key={submission.id} className="rounded-md border border-gray-200 p-3">
+                {filteredSubmissions.map((submission) => {
+                  const activeInternalDelegationId =
+                    submission.student.studentProfile?.assignments[0]?.assignedToId ?? "";
+                  const delegateStaffDefault =
+                    activeInternalDelegationId || suggestedAssigneeId || "";
+                  const showWorkloadSuggestionBadge =
+                    !activeInternalDelegationId && Boolean(suggestedAssigneeId);
+
+                  return (
+                  <article id={`submission-${submission.id}`} key={submission.id} className="rounded-md border border-gray-200 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <label className="mb-1 flex items-center gap-2 text-xs text-gray-700">
@@ -817,6 +841,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                         </Link>
                         <form action={updateSubmissionStatusAction} className="flex items-center gap-2">
                           <input type="hidden" name="submissionId" value={submission.id} />
+                          <input type="hidden" name="anchorId" value={`submission-${submission.id}`} />
                           <select
                             name="status"
                             defaultValue={submission.status}
@@ -835,16 +860,19 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                         {allInternalStaff.length > 0 && submission.student.studentProfile ? (
                           <form action={delegateStudentToInternalStaffAction} className="flex items-center gap-2">
                             <input type="hidden" name="studentId" value={submission.studentId} />
+                            <input type="hidden" name="anchorId" value={`submission-${submission.id}`} />
                             <select
                               name="internalStaffId"
-                              defaultValue={suggestedAssigneeId}
+                              defaultValue={delegateStaffDefault}
                               className="rounded-md border px-2 py-1 text-sm"
                             >
                               <option value="">Delegate to staff</option>
                               {allInternalStaff.map((staff) => (
                                 <option key={staff.id} value={staff.id}>
                                   {(staff.name ?? staff.email) +
-                                    (staff.id === suggestedAssigneeId ? " (Suggested)" : "")}
+                                    (showWorkloadSuggestionBadge && staff.id === suggestedAssigneeId
+                                      ? " (Suggested)"
+                                      : "")}
                                 </option>
                               ))}
                             </select>
@@ -856,7 +884,8 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                       </div>
                     </div>
                   </article>
-                ))}
+                  );
+                })}
                 </div>
               </div>
             )}
@@ -1359,6 +1388,7 @@ async function updateSubmissionStatusAction(formData: FormData) {
   }
 
   const submissionId = String(formData.get("submissionId") ?? "");
+  const anchorId = String(formData.get("anchorId") ?? "").trim();
   const status = String(formData.get("status") ?? "") as SubmissionStatus;
 
   if (!submissionStatuses.includes(status)) {
@@ -1406,7 +1436,11 @@ async function updateSubmissionStatusAction(formData: FormData) {
   revalidatePath("/dashboard/sub-admin");
   revalidatePath("/dashboard/admin");
   revalidatePath("/dashboard/student");
-  redirect(returnToStudentsTab);
+  await redirectWithDashboardNotice({
+    dashboardPath: "/dashboard/sub-admin",
+    noticeParams: { statusUpdated: "1" },
+    anchorId: anchorId || undefined,
+  });
 }
 
 async function bulkUpdateSubmissionStatusAction(formData: FormData) {
@@ -1479,6 +1513,7 @@ async function delegateStudentToInternalStaffAction(formData: FormData) {
   }
 
   const studentId = String(formData.get("studentId") ?? "");
+  const anchorId = String(formData.get("anchorId") ?? "").trim();
   const internalStaffId = String(formData.get("internalStaffId") ?? "");
   if (!studentId || !internalStaffId) redirect(returnToStudentsTab);
 
@@ -1490,7 +1525,7 @@ async function delegateStudentToInternalStaffAction(formData: FormData) {
 
   const staff = await prisma.user.findFirst({
     where: { id: internalStaffId, role: "INTERNAL_STAFF" },
-    select: { id: true },
+    select: { id: true, name: true, email: true },
   });
   if (!staff) redirect(returnToStudentsTab);
 
@@ -1501,7 +1536,7 @@ async function delegateStudentToInternalStaffAction(formData: FormData) {
   await prisma.studentAssignment.create({
     data: {
       studentProfileId: studentProfile.id,
-      assignedToId: internalStaffId,
+      assignedToId: staff.id,
       assignedById: session.user.id,
       isActive: true,
     },
@@ -1521,7 +1556,13 @@ async function delegateStudentToInternalStaffAction(formData: FormData) {
   revalidatePath("/dashboard/sub-admin");
   revalidatePath(`/dashboard/students/${studentId}`);
   revalidatePath("/dashboard/internal-staff");
-  redirect(returnToStudentsTab);
+
+  const staffLabel = (staff.name?.trim() || staff.email || "staff").trim();
+  await redirectWithDelegationNotice({
+    dashboardPath: "/dashboard/sub-admin",
+    staffLabel,
+    anchorId: anchorId || undefined,
+  });
 }
 
 async function claimSubmissionAction(formData: FormData) {

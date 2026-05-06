@@ -3,17 +3,20 @@ import type { SubmissionStatus } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 
 import { auth } from "@/auth";
 import { AdminAnalyticsCharts } from "@/components/admin-analytics-charts";
 import { ContributionLeaderboard } from "@/components/contribution-leaderboard";
 import { DashboardTabBar } from "@/components/dashboard-tab-bar";
+import { DelegationSuccessToast } from "@/components/delegation-success-toast";
 import { DeleteWithConfirm } from "@/components/delete-with-confirm";
 import { DeleteStaffButton } from "@/components/delete-staff-button";
 import { RemindersWidget } from "@/components/reminders-widget";
 import { getContributions } from "@/lib/contributions";
 import { prisma } from "@/lib/prisma";
 import { getRemindersForUser } from "@/lib/reminders";
+import { redirectWithDelegationNotice } from "@/lib/redirect-after-delegation";
 import { buildSubmissionWhere } from "@/lib/submission-filters";
 import { formatSubmissionStatus } from "@/lib/submission";
 import { formatVisaStatus, formatYearsLeft } from "@/lib/student-tracking";
@@ -124,7 +127,16 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
       include: {
         student: {
           include: {
-            studentProfile: true,
+            studentProfile: {
+              include: {
+                assignments: {
+                  where: { isActive: true },
+                  take: 1,
+                  orderBy: { createdAt: "desc" },
+                  select: { assignedToId: true },
+                },
+              },
+            },
           },
         },
         assignedSubAdmin: true,
@@ -348,6 +360,10 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
         ]}
         activeTab={tab}
       />
+
+      <Suspense fallback={null}>
+        <DelegationSuccessToast />
+      </Suspense>
 
       {/* ── OVERVIEW TAB ───────────────────────────────────────── */}
       {tab === "overview" && (
@@ -579,8 +595,12 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
               <p className="mt-2 text-sm text-gray-600">No submissions match current filters.</p>
             ) : (
               <div className="mt-3 max-h-96 space-y-3 overflow-y-auto pr-1">
-                {filteredSubmissions.map((submission) => (
-                  <article key={submission.id} className="rounded-md border border-gray-200 p-3">
+                {filteredSubmissions.map((submission) => {
+                  const activeInternalDelegationId =
+                    submission.student.studentProfile?.assignments[0]?.assignedToId ?? "";
+
+                  return (
+                  <article id={`submission-${submission.id}`} key={submission.id} className="rounded-md border border-gray-200 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <p className="text-sm font-semibold">
@@ -640,7 +660,12 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
                         {submission.student.studentProfile && internalStaffUsers.length > 0 ? (
                           <form action={delegateStudentFromAdminAction} className="flex items-center gap-2">
                             <input type="hidden" name="studentId" value={submission.studentId} />
-                            <select name="internalStaffId" className="rounded-md border px-2 py-1 text-sm">
+                            <input type="hidden" name="anchorId" value={`submission-${submission.id}`} />
+                            <select
+                              name="internalStaffId"
+                              defaultValue={activeInternalDelegationId}
+                              className="rounded-md border px-2 py-1 text-sm"
+                            >
                               <option value="">Delegate to staff</option>
                               {internalStaffUsers.map((staff) => (
                                 <option key={staff.id} value={staff.id}>
@@ -664,7 +689,8 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
                       </div>
                     </div>
                   </article>
-                ))}
+                  );
+                })}
               </div>
             )}
           </section>
@@ -1395,8 +1421,15 @@ async function delegateStudentFromAdminAction(formData: FormData) {
   if (!session?.user || session.user.role !== "ADMIN") redirect("/login");
 
   const studentId = String(formData.get("studentId") ?? "");
+  const anchorId = String(formData.get("anchorId") ?? "").trim();
   const internalStaffId = String(formData.get("internalStaffId") ?? "");
   if (!studentId || !internalStaffId) redirect("/dashboard/admin");
+
+  const staffMember = await prisma.user.findFirst({
+    where: { id: internalStaffId, role: "INTERNAL_STAFF" },
+    select: { id: true, name: true, email: true },
+  });
+  if (!staffMember) redirect("/dashboard/admin");
 
   const studentProfile = await prisma.studentProfile.findUnique({
     where: { userId: studentId },
@@ -1411,7 +1444,7 @@ async function delegateStudentFromAdminAction(formData: FormData) {
   await prisma.studentAssignment.create({
     data: {
       studentProfileId: studentProfile.id,
-      assignedToId: internalStaffId,
+      assignedToId: staffMember.id,
       assignedById: session.user.id,
       isActive: true,
     },
@@ -1424,14 +1457,20 @@ async function delegateStudentFromAdminAction(formData: FormData) {
       entityType: "ASSIGNMENT",
       entityId: studentProfile.id,
       action: "Assigned student to internal staff (from admin dashboard)",
-      metadata: { internalStaffId },
+      metadata: { internalStaffId: staffMember.id },
     },
   });
 
   revalidatePath("/dashboard/admin");
   revalidatePath(`/dashboard/students/${studentId}`);
   revalidatePath("/dashboard/internal-staff");
-  redirect("/dashboard/admin");
+
+  const staffLabel = (staffMember.name?.trim() || staffMember.email || "staff").trim();
+  await redirectWithDelegationNotice({
+    dashboardPath: "/dashboard/admin",
+    staffLabel,
+    anchorId: anchorId || undefined,
+  });
 }
 
 async function createInternalStaffAccountAction(formData: FormData) {
