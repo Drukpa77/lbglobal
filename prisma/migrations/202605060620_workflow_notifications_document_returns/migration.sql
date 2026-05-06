@@ -1,0 +1,3 @@
+-- This migration is intentionally a no-op.
+-- Superseded by baseline migration:
+-- 202605060635_baseline
