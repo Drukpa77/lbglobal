@@ -15,6 +15,14 @@ type DocumentRow = {
   category: string;
   storagePath: string;
   verificationStatus: string;
+  notes: string | null;
+  returnedAt: Date | null;
+  returnedNote: string | null;
+  returnResolvedAt: Date | null;
+  returnedBy: {
+    name: string | null;
+    email: string;
+  } | null;
   uploadedBy: {
     name: string | null;
     email: string;
@@ -29,7 +37,11 @@ type TasksDocumentsTabProps = {
   updateTaskStatusAction: (formData: FormData) => Promise<void>;
   updateTaskChecklistAction: (formData: FormData) => Promise<void>;
   uploadStudentDocumentAction: (formData: FormData) => Promise<void>;
+  updateStudentDocumentVerificationAction: (formData: FormData) => Promise<void>;
+  disputeStudentDocumentReturnAction: (formData: FormData) => Promise<void>;
+  uploadReplacementDocumentAction: (formData: FormData) => Promise<void>;
   deleteStudentDocumentAction: (formData: FormData) => Promise<void>;
+  viewerRole: "ADMIN" | "SUB_ADMIN" | "INTERNAL_STAFF";
 };
 
 export function TasksDocumentsTab({
@@ -40,7 +52,11 @@ export function TasksDocumentsTab({
   updateTaskStatusAction,
   updateTaskChecklistAction,
   uploadStudentDocumentAction,
+  updateStudentDocumentVerificationAction,
+  disputeStudentDocumentReturnAction,
+  uploadReplacementDocumentAction,
   deleteStudentDocumentAction,
+  viewerRole,
 }: TasksDocumentsTabProps) {
   return (
     <>
@@ -210,8 +226,18 @@ export function TasksDocumentsTab({
                     <p className="mt-0.5 text-sm text-slate-600">
                       Uploaded by {doc.uploadedBy.name ?? doc.uploadedBy.email} · {doc.verificationStatus}
                     </p>
+                    {doc.notes ? (
+                      <p className="mt-1 text-xs text-slate-600">Verification note: {doc.notes}</p>
+                    ) : null}
+                    {doc.returnedAt ? (
+                      <p className="mt-1 text-xs text-amber-700">
+                        Returned by {doc.returnedBy?.name ?? doc.returnedBy?.email ?? "Sub-admin"} on{" "}
+                        {doc.returnedAt.toLocaleString()}
+                        {doc.returnedNote ? ` - ${doc.returnedNote}` : ""}
+                      </p>
+                    ) : null}
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <a
                       href={doc.storagePath}
                       target="_blank"
@@ -220,6 +246,104 @@ export function TasksDocumentsTab({
                     >
                       Open
                     </a>
+                    {(viewerRole === "INTERNAL_STAFF" || viewerRole === "ADMIN") && (
+                      <form action={updateStudentDocumentVerificationAction} className="flex items-center gap-2">
+                        <input type="hidden" name="studentId" value={studentId} />
+                        <input type="hidden" name="documentId" value={doc.id} />
+                        <select
+                          name="status"
+                          defaultValue={doc.verificationStatus}
+                          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                        >
+                          <option value="PENDING">PENDING</option>
+                          <option value="VERIFIED">VERIFIED</option>
+                          <option value="REJECTED">REJECTED</option>
+                        </select>
+                        <input
+                          name="note"
+                          placeholder="Note (optional)"
+                          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                        />
+                        <button
+                          type="submit"
+                          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                        >
+                          Save
+                        </button>
+                      </form>
+                    )}
+                    {viewerRole === "SUB_ADMIN" && doc.verificationStatus === "VERIFIED" && (
+                      <form action={updateStudentDocumentVerificationAction} className="flex flex-wrap items-center gap-2">
+                        <input type="hidden" name="studentId" value={studentId} />
+                        <input type="hidden" name="documentId" value={doc.id} />
+                        <input type="hidden" name="mode" value="reverse" />
+                        <select
+                          name="status"
+                          defaultValue="PENDING"
+                          className="rounded-lg border border-amber-300 px-3 py-1.5 text-sm text-amber-900 focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                        >
+                          <option value="PENDING">Return to PENDING</option>
+                          <option value="REJECTED">Return to REJECTED</option>
+                        </select>
+                        <input
+                          name="note"
+                          required
+                          placeholder="Mandatory return note"
+                          className="rounded-lg border border-amber-300 px-3 py-1.5 text-sm text-amber-900 placeholder:text-amber-500 focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                        />
+                        <button
+                          type="submit"
+                          className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100"
+                        >
+                          Reverse
+                        </button>
+                      </form>
+                    )}
+                    {viewerRole === "INTERNAL_STAFF" &&
+                    doc.returnedAt &&
+                    !doc.returnResolvedAt &&
+                    doc.returnedBy && (
+                      <>
+                        <form action={uploadReplacementDocumentAction} className="flex flex-wrap items-center gap-2">
+                          <input type="hidden" name="studentId" value={studentId} />
+                          <input type="hidden" name="documentId" value={doc.id} />
+                          <input
+                            name="title"
+                            placeholder="Replacement title (optional)"
+                            className="rounded-lg border border-emerald-300 px-3 py-1.5 text-sm text-emerald-900 placeholder:text-emerald-500 focus:border-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-400"
+                          />
+                          <input
+                            name="file"
+                            type="file"
+                            required
+                            accept=".pdf,image/*"
+                            className="rounded-lg border border-emerald-300 px-3 py-1.5 text-sm text-emerald-900 file:mr-3 file:rounded-lg file:border-0 file:bg-emerald-50 file:px-3 file:py-1 file:text-xs file:font-medium file:text-emerald-800 hover:file:bg-emerald-100"
+                          />
+                          <button
+                            type="submit"
+                            className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-800 hover:bg-emerald-100"
+                          >
+                            Upload Replacement
+                          </button>
+                        </form>
+                        <form action={disputeStudentDocumentReturnAction} className="flex flex-wrap items-center gap-2">
+                          <input type="hidden" name="studentId" value={studentId} />
+                          <input type="hidden" name="documentId" value={doc.id} />
+                          <input
+                            name="note"
+                            required
+                            placeholder="Dispute note to sub-admin"
+                            className="rounded-lg border border-blue-300 px-3 py-1.5 text-sm text-blue-900 placeholder:text-blue-500 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                          />
+                          <button
+                            type="submit"
+                            className="rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-800 hover:bg-blue-100"
+                          >
+                            Dispute Return
+                          </button>
+                        </form>
+                      </>
+                    )}
                     <DeleteWithConfirm
                       formAction={deleteStudentDocumentAction}
                       confirmMessage={`Delete "${doc.title}"? This cannot be undone.`}

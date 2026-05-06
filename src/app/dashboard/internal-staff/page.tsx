@@ -10,6 +10,7 @@ import { RemindersWidget } from "@/components/reminders-widget";
 import { getContributions } from "@/lib/contributions";
 import { prisma } from "@/lib/prisma";
 import { getRemindersForUser } from "@/lib/reminders";
+import { createWorkflowNotification } from "@/lib/workflow-notifications";
 import {
   allCaseStages,
   caseStageLabel,
@@ -984,6 +985,7 @@ async function bulkVerifyDocumentsAction(formData: FormData) {
     include: {
       studentProfile: {
         include: {
+          user: { select: { id: true, name: true, email: true } },
           assignments: {
             where: { isActive: true },
             select: { assignedToId: true },
@@ -1002,11 +1004,41 @@ async function bulkVerifyDocumentsAction(formData: FormData) {
   if (allowedDocuments.length === 0) redirect("/dashboard/internal-staff");
 
   const notes = notesRaw.length > 0 ? notesRaw : null;
-  const allowedIds = allowedDocuments.map((document) => document.id);
-  await prisma.studentDocument.updateMany({
-    where: { id: { in: allowedIds } },
-    data: { verificationStatus: status, notes },
-  });
+  const now = new Date();
+  for (const document of allowedDocuments) {
+    await prisma.studentDocument.update({
+      where: { id: document.id },
+      data: {
+        verificationStatus: status,
+        notes,
+        verifiedById: status === "VERIFIED" ? session.user.id : document.verifiedById,
+        verifiedAt: status === "VERIFIED" ? now : document.verifiedAt,
+        returnResolvedAt:
+          document.returnedAt && document.returnResolvedAt === null ? now : document.returnResolvedAt,
+      },
+    });
+
+    if (
+      session.user.role === "INTERNAL_STAFF" &&
+      status === "VERIFIED" &&
+      document.returnedAt &&
+      document.returnedById &&
+      document.returnResolvedAt === null
+    ) {
+      await createWorkflowNotification({
+        recipientId: document.returnedById,
+        actorId: session.user.id,
+        studentProfileId: document.studentProfileId,
+        documentId: document.id,
+        type: "DOCUMENT_REVERIFIED",
+        title: "Returned document re-verified",
+        message: `${document.studentProfile.user.name ?? document.studentProfile.user.email} - ${document.title} has been re-verified`,
+        note: notes,
+        link: `/dashboard/students/${document.studentProfile.user.id}?tab=tasks`,
+        actionRequired: true,
+      });
+    }
+  }
   await prisma.activityLog.createMany({
     data: allowedDocuments.map((document) => ({
       actorId: session.user.id,
