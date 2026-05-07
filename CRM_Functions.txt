@@ -1,0 +1,601 @@
+================================================================================
+  L&B GLOBAL — CRM & PLATFORM CAPABILITIES (IN-DEPTH REFERENCE)
+================================================================================
+  Generated from the analytic-website codebase and internal workflow docs.
+  This document describes what the system does, not how to deploy it.
+
+  Last updated: 8 May 2026
+  Recent changes (relative to the original prototype reference):
+    • Added "Workflow Notifications & Bell" section — bell, badge logic, all
+      notification types, mark-read API, and the cross-cutting alerting model.
+    • Documented the document return / replacement / re-verification workflow
+      that drives most of the bell notifications.
+    • Added new-inquiry alerting: every active SUB_ADMIN and ADMIN now receives
+      a bell notification + queued email when a student submits the Apply form.
+    • Added the "New Inquiries (Unclaimed)" overview card on Sub-Admin and
+      Admin dashboards (state-based: vanishes when claimed, not on a timer).
+    • Updated dashboard tab structures (Admin / Sub-Admin / Internal Staff)
+      to reflect the current UI.
+    • Added /api/students/search, /api/home-posts, and the
+      /api/notifications/workflow* endpoints.
+    • Added WorkflowNotification to the data-model summary.
+
+================================================================================
+1. WHAT THIS SYSTEM IS
+================================================================================
+
+L&B Global is a web application (Next.js) that serves as both:
+
+  • A CRM (customer relationship management) system for an overseas education
+    and student visa consultancy — managing inquiries, student records, internal
+    collaboration, documents, sales-style pipeline (leads through cases), and
+    financial documents (contracts and invoices).
+
+  • A lightweight CMS for a public marketing site and a newsletter / blog
+    (SEO-oriented articles with media galleries).
+
+The product is built for staff operations. Applicants do not get a product
+"student portal" login: they interact only through public forms (primarily
+the Apply / inquiry form). User accounts with role USER exist in the database
+to represent applicants, but credentials-based sign-in is blocked for that
+role; only staff roles can log into the dashboard.
+
+================================================================================
+2. TECHNOLOGY STACK (IMPLEMENTATION CONTEXT)
+================================================================================
+
+  • Frontend / backend: Next.js (App Router), React, TypeScript
+  • Database: MySQL via Prisma ORM
+  • Authentication: NextAuth with credentials (email + password), JWT sessions
+  • File storage: uploads go through a storage layer (e.g. Vercel Blob in
+    production patterns; see lib/storage)
+  • Scheduled jobs: Vercel Cron calls a protected API route for daily reminder
+    emails (see vercel.json: 0 9 * * * → /api/cron/reminders)
+  • Email: outbound messages are recorded in an email outbox (OutboundEmailLog);
+    the "dev" sender path marks typical test sends as SENT for valid addresses
+
+================================================================================
+3. USER ROLES AND ACCESS MODEL
+================================================================================
+
+Four roles exist in the data model (enum Role):
+
+  USER
+    • Represents an applicant / student record in the database.
+    • Cannot sign in with email + password (login flow explicitly rejects USER).
+    • No dashboard access.
+
+  INTERNAL_STAFF
+    • "Case manager" style operations.
+    • Sees only students assigned to them (via StudentAssignment).
+    • Can work tasks, documents (including bulk verify), and communication
+      threads; cannot access full admin analytics or all unscoped students.
+
+  SUB_ADMIN
+    • Consultancy agent / manager lane.
+    • Works with assigned and (where policy allows) unassigned submissions;
+      can delegate students to internal staff, use communication, manage
+      posts (with admin), run team-oriented reports, etc.
+
+  ADMIN
+    • Full platform control: all students, staff management, configuration,
+      templates, questionnaire, lead-source analytics, and content.
+
+Route protection (conceptually aligned with middleware rules in the codebase):
+
+  • /dashboard requires authentication; USER is bounced to login.
+  • /dashboard/admin — ADMIN only.
+  • /dashboard/sub-admin — ADMIN or SUB_ADMIN.
+  • /dashboard/internal-staff — ADMIN, SUB_ADMIN, or INTERNAL_STAFF.
+  • /dashboard/students — ADMIN, SUB_ADMIN, or INTERNAL_STAFF (with per-page
+    checks so SUB_ADMIN only sees allowed submissions and INTERNAL_STAFF only
+    assigned profiles).
+  • /dashboard/posts — ADMIN or SUB_ADMIN (newsletter/CMS authoring).
+  • /dashboard/communication — ADMIN, SUB_ADMIN, INTERNAL_STAFF.
+  • Paths like /dashboard/student redirect to the correct role dashboard
+    (there is no separate student self-service dashboard in production UX).
+
+================================================================================
+4. PUBLIC-FACING EXPERIENCE
+================================================================================
+
+HOME / MARKETING
+  • Landing sections (services, process, destinations, proof, contact, etc.)
+    present the consultancy value proposition and calls to action.
+
+APPLY (/apply)
+  • Primary lead intake. Loads the active QuestionnaireTemplate from the DB.
+  • Always ensures core identity fields (e.g. full name, email) and applies a
+    standardized "Where did you hear from us?" field with fixed channel options:
+      Higher Perspective, Google Search, Facebook, Instagram, TikTok,
+      Friends/Family, Existing Student, Education Fair, Others.
+  • If "Others" is selected, an additional note field is required to describe
+    the source.
+  • Country list uses a prioritized list for UX.
+  • Submissions from staff email domains are rejected.
+  • On success the server action:
+      1. Creates or updates the User (role USER) and StudentProfile.
+      2. Creates a QuestionnaireSubmission with status SUBMITTED and
+         assignedToId = NULL (unclaimed).
+      3. Queues a confirmation email to the applicant via the outbox.
+      4. Fans out a NEW_STUDENT_APPLICATION workflow notification AND a
+         queued email to every active SUB_ADMIN and ADMIN, so the bell badge
+         increments and the inquiry surfaces on dashboard cards within
+         ~10–20 seconds (see section 11). The fan-out is fail-soft: any
+         error there is logged but never blocks the applicant's submit flow.
+
+NEWSLETTER / BLOG (/newsletter, /newsletter/[slug])
+  • Published HomePost entries: SEO fields (meta title, description, keywords,
+    focus keyword, Open Graph image), optional slug, rich content, featured
+    media, image/video gallery (PostMedia), JSON-LD for discoverability,
+    zoomable images on article pages.
+
+LOGIN / PASSWORD
+  • Staff use /login with email and password.
+  • Forgot password and reset password flows use VerificationToken records
+    (standard pattern).
+
+================================================================================
+5. INQUIRY & SUBMISSION WORKFLOW
+================================================================================
+
+QUESTIONNAIRE TEMPLATES
+  • Admins configure QuestionnaireTemplate records: title, description, active
+    flag, and a JSON "questions" payload defining dynamic fields for Apply.
+
+SUBMISSION LIFECYCLE (SubmissionStatus enum)
+  • SUBMITTED → UNDER_REVIEW → DOCS_REQUESTED → OFFER_RECEIVED → VISA_GRANTED
+    → terminal outcomes REJECTED or ENROLLED.
+
+OPERATIONAL HANDLING
+  • New, unclaimed submissions are surfaced three ways:
+      – the "New Inquiries (Unclaimed)" card on each Sub-Admin and Admin
+        Overview tab (last 7 days, with claim / open buttons),
+      – the bell notification badge for every active SUB_ADMIN and ADMIN,
+      – the existing "Unassigned Cases" StatCards and Assignment Board.
+  • ADMIN assigns questionnaire submissions to SUB_ADMIN agents.
+  • Agents work assigned leads and can claim unassigned work (sub-admin and
+    admin both have a `claimSubmissionAction` that sets `assignedToId` and
+    flips status to UNDER_REVIEW). Claiming a submission makes it disappear
+    from the New Inquiries card naturally — there is no wall-clock timer.
+  • Students can be delegated to INTERNAL_STAFF via StudentAssignment
+    (who assigned, notes, active flag, end date).
+
+CSV EXPORT
+  • ADMIN and SUB_ADMIN can export submissions (API: /api/submissions/export).
+
+================================================================================
+6. STUDENT PROFILE (/dashboard/students/[studentId])
+================================================================================
+
+Each applicant has a User row plus StudentProfile with extended CRM fields.
+
+VISA TRACKING (VisaStatus)
+  • Tracks visa pipeline from NOT_STARTED through DOCUMENTS_IN_PROGRESS,
+    APPLIED, INTERVIEW_SCHEDULED, ADDITIONAL_DOCS_REQUESTED, APPROVED, REJECTED,
+    EXPIRED — plus profile dates (visa expiry, course start/end, follow-up).
+
+CASE STAGE — AU STUDY / VISA PIPELINE (CaseStage enum on StudentProfile)
+  • Ordered progression (consultancy workflow), with labels such as:
+      Consultation and Documentation → Research Proposal → Enrolment Process →
+      Conditional Offer → Unconditional Offer → Tuition Fee and OSHC Paid →
+      COE Received → GTE Process → Visa Draft Preparation → Visa Lodgment.
+  • Terminal / exceptional stages include Visa Grant, Visa Refused, AAT Case,
+    Withdrawn.
+  • UI suggests likely next stages from the current stage (including branching
+    after lodgment to grant/refusal, and refusal → AAT or withdrawn).
+  • Progress percentage is derived from position in the linear chain.
+  • Changing stage writes activity logging used for analytics and reminders.
+
+STUDENT PROFILE TABS (in this order in the UI)
+  • Overview — snapshot including case stage card, visa snapshot, lead /
+    opportunity / quote / case workflow (see section 7), recent STUDENT_THREAD
+    messages, submission summary, delegation controls, contribution leaderboard.
+  • Profile — demographics, questionnaire answers, assignments to internal
+    staff / agents, account edits where permitted.
+  • Tasks — tasks tied to the profile with priority and status; document list
+    with categories, verification, return / replacement actions.
+  • Financials — contracts and invoices driven by email templates; previews.
+  • Audit — ActivityLog entries scoped to the student.
+  • Contributions — per-user contribution scoring for this student
+    (see section 13).
+
+ACCESS RULES ON THIS PAGE
+  • SUB_ADMIN must have visibility via questionnaire assignment rules (assigned
+    or unassigned as configured).
+  • INTERNAL_STAFF must have an active StudentAssignment for this student.
+
+OPENING THIS PAGE FROM A NOTIFICATION AUTO-MARKS UNREAD ITEMS AS READ
+  • A small client tracker hits /api/notifications/workflow/mark-read with the
+    studentId, clearing any unread document or new-application notifications
+    the viewer had for that student. The bell badge updates on next poll.
+
+================================================================================
+7. SALESFORCE-STYLE CRM PIPELINE (ON STUDENT OVERVIEW)
+================================================================================
+
+Beyond the visa "case stage" field, the schema implements classic CRM entities
+linked to StudentProfile:
+
+CRM ACCOUNT (CrmAccount)
+  • Accounts can represent STUDENT, PARENT, PARTNER, INSTITUTION with optional
+    phone, email, website, source, tags.
+
+LEAD (Lead)
+  • Lead creation from the UI captures intake-style fields (status, score,
+    qualification / disqualification reasons, follow-up times, parent details,
+    campaign/source metadata).
+  • LeadStatus values include NEW, CONTACTED, QUALIFIED, NURTURE, DISQUALIFIED,
+    CONVERTED.
+
+OPPORTUNITY (Opportunity)
+  • Created when a lead is converted; ties to account and lead (one-to-one
+    with lead). Tracks amount, probability, forecast category (PIPELINE,
+    BEST_CASE, COMMIT, CLOSED), stage (NEW, QUOTE_SENT, CLOSED_WON, CLOSED_LOST),
+    expected close date.
+
+QUOTE (Quote)
+  • Multiple quotes per opportunity; statuses DRAFT, SUBMITTED, APPROVED,
+    REJECTED with approval workflow (submit → approve/reject with actors).
+
+CASE — SERVICE / SUPPORT CASE (model Case, distinct from CaseStage)
+  • After opportunity flows, staff can convert to a Case record linked to the
+    opportunity and account (OPEN, IN_PROGRESS, RESOLVED, CLOSED), optional
+    assigned agent, title/description — representing operational case handling.
+
+This pipeline lives primarily on the student overview UI alongside visa case
+stage progress — giving both operational visa milestones and sales/opportunity
+tracking in one profile.
+
+================================================================================
+8. DOCUMENTS AND TASKS
+================================================================================
+
+DOCUMENTS (StudentDocument)
+  • Categories: PASSPORT, TRANSCRIPT, SOP, OFFER_LETTER, VISA, FINANCIAL,
+    IDENTITY, OTHER.
+  • Stored files tracked with MIME type, size, storage path, original filename,
+    uploader.
+  • Verification: PENDING → VERIFIED or REJECTED; notes supported.
+  • Internal staff workflows include bulk verification actions where implemented.
+
+DOCUMENT RETURN / REPLACEMENT WORKFLOW
+  • A sub-admin can "return" a previously verified document — typically when
+    something was approved by mistake or new evidence requires a re-look. The
+    return is audited via returnedById, returnedAt, and a returnedNote.
+  • Returning a document fires a workflow notification (DOCUMENT_RETURNED) to
+    the staff member who originally uploaded / verified it, so they cannot
+    silently lose the change. This is the original signal the bell was built
+    around.
+  • The internal staff member can dispute the return (DOCUMENT_RETURN_DISPUTED)
+    or upload a replacement. Replacements are linked through replacedDocumentId,
+    creating a chain so historical lineage is preserved.
+  • Replacement uploads emit DOCUMENT_REPLACEMENT_UPLOADED back to the
+    sub-admin, who then re-verifies. A successful re-verification emits
+    DOCUMENT_REVERIFIED, closing the loop.
+  • If a return remains unresolved, DOCUMENT_RETURN_FOLLOW_UP nudges follow.
+  • returnResolvedAt records when the loop closed; activity entries are written
+    for the audit tab.
+
+TASKS (Task)
+  • Priority: LOW, MEDIUM, HIGH, URGENT.
+  • Status: TODO, IN_PROGRESS, BLOCKED, DONE.
+  • Assigned to a staff user with due dates for reminder surfacing.
+
+================================================================================
+9. CONTRACTS, INVOICES, AND EMAIL TEMPLATES
+================================================================================
+
+EMAIL TEMPLATES (EmailTemplate)
+  • Types: CONTRACT, INVOICE, FOLLOW_UP, GENERAL.
+  • HTML bodies support placeholder substitution (template renderer).
+  • Stored with metadata about placeholders for editors.
+
+CONTRACTS
+  • Built from templates or custom snapshots; statuses DRAFT, SENT, ACCEPTED,
+    REJECTED, CANCELLED; recipient email; HTML snapshot preserved when sent.
+
+INVOICES
+  • Unique invoice numbers; currency default AUD; line items (quantity, unit
+    price, amounts); subtotal / tax / total via invoice calculator;
+    statuses DRAFT, SENT, PAID, OVERDUE, CANCELLED; due dates.
+
+PREVIEW ROUTES
+  • Dashboard preview pages exist for contracts and invoices so staff can
+    review rendered HTML before or after sending.
+
+OUTBOUND EMAIL LOG
+  • Each send creates OutboundEmailLog rows with QUEUED / SENT / FAILED status,
+    optional linkage to contract or invoice — supporting auditing and the dev
+    sender behavior.
+  • The same log captures non-financial emails (e.g. applicant confirmation,
+    new-inquiry digest to staff) so all outbound traffic is traceable through
+    one table.
+
+================================================================================
+10. INTERNAL COMMUNICATION
+================================================================================
+
+CONVERSATION TYPES (ConversationType)
+  • DIRECT — one-to-one staff chat.
+  • TEAM — group discussions.
+  • STUDENT_THREAD — conversation anchored to a StudentProfile for internal
+    coordination about that applicant.
+
+FEATURES
+  • Communication hub at /dashboard/communication with conversation list and
+    thread pages.
+  • Chat popup UI component (top-bar widget) for quick access; unread counts
+    polled via API.
+  • Messages support read receipts (MessageRead). ADMIN may have elevated access
+    patterns on certain APIs (e.g. participation checks).
+
+API SURFACE (representative)
+  • GET /api/chat/users — staff directory for starting chats.
+  • POST /api/chat/conversations/direct — find-or-create direct conversation.
+  • GET/POST /api/chat/conversations/[id]/messages — list/send; GET may mark
+    messages read.
+  • GET /api/chat/unread-count — unread for direct conversations.
+
+================================================================================
+11. WORKFLOW NOTIFICATIONS & BELL
+================================================================================
+
+A persistent in-product notification system sits next to the chat popup in the
+dashboard top bar. It is distinct from chat (which is conversational) and from
+reminders (which is a daily / periodic surfacing).
+
+WHO SEES THE BELL
+  • ADMIN, SUB_ADMIN, INTERNAL_STAFF — the bell is mounted in the dashboard
+    layout for any of these roles.
+  • USER role does not see the dashboard at all and therefore does not see
+    the bell.
+
+DATA MODEL (WorkflowNotification)
+  • One row per recipient. Stores: recipient, optional actor, the related
+    studentProfile (mandatory) and optional document, type, title, message,
+    optional note, deep-link, actionRequired flag, JSON metadata, readAt,
+    timestamps.
+  • Indexed on (recipientId, readAt, actionRequired) for fast badge queries
+    and on (studentProfileId, createdAt) for grouping in the dropdown.
+
+NOTIFICATION TYPES (enum WorkflowNotificationType)
+  • DOCUMENT_RETURNED — sub-admin returned a previously verified document
+    (alert to the original verifier / uploader). Amber styling.
+  • DOCUMENT_RETURN_DISPUTED — internal staff disagrees with the return.
+  • DOCUMENT_RETURN_FOLLOW_UP — nudge that an unresolved return is ageing.
+  • DOCUMENT_REPLACEMENT_UPLOADED — internal staff uploaded a replacement
+    file; the sub-admin needs to re-verify.
+  • DOCUMENT_REVERIFIED — the loop has been closed (informational).
+  • NEW_STUDENT_APPLICATION — a public Apply form was submitted; sent to
+    every active SUB_ADMIN and ADMIN. Emerald styling so it visually stands
+    apart from the document workflow above.
+
+BADGE LOGIC
+  • The red badge counts unread items where actionRequired = true (and not
+    yet read) for the current user. Document items default to actionRequired,
+    DOCUMENT_REVERIFIED is informational, NEW_STUDENT_APPLICATION is action-
+    required (by design — claim the case).
+  • The bell polls /api/notifications/workflow on dashboard mount, on window
+    focus, and every 10 seconds in production / 20 seconds in development.
+  • The dropdown groups notifications by student so multiple events for one
+    case collapse into a single visual block; unread counts per group are
+    shown as a small chip.
+
+CLEARING / READ STATE
+  • Opening a student profile triggers POST /api/notifications/workflow/mark-
+    read with the studentId, which sets readAt for every unread notification
+    that recipient holds for that student. The badge updates on next poll.
+  • Each click on a notification entry deep-links into the relevant page
+    (student profile, unassigned queue anchored on the submission, etc.).
+  • There is no auto-expire timer: notifications remain until read or until
+    the underlying entity is resolved (e.g. submission is claimed). This is
+    intentional — nothing is silently lost during PTO / weekends.
+
+EMAIL ECHO
+  • For NEW_STUDENT_APPLICATION the system also queues an email through the
+    OutboundEmailLog outbox to each recipient, providing an off-hours backup
+    channel. Other types are bell-only by default.
+
+FAIL-SOFT GUARANTEE
+  • The fan-out helper (lib/workflow-notifications.ts) wraps creation in a
+    try/catch. A notification failure never blocks the underlying business
+    action (e.g. an applicant's submission still succeeds even if every
+    sub-admin's notification insert fails).
+
+================================================================================
+12. ACTIVITY LOGGING AND AUDIT
+================================================================================
+
+ActivityLog records actor, optional targets (user / student profile), entity
+type (students, tasks, documents, contracts, invoices, messages, assignments,
+leads, opportunities, quotes, cases, case stage transitions), action label,
+JSON metadata, timestamp.
+
+The Audit tab on the student profile surfaces recent entries for compliance and
+operational visibility.
+
+Case stage changes contribute to contribution scoring via CASE_STAGE entity logs.
+
+================================================================================
+13. CONTRIBUTION LEADERBOARD
+================================================================================
+
+The lib/contributions module computes weighted scores per staff member:
+
+  • 70% weight — "stage pool": net forward movement inferred from CASE_STAGE
+    activity metadata (stage deltas along the ordered visa pipeline).
+  • 15% weight — document uploads (split across contributors).
+  • 15% weight — tasks marked DONE (split across assignees).
+
+Pools use denominators based on totals vs. expected targets per case so scoring
+remains comparable across the team. The student profile can show a scoped
+leaderboard for that student; admin views can show global team standings.
+
+================================================================================
+14. REMINDERS AND CRON DIGEST
+================================================================================
+
+REMINDER TYPES SHOWN IN UI (lib/reminders.ts ReminderType)
+  • followup — overdue or due soon based on nextFollowUpDate.
+  • visa_expiry — thresholds (e.g. within 90 days, urgency tiers).
+  • task_due — within a short lookahead window and overdue.
+  • contract_reminder — contracts pending acceptance (SENT status).
+  • invoice_reminder — SENT or OVERDUE relative to due date.
+  • stage_stalled — non-terminal stage unchanged for 14+ days (warning) or
+    30+ days (urgent).
+  • stage_info — informational stage updates.
+
+SCOPE BY ROLE
+  • ADMIN: reminders across many student profiles (bounded queries).
+  • SUB_ADMIN: scoped to submissions visible to that agent.
+  • INTERNAL_STAFF: scoped to assigned StudentAssignment profiles.
+
+REMINDERS VS. WORKFLOW NOTIFICATIONS
+  • Reminders are *time-based* signals computed on demand from profile state
+    (overdue, expiring, stalled). They render in a widget on each dashboard's
+    Overview tab.
+  • Workflow notifications are *event-based* signals stored as rows when an
+    action happens (return, replacement, re-verification, new application).
+    They render in the bell.
+  • The two surfaces are complementary; nothing prevents the same case from
+    appearing in both at once.
+
+CRON JOB
+  • GET /api/cron/reminders — authorized with CRON_SECRET bearer token; runs
+    daily (09:00 per vercel.json), aggregates digest emails through the outbox.
+
+================================================================================
+15. REPORTING ENDPOINTS AND OTHER APIs
+================================================================================
+
+REPORTS
+  • /api/submissions/export — CSV of questionnaire submissions (ADMIN, SUB_ADMIN).
+  • /api/sub-admin/report — weekly manager report CSV (Sub-Admin context).
+  • /api/internal-staff/report — daily work report CSV (Internal Staff).
+
+SEARCH / DIRECTORY
+  • /api/students/search — autocomplete-style search used by the top-bar
+    StudentSearch component.
+  • /api/chat/users — staff directory for starting chats.
+
+NOTIFICATIONS
+  • /api/notifications/workflow — list grouped notifications + actionRequired
+    count for the current user.
+  • /api/notifications/workflow/mark-read — mark all unread workflow
+    notifications for a given student as read for the current user.
+  • /api/notifications/unread-count — chat unread aggregation across the
+    user's conversations.
+  • /api/chat/unread-count — chat-only counterpart used by the chat badge.
+
+CHAT
+  • /api/chat/conversations/direct — find-or-create one-to-one.
+  • /api/chat/conversations/[id]/messages — list / send messages, may mark
+    read on GET.
+
+CONTENT
+  • /api/home-posts — newsletter / blog post listing for the public site.
+
+CRON
+  • /api/cron/reminders — daily reminder digest worker (CRON_SECRET).
+
+================================================================================
+16. DASHBOARD HIGHLIGHTS BY ROLE
+================================================================================
+
+ADMIN (/dashboard/admin)
+  Tabs: Overview · Students · Analytics · Staff & Content · Contributions.
+  • Overview — Reminders widget, "New Inquiries (Unclaimed)" card, executive
+    snapshot (totals, offer rate, open tasks, visa-expiring, etc.), pending
+    approvals row, case stage funnel.
+  • Students — full pipeline with filters, priorities, assignment to agents,
+    delegation to internal staff, CSV export.
+  • Analytics — charts for geography, courses, funnel, with a deep-dive at
+    /dashboard/admin/lead-sources.
+  • Staff & Content — questionnaire templates, email templates
+    (/dashboard/admin/templates), staff CRUD (Admin / Sub-Admin / Internal
+    Staff), job titles, team hierarchy (StaffTeamMembership links managers
+    to internal staff), newsletter post authoring.
+  • Contributions — global team leaderboard.
+
+SUB-ADMIN (/dashboard/sub-admin)
+  Tabs: Overview · Students · Team & Operations · Contributions.
+  • Overview — Reminders widget, "New Inquiries (Unclaimed)" card, manager
+    StatCards (Pending Approvals, Unassigned Cases, Team Overloaded, Overdue
+    Follow-ups, Team Members), Case Stage Funnel, Manager Analytics with
+    weekly trend buckets, Risk Board.
+  • Students — saved triage filters (All / Unassigned / Overdue / Needs
+    Approval), case stage chips, priority categories, bulk status updates,
+    delegation to internal staff, CSV export.
+  • Team & Operations — Approval queue, Assignment board, Delegation snapshot,
+    home-page posts authored by the user.
+  • Contributions — case-by-case contribution leaderboards for assigned cases.
+
+INTERNAL STAFF (/dashboard/internal-staff)
+  Tabs: Overview · Work Queue · Tasks & Docs · Students · Contributions.
+  • Operational dashboard: active cases, tasks, overdue items, pending docs,
+    contract / invoice reminders.
+  • Work queue scoped to assigned students; daily CSV report link.
+  • Surface for document-return workflow notifications they receive.
+
+================================================================================
+17. DATA MODEL SUMMARY (KEY TABLES)
+================================================================================
+
+Identity & access
+  User, Account (OAuth adapter), Session, VerificationToken
+
+Student & questionnaire
+  StudentProfile, QuestionnaireTemplate, QuestionnaireSubmission
+
+Staff structure & delegation
+  StaffTeamMembership, StudentAssignment
+
+Operational artefacts
+  Task, StudentDocument (with replacement chain via replacedDocumentId)
+
+Financials & email
+  EmailTemplate, Contract, Invoice, InvoiceLineItem, OutboundEmailLog
+
+Communication
+  Conversation, ConversationParticipant, Message, MessageRead
+
+Audit & alerting
+  ActivityLog, WorkflowNotification
+
+CRM (sales-style)
+  CrmAccount, Lead, Opportunity, Quote, Case
+
+Content
+  HomePost, PostMedia
+
+Enums cover submission status, visa status, document and task enums, contract
+and invoice status, template and email log status, conversation types, CRM
+account types, lead/opportunity/quote/case statuses, case stage, workflow
+notification types, and activity entity types.
+
+================================================================================
+18. IMPORTANT PRODUCT RULES TO REMEMBER
+================================================================================
+
+  • Applicants do not log in; staff operate the CRM.
+  • USER role exists for data integrity but is excluded from credentials login.
+  • Two "case" concepts coexist: (1) visa CaseStage on StudentProfile for the
+    study/visa journey, and (2) CRM Case model tied to Opportunity for
+    operational case management after sales conversion.
+  • Email sending in development is simulated via the outbox helper — production
+    would wire a real provider while preserving OutboundEmailLog.
+  • Workflow notifications are per-recipient: every SUB_ADMIN/ADMIN gets their
+    own row, so each user's badge counter reflects only what they personally
+    have left to action.
+  • Notification clearing is *state-based*, not *time-based*. The bell entry
+    and the New Inquiries card both clear when the user reads it / the
+    submission is claimed. This guarantees nothing silently disappears during
+    holidays, weekends, or sick leave.
+  • Document return / replacement / re-verification is a complete loop: every
+    state transition writes an ActivityLog entry AND a WorkflowNotification,
+    so the audit tab and the bell stay consistent.
+
+================================================================================
+END OF DOCUMENT
+================================================================================

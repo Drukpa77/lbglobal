@@ -84,10 +84,31 @@ export default async function StudentProfileManagementPage(props: { params: Para
 
   const currentUserId = session.user.id;
 
-  /** Referenced only by disabled `{false && (...)}` sales UI; keeps `tsc` satisfied. */
+  // Placeholders for the disabled `{false && (...)}` sales UI block. The JSX
+  // inside still type-checks even though it is never rendered, so we type
+  // these arrays to match what Prisma would return — that way the whole
+  // dead-code branch stays type-safe without `any` casts.
+  type DisabledLead = Prisma.LeadGetPayload<{
+    include: {
+      account: true;
+      owner: { select: { id: true; name: true; email: true; role: true } };
+      opportunity: {
+        include: {
+          quotes: {
+            include: {
+              submittedBy: { select: { id: true; name: true; email: true } };
+              approvedBy: { select: { id: true; name: true; email: true } };
+              rejectedBy: { select: { id: true; name: true; email: true } };
+            };
+          };
+          case: true;
+        };
+      };
+    };
+  }>;
   const crmAccounts: { id: string; name: string; tag: string | null }[] = [];
   const leadOwners: { id: string; name: string | null; email: string | null; role: string }[] = [];
-  const leads: unknown[] = [];
+  const leads: DisabledLead[] = [];
 
   if (session.user.role === "SUB_ADMIN") {
     const assigned = await prisma.questionnaireSubmission.findFirst({

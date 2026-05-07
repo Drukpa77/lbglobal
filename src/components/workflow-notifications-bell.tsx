@@ -55,6 +55,38 @@ export function WorkflowNotificationsBell() {
     return () => window.clearInterval(id);
   }, [fetchNotifications]);
 
+  // Mark a single notification as read. Updates local state optimistically so
+  // the badge counter and "unread" pill drop the instant the user clicks,
+  // without waiting on the next 10s/20s poll. The fetch is fire-and-forget
+  // (with `keepalive` so the request still flushes if a navigation begins).
+  const markOneRead = useCallback((notificationId: string) => {
+    setData((prev) => {
+      let actionRequiredCount = prev.actionRequiredCount;
+      const groups = prev.groups.map((group) => {
+        let groupChanged = false;
+        const items = group.items.map((item) => {
+          if (item.id !== notificationId || item.isRead) return item;
+          groupChanged = true;
+          if (item.actionRequired) {
+            actionRequiredCount = Math.max(0, actionRequiredCount - 1);
+          }
+          return { ...item, isRead: true };
+        });
+        if (!groupChanged) return group;
+        const unreadCount = items.filter((item) => !item.isRead).length;
+        return { ...group, items, unreadCount };
+      });
+      return { actionRequiredCount, groups };
+    });
+
+    fetch("/api/notifications/workflow/mark-read", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notificationId }),
+      keepalive: true,
+    }).catch(() => undefined);
+  }, []);
+
   const hasItems = useMemo(() => data.groups.some((group) => group.items.length > 0), [data.groups]);
 
   return (
@@ -77,7 +109,7 @@ export function WorkflowNotificationsBell() {
 
       {open ? (
         <div className="absolute right-0 z-[80] mt-2 w-[28rem] max-w-[90vw] rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
-          <p className="text-sm font-semibold text-slate-900">Document notifications</p>
+          <p className="text-sm font-semibold text-slate-900">Notifications</p>
           {!hasItems ? (
             <p className="mt-3 text-sm text-slate-600">No notifications right now.</p>
           ) : (
@@ -99,12 +131,13 @@ export function WorkflowNotificationsBell() {
                       <li key={item.id}>
                         <Link
                           href={item.link}
-                          onClick={() => setOpen(false)}
-                          className={`block rounded-md border p-2 text-xs transition ${
-                            item.actionRequired
-                              ? "border-amber-300 bg-amber-50 text-amber-900 hover:border-amber-400"
-                              : "border-blue-200 bg-blue-50 text-blue-900 hover:border-blue-300"
-                          } ${item.isRead ? "opacity-70" : ""}`}
+                          onClick={() => {
+                            setOpen(false);
+                            if (!item.isRead) markOneRead(item.id);
+                          }}
+                          className={`block rounded-md border p-2 text-xs transition ${notificationItemClasses(item)} ${
+                            item.isRead ? "opacity-70" : ""
+                          }`}
                         >
                           <p className="font-semibold">{item.title}</p>
                           <p className="mt-0.5">{item.message}</p>
@@ -121,4 +154,14 @@ export function WorkflowNotificationsBell() {
       ) : null}
     </div>
   );
+}
+
+function notificationItemClasses(item: NotificationItem) {
+  if (item.type === "NEW_STUDENT_APPLICATION") {
+    return "border-emerald-300 bg-emerald-50 text-emerald-900 hover:border-emerald-400";
+  }
+  if (item.actionRequired) {
+    return "border-amber-300 bg-amber-50 text-amber-900 hover:border-amber-400";
+  }
+  return "border-blue-200 bg-blue-50 text-blue-900 hover:border-blue-300";
 }

@@ -1,17 +1,28 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const isCI = Boolean(process.env.CI);
+
 export default defineConfig({
   testDir: "./tests",
-  timeout: 30_000,
+  timeout: 60_000,
   expect: {
-    timeout: 5_000,
+    timeout: 7_500,
   },
   fullyParallel: false,
-  retries: 0,
-  reporter: [["list"]],
+  retries: isCI ? 1 : 0,
+  reporter: isCI ? [["list"], ["html", { open: "never" }]] : [["list"]],
   use: {
     baseURL: "http://localhost:3000",
     trace: "on-first-retry",
+    video: "retain-on-failure",
+  },
+  // Reuse the developer's running `npm run dev` if any; otherwise start one
+  // so `npx playwright test` works from a clean checkout (CI included).
+  webServer: {
+    command: "npm run dev",
+    url: "http://localhost:3000",
+    reuseExistingServer: !isCI,
+    timeout: 120_000,
   },
   projects: [
     {

@@ -7,6 +7,7 @@ import { prioritizedCountries } from "@/lib/countries";
 import { parseTemplateQuestions } from "@/lib/questionnaire";
 import { prisma } from "@/lib/prisma";
 import { queueDevEmail } from "@/lib/email-outbox";
+import { notifyStaffOfNewApplication } from "@/lib/workflow-notifications";
 import { SubmitButton } from "@/components/submit-button";
 import { ApplyFormFields } from "./apply-form-fields";
 
@@ -245,19 +246,20 @@ async function submitQuestionnaireAction(formData: FormData) {
   const city = answers.city?.trim() ?? answers.addressCity?.trim() ?? "";
   const country = answers.country?.trim() ?? answers.addressCountry?.trim() ?? "";
 
-  if (!existingUser?.studentProfile) {
-    await prisma.studentProfile.create({
-      data: {
-        userId: studentUser.id,
-        phone: answers.phone?.trim() ?? null,
-        city: city || null,
-        nationality: country || null,
-        followUpNotes: null,
-      },
-    });
-  }
+  const studentProfile = existingUser?.studentProfile
+    ? existingUser.studentProfile
+    : await prisma.studentProfile.create({
+        data: {
+          userId: studentUser.id,
+          phone: answers.phone?.trim() ?? null,
+          city: city || null,
+          nationality: country || null,
+          followUpNotes: null,
+        },
+        select: { id: true },
+      });
 
-  await prisma.questionnaireSubmission.create({
+  const submission = await prisma.questionnaireSubmission.create({
     data: {
       studentId: studentUser.id,
       templateId: template.id,
@@ -266,6 +268,7 @@ async function submitQuestionnaireAction(formData: FormData) {
       sourceCountry: country,
       answers: answers as object,
     },
+    select: { id: true },
   });
 
   // Queue confirmation email (logs in dev; will send when provider is configured)
@@ -278,6 +281,20 @@ async function submitQuestionnaireAction(formData: FormData) {
       <p>Thank you for submitting your application. Our team has received your inquiry and will contact you within 1–2 business days.</p>
       <p>Best regards,<br />L&B Global</p>
     `,
+  });
+
+  // Fan out a bell notification + email to every SUB_ADMIN and ADMIN so the
+  // unassigned application surfaces immediately (failure here must not block
+  // the applicant – the helper logs and swallows errors internally).
+  await notifyStaffOfNewApplication({
+    studentProfileId: studentProfile.id,
+    studentUserId: studentUser.id,
+    studentName: fullName,
+    studentEmail: email,
+    submissionId: submission.id,
+    sourceCity: city || null,
+    sourceCountry: country || null,
+    hearFrom: hearFrom || null,
   });
 
   revalidatePath("/apply");
