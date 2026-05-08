@@ -214,7 +214,23 @@ async function submitQuestionnaireAction(formData: FormData) {
 
   const existingUser = await prisma.user.findUnique({
     where: { email },
-    select: { id: true, role: true, name: true, studentProfile: { select: { id: true } } },
+    select: {
+      id: true,
+      role: true,
+      name: true,
+      studentProfile: {
+        select: {
+          id: true,
+          phone: true,
+          city: true,
+          nationality: true,
+          currentEducationLevel: true,
+          targetCourse: true,
+          preferredIntake: true,
+          englishTestScore: true,
+        },
+      },
+    },
   });
   if (existingUser && existingUser.role !== "USER") {
     redirect("/apply?error=staff-email");
@@ -245,19 +261,52 @@ async function submitQuestionnaireAction(formData: FormData) {
 
   const city = answers.city?.trim() ?? answers.addressCity?.trim() ?? "";
   const country = answers.country?.trim() ?? answers.addressCountry?.trim() ?? "";
+  const phone = answers.phone?.trim() ?? "";
+  const currentEducationLevel = answers.currentEducationLevel?.trim() ?? "";
+  const targetCourse = answers.targetCourse?.trim() ?? "";
+  const preferredIntake = answers.preferredIntake?.trim() ?? "";
+  const englishTestScore = answers.englishTestScore?.trim() ?? "";
 
-  const studentProfile = existingUser?.studentProfile
-    ? existingUser.studentProfile
-    : await prisma.studentProfile.create({
-        data: {
-          userId: studentUser.id,
-          phone: answers.phone?.trim() ?? null,
-          city: city || null,
-          nationality: country || null,
-          followUpNotes: null,
-        },
-        select: { id: true },
+  let studentProfile: { id: string };
+  if (existingUser?.studentProfile) {
+    // Resubmissions: backfill any profile field the staff hasn't filled in yet,
+    // but never overwrite values an admin may have edited in the dashboard.
+    const existing = existingUser.studentProfile;
+    const profileUpdate: Record<string, string> = {};
+    if (!existing.phone && phone) profileUpdate.phone = phone;
+    if (!existing.city && city) profileUpdate.city = city;
+    if (!existing.nationality && country) profileUpdate.nationality = country;
+    if (!existing.currentEducationLevel && currentEducationLevel)
+      profileUpdate.currentEducationLevel = currentEducationLevel;
+    if (!existing.targetCourse && targetCourse)
+      profileUpdate.targetCourse = targetCourse;
+    if (!existing.preferredIntake && preferredIntake)
+      profileUpdate.preferredIntake = preferredIntake;
+    if (!existing.englishTestScore && englishTestScore)
+      profileUpdate.englishTestScore = englishTestScore;
+    if (Object.keys(profileUpdate).length > 0) {
+      await prisma.studentProfile.update({
+        where: { id: existing.id },
+        data: profileUpdate,
       });
+    }
+    studentProfile = { id: existing.id };
+  } else {
+    studentProfile = await prisma.studentProfile.create({
+      data: {
+        userId: studentUser.id,
+        phone: phone || null,
+        city: city || null,
+        nationality: country || null,
+        currentEducationLevel: currentEducationLevel || null,
+        targetCourse: targetCourse || null,
+        preferredIntake: preferredIntake || null,
+        englishTestScore: englishTestScore || null,
+        followUpNotes: null,
+      },
+      select: { id: true },
+    });
+  }
 
   const submission = await prisma.questionnaireSubmission.create({
     data: {
