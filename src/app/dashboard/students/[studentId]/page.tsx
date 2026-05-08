@@ -4,6 +4,7 @@ import type {
   CaseStage,
   CaseStatus,
   CrmAccountType,
+  DocumentVerificationStatus,
   DocumentCategory,
   LeadStatus,
   OpportunityForecastCategory,
@@ -26,6 +27,8 @@ import { DeleteWithConfirm } from "@/components/delete-with-confirm";
 import { VisaStatusSavedToast } from "@/components/visa-status-saved-toast";
 import { StudentNoteItem } from "@/components/student-note-item";
 import { SubmitButton } from "@/components/submit-button";
+import { DocumentNotificationReadTracker } from "@/components/document-notification-read-tracker";
+import { TaskActionToast } from "@/components/task-action-toast";
 import { AuditTab } from "@/app/dashboard/students/[studentId]/tabs/audit-tab";
 import { TasksDocumentsTab } from "@/app/dashboard/students/[studentId]/tabs/tasks-documents-tab";
 import { auth } from "@/auth";
@@ -34,6 +37,7 @@ import { calculateInvoiceTotals, normalizeInvoiceItems } from "@/lib/invoice-cal
 import { prisma } from "@/lib/prisma";
 import { deleteStoredFile, uploadBufferToStorage } from "@/lib/storage";
 import { renderTemplate } from "@/lib/template-renderer";
+import { createWorkflowNotification } from "@/lib/workflow-notifications";
 import { formatVisaStatus, formatYearsLeft, visaStatuses } from "@/lib/student-tracking";
 import {
   allCaseStages,
@@ -47,7 +51,7 @@ import {
 } from "@/lib/case-stage";
 
 type Params = Promise<{ studentId: string }>;
-type SearchParams = Promise<{ tab?: string }>;
+type SearchParams = Promise<{ tab?: string; taskCreated?: string; taskError?: string }>;
 
 const studentAccountSchema = z.object({
   fullName: z.string().trim().min(2).max(100),
@@ -81,10 +85,31 @@ export default async function StudentProfileManagementPage(props: { params: Para
 
   const currentUserId = session.user.id;
 
-  /** Referenced only by disabled `{false && (...)}` sales UI; keeps `tsc` satisfied. */
+  // Placeholders for the disabled `{false && (...)}` sales UI block. The JSX
+  // inside still type-checks even though it is never rendered, so we type
+  // these arrays to match what Prisma would return — that way the whole
+  // dead-code branch stays type-safe without `any` casts.
+  type DisabledLead = Prisma.LeadGetPayload<{
+    include: {
+      account: true;
+      owner: { select: { id: true; name: true; email: true; role: true } };
+      opportunity: {
+        include: {
+          quotes: {
+            include: {
+              submittedBy: { select: { id: true; name: true; email: true } };
+              approvedBy: { select: { id: true; name: true; email: true } };
+              rejectedBy: { select: { id: true; name: true; email: true } };
+            };
+          };
+          case: true;
+        };
+      };
+    };
+  }>;
   const crmAccounts: { id: string; name: string; tag: string | null }[] = [];
   const leadOwners: { id: string; name: string | null; email: string | null; role: string }[] = [];
-  const leads: unknown[] = [];
+  const leads: DisabledLead[] = [];
 
   if (session.user.role === "SUB_ADMIN") {
     const assigned = await prisma.questionnaireSubmission.findFirst({
@@ -189,6 +214,25 @@ export default async function StudentProfileManagementPage(props: { params: Para
       })
     : [];
 
+  const internalStaffAssignedForTasks =
+    needsTasksData &&
+    session.user.role === "INTERNAL_STAFF" &&
+    studentProfileId !== "__none__"
+      ? await prisma.studentAssignment.findFirst({
+          where: {
+            studentProfileId,
+            isActive: true,
+            assignedToId: session.user.id,
+          },
+          select: { id: true },
+        })
+      : null;
+
+  const canCreateTasks =
+    session.user.role === "ADMIN" ||
+    session.user.role === "SUB_ADMIN" ||
+    Boolean(internalStaffAssignedForTasks);
+
   const tasks = needsTasksData
     ? await prisma.task.findMany({
         where: { studentProfileId },
@@ -198,14 +242,53 @@ export default async function StudentProfileManagementPage(props: { params: Para
       })
     : [];
 
-  const documents = needsTasksData
+  const allDocuments = needsTasksData
     ? await prisma.studentDocument.findMany({
         where: { studentProfileId },
-        include: { uploadedBy: { select: { id: true, name: true, email: true } } },
+        include: {
+          uploadedBy: { select: { id: true, name: true, email: true } },
+          returnedBy: { select: { id: true, name: true, email: true } },
+        },
         orderBy: { createdAt: "desc" },
-        take: 30,
       })
     : [];
+
+  const documentsById = new Map(allDocuments.map((doc) => [doc.id, doc]));
+  const supersededDocumentIds = new Set(
+    allDocuments
+      .map((doc) => doc.replacedDocumentId)
+      .filter((id): id is string => Boolean(id)),
+  );
+
+  const documents = allDocuments
+    .filter((doc) => !supersededDocumentIds.has(doc.id))
+    .slice(0, 30)
+    .map((doc) => {
+      const previousVersions: typeof allDocuments = [];
+      let cursor = doc.replacedDocumentId ? documentsById.get(doc.replacedDocumentId) : undefined;
+      const seen = new Set<string>();
+      while (cursor && !seen.has(cursor.id)) {
+        seen.add(cursor.id);
+        previousVersions.push(cursor);
+        cursor = cursor.replacedDocumentId ? documentsById.get(cursor.replacedDocumentId) : undefined;
+      }
+      return {
+        ...doc,
+        previousVersions: previousVersions.map((prev) => ({
+          id: prev.id,
+          title: prev.title,
+          storagePath: prev.storagePath,
+          verificationStatus: prev.verificationStatus,
+          returnedAt: prev.returnedAt,
+          returnedNote: prev.returnedNote,
+          returnedBy: prev.returnedBy
+            ? { name: prev.returnedBy.name, email: prev.returnedBy.email }
+            : null,
+          uploadedBy: { name: prev.uploadedBy.name, email: prev.uploadedBy.email },
+          createdAt: prev.createdAt,
+        })),
+      };
+    });
 
   const templates = needsFinancialData
     ? await prisma.emailTemplate.findMany({
@@ -1282,16 +1365,27 @@ export default async function StudentProfileManagementPage(props: { params: Para
       )}
 
       {activeTab === "tasks" && (
-        <TasksDocumentsTab
-          studentId={studentId}
-          tasks={tasks}
-          documents={documents}
-          createTaskAction={createTaskAction}
-          updateTaskStatusAction={updateTaskStatusAction}
-          updateTaskChecklistAction={updateTaskChecklistAction}
-          uploadStudentDocumentAction={uploadStudentDocumentAction}
-          deleteStudentDocumentAction={deleteStudentDocumentAction}
-        />
+        <>
+          <Suspense fallback={null}>
+            <TaskActionToast />
+          </Suspense>
+          <DocumentNotificationReadTracker studentId={studentId} />
+          <TasksDocumentsTab
+            studentId={studentId}
+            tasks={tasks}
+            documents={documents}
+            createTaskAction={createTaskAction}
+            updateTaskStatusAction={updateTaskStatusAction}
+            updateTaskChecklistAction={updateTaskChecklistAction}
+            uploadStudentDocumentAction={uploadStudentDocumentAction}
+            updateStudentDocumentVerificationAction={updateStudentDocumentVerificationAction}
+            disputeStudentDocumentReturnAction={disputeStudentDocumentReturnAction}
+            uploadReplacementDocumentAction={uploadReplacementDocumentAction}
+            deleteStudentDocumentAction={deleteStudentDocumentAction}
+            viewerRole={session.user.role as "ADMIN" | "SUB_ADMIN" | "INTERNAL_STAFF"}
+            canCreateTasks={canCreateTasks}
+          />
+        </>
       )}
 
       {activeTab === "financials" && (
@@ -1678,6 +1772,26 @@ function getAnswerEntries(answers?: Prisma.JsonValue) {
   return Object.entries(answers as Record<string, string | number | boolean | null>);
 }
 
+function studentProfileUrl(studentId: string) {
+  return `/dashboard/students/${studentId}?tab=profile`;
+}
+
+function studentTasksUrl(studentId: string) {
+  return `/dashboard/students/${studentId}?tab=tasks`;
+}
+
+function studentFinancialsUrl(studentId: string) {
+  return `/dashboard/students/${studentId}?tab=financials`;
+}
+
+function studentOverviewCaseStageUrl(studentId: string) {
+  return `/dashboard/students/${studentId}?tab=overview#case-stage`;
+}
+
+function studentOverviewUrl(studentId: string) {
+  return `/dashboard/students/${studentId}?tab=overview`;
+}
+
 async function saveStudentProfileAction(formData: FormData) {
   "use server";
 
@@ -1714,7 +1828,7 @@ async function saveStudentProfileAction(formData: FormData) {
       select: { id: true },
     });
     if (!assigned) {
-      redirect("/dashboard/sub-admin");
+      redirect(studentProfileUrl(studentId));
     }
   }
 
@@ -1730,7 +1844,7 @@ async function saveStudentProfileAction(formData: FormData) {
       select: { id: true },
     });
     if (!assigned) {
-      redirect("/dashboard/internal-staff");
+      redirect(studentProfileUrl(studentId));
     }
   }
 
@@ -1739,7 +1853,7 @@ async function saveStudentProfileAction(formData: FormData) {
     email: String(formData.get("email") ?? ""),
   });
   if (!accountParsed.success) {
-    redirect(`/dashboard/students/${studentId}`);
+    redirect(studentProfileUrl(studentId));
   }
   const { fullName, email } = accountParsed.data;
 
@@ -1748,7 +1862,7 @@ async function saveStudentProfileAction(formData: FormData) {
     select: { id: true, role: true },
   });
   if (duplicateEmailUser && duplicateEmailUser.id !== studentId) {
-    redirect(`/dashboard/students/${studentId}`);
+    redirect(studentProfileUrl(studentId));
   }
 
   await prisma.user.update({
@@ -1847,9 +1961,10 @@ async function assignStudentDelegationAction(formData: FormData) {
   "use server";
   const session = await auth();
   if (!session?.user) redirect("/login");
-  const returnToProfileTab = `/dashboard/students/${String(formData.get("studentId") ?? "")}?tab=profile`;
 
   const studentId = String(formData.get("studentId") ?? "");
+  const returnToProfileTab = studentId ? studentProfileUrl(studentId) : "/dashboard";
+
   const assigneeIdRaw =
     String(formData.get("assigneeId") ?? "").trim() ||
     String(formData.get("internalStaffId") ?? "").trim();
@@ -1871,7 +1986,7 @@ async function assignStudentDelegationAction(formData: FormData) {
       },
       select: { id: true },
     });
-    if (!allowed) redirect("/dashboard/internal-staff");
+    if (!allowed) redirect(returnToProfileTab);
   }
 
   const studentProfile = await prisma.studentProfile.findUnique({
@@ -1932,21 +2047,61 @@ async function assignStudentDelegationAction(formData: FormData) {
 async function createTaskAction(formData: FormData) {
   "use server";
   const session = await auth();
-  if (!session?.user || (session.user.role !== "ADMIN" && session.user.role !== "SUB_ADMIN")) {
-    redirect("/login");
+  if (!session?.user) redirect("/login");
+  if (
+    session.user.role !== "ADMIN" &&
+    session.user.role !== "SUB_ADMIN" &&
+    session.user.role !== "INTERNAL_STAFF"
+  ) {
+    redirect("/dashboard");
   }
 
   const studentId = String(formData.get("studentId") ?? "");
   const title = String(formData.get("title") ?? "").trim();
   const description = nullableText(formData.get("description"));
   const priority = String(formData.get("priority") ?? "MEDIUM") as TaskPriority;
-  if (!studentId || !title) redirect(`/dashboard/students/${studentId}?tab=tasks`);
+
+  if (!studentId) redirect("/dashboard");
+
+  if (!title) {
+    redirect(`/dashboard/students/${studentId}?tab=tasks&taskError=missing-title`);
+  }
 
   const studentProfile = await prisma.studentProfile.findUnique({
     where: { userId: studentId },
-    select: { id: true },
+    select: {
+      id: true,
+      assignments: {
+        where: { isActive: true },
+        select: { assignedToId: true },
+      },
+    },
   });
-  if (!studentProfile) redirect(`/dashboard/students/${studentId}`);
+  if (!studentProfile) {
+    redirect(`/dashboard/students/${studentId}?tab=tasks&taskError=no-profile`);
+  }
+
+  if (session.user.role === "INTERNAL_STAFF") {
+    const isAssigned = studentProfile.assignments.some(
+      (assignment) => assignment.assignedToId === session.user.id,
+    );
+    if (!isAssigned) {
+      redirect(`/dashboard/students/${studentId}?tab=tasks&taskError=not-assigned`);
+    }
+  }
+
+  if (session.user.role === "SUB_ADMIN") {
+    const allowed = await prisma.questionnaireSubmission.findFirst({
+      where: {
+        studentId,
+        OR: [{ assignedToId: session.user.id }, { assignedToId: null }],
+      },
+      select: { id: true },
+    });
+    if (!allowed) {
+      redirect(`/dashboard/students/${studentId}?tab=tasks&taskError=sub-admin-access`);
+    }
+  }
 
   const taskPriority: TaskPriority = ["LOW", "MEDIUM", "HIGH", "URGENT"].includes(priority)
     ? priority
@@ -1973,7 +2128,7 @@ async function createTaskAction(formData: FormData) {
 
   revalidatePath(`/dashboard/students/${studentId}`);
   revalidatePath("/dashboard/internal-staff");
-  redirect(`/dashboard/students/${studentId}?tab=tasks`);
+  redirect(`/dashboard/students/${studentId}?tab=tasks&taskCreated=1`);
 }
 
 async function updateTaskStatusAction(formData: FormData) {
@@ -1996,7 +2151,7 @@ async function updateTaskStatusAction(formData: FormData) {
     session.user.id !== task.assigneeId &&
     session.user.id !== task.assignerId
   ) {
-    redirect("/dashboard");
+    redirect(studentTasksUrl(task.studentProfile.userId));
   }
 
   await prisma.task.update({
@@ -2098,7 +2253,7 @@ async function updateCaseStageAction(formData: FormData) {
   const stageRaw = String(formData.get("caseStage") ?? "") as CaseStage;
   if (!studentId) redirect("/dashboard");
   if (!allCaseStages.includes(stageRaw)) {
-    redirect(`/dashboard/students/${studentId}`);
+    redirect(studentOverviewCaseStageUrl(studentId));
   }
 
   const profile = await prisma.studentProfile.findUnique({
@@ -2112,13 +2267,13 @@ async function updateCaseStageAction(formData: FormData) {
       },
     },
   });
-  if (!profile) redirect(`/dashboard/students/${studentId}`);
+  if (!profile) redirect(studentOverviewCaseStageUrl(studentId));
 
   if (session.user.role === "INTERNAL_STAFF") {
     const isAssigned = profile.assignments.some(
       (assignment) => assignment.assignedToId === session.user.id,
     );
-    if (!isAssigned) redirect("/dashboard/internal-staff");
+    if (!isAssigned) redirect(studentOverviewCaseStageUrl(studentId));
   }
 
   if (session.user.role === "SUB_ADMIN") {
@@ -2129,12 +2284,12 @@ async function updateCaseStageAction(formData: FormData) {
       },
       select: { id: true },
     });
-    if (!allowed) redirect("/dashboard/sub-admin");
+    if (!allowed) redirect(studentOverviewCaseStageUrl(studentId));
   }
 
   const previous = profile.caseStage;
   if (previous === stageRaw) {
-    redirect(`/dashboard/students/${studentId}#case-stage`);
+    redirect(studentOverviewCaseStageUrl(studentId));
   }
 
   await prisma.studentProfile.update({
@@ -2161,7 +2316,7 @@ async function updateCaseStageAction(formData: FormData) {
   revalidatePath("/dashboard/sub-admin");
   revalidatePath("/dashboard/internal-staff");
   revalidatePath("/dashboard/student");
-  redirect(`/dashboard/students/${studentId}#case-stage`);
+  redirect(studentOverviewCaseStageUrl(studentId));
 }
 
 async function uploadStudentDocumentAction(formData: FormData) {
@@ -2202,7 +2357,7 @@ async function uploadStudentDocumentAction(formData: FormData) {
       select: { id: true },
     });
     if (!assigned) {
-      redirect("/dashboard/internal-staff");
+      redirect(studentTasksUrl(studentId));
     }
   }
 
@@ -2257,6 +2412,351 @@ async function uploadStudentDocumentAction(formData: FormData) {
   redirect(`/dashboard/students/${studentId}?tab=tasks`);
 }
 
+async function uploadReplacementDocumentAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user || (session.user.role !== "ADMIN" && session.user.role !== "INTERNAL_STAFF")) {
+    redirect("/login");
+  }
+
+  const studentId = String(formData.get("studentId") ?? "");
+  const documentId = String(formData.get("documentId") ?? "");
+  const replacementTitle = String(formData.get("title") ?? "").trim();
+  const file = formData.get("file");
+  if (!studentId || !documentId || !(file instanceof File) || file.size === 0) {
+    redirect(`/dashboard/students/${studentId}?tab=tasks`);
+  }
+  if (file.size > 20 * 1024 * 1024 || !allowedDocumentMime.has(file.type)) {
+    redirect(`/dashboard/students/${studentId}?tab=tasks`);
+  }
+
+  const document = await prisma.studentDocument.findUnique({
+    where: { id: documentId },
+    include: {
+      studentProfile: {
+        select: {
+          id: true,
+          userId: true,
+          assignments: { where: { isActive: true }, select: { assignedToId: true } },
+          user: { select: { id: true, name: true, email: true } },
+        },
+      },
+    },
+  });
+  if (!document || document.studentProfile.userId !== studentId) {
+    redirect(`/dashboard/students/${studentId}?tab=tasks`);
+  }
+  if (!document.returnedAt || !document.returnedById || document.returnResolvedAt) {
+    redirect(`/dashboard/students/${studentId}?tab=tasks`);
+  }
+
+  if (session.user.role === "INTERNAL_STAFF") {
+    const isAssigned = document.studentProfile.assignments.some(
+      (assignment) => assignment.assignedToId === session.user.id,
+    );
+    if (!isAssigned) redirect(studentTasksUrl(studentId));
+  }
+
+  const bytes = await file.arrayBuffer();
+  const buffer = Buffer.from(bytes);
+  const ext = path.extname(file.name) || mimeToExt(file.type);
+  const sanitizedName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+  const relativePath = `student-docs/${studentId}/${sanitizedName}`;
+  const publicPath = await uploadBufferToStorage({
+    buffer,
+    mimeType: file.type,
+    blobPath: relativePath,
+    localRelativePath: relativePath,
+  });
+
+  const title = replacementTitle || `${document.title} (Revised)`;
+  const replacement = await prisma.studentDocument.create({
+    data: {
+      studentProfileId: document.studentProfileId,
+      uploadedById: session.user.id,
+      replacedDocumentId: document.id,
+      category: document.category,
+      title,
+      originalFileName: file.name,
+      storagePath: publicPath,
+      mimeType: file.type,
+      sizeBytes: file.size,
+      verificationStatus: "PENDING",
+      notes: document.returnedNote
+        ? `Replacement uploaded for returned document. Return reason: ${document.returnedNote}`
+        : "Replacement uploaded for returned document.",
+    },
+  });
+
+  await prisma.studentDocument.update({
+    where: { id: document.id },
+    data: { returnResolvedAt: new Date() },
+  });
+
+  await createWorkflowNotification({
+    recipientId: document.returnedById,
+    actorId: session.user.id,
+    studentProfileId: document.studentProfileId,
+    documentId: replacement.id,
+    type: "DOCUMENT_REPLACEMENT_UPLOADED",
+    title: "Replacement document uploaded",
+    message: `${document.studentProfile.user.name ?? document.studentProfile.user.email} - ${title}`,
+    note: document.returnedNote,
+    link: `/dashboard/students/${studentId}?tab=tasks`,
+    actionRequired: true,
+    metadata: { originalDocumentId: document.id, replacementDocumentId: replacement.id },
+  });
+
+  await prisma.activityLog.create({
+    data: {
+      actorId: session.user.id,
+      targetStudentProfileId: document.studentProfileId,
+      targetUserId: document.returnedById,
+      entityType: "DOCUMENT",
+      entityId: replacement.id,
+      action: "Uploaded replacement document for returned file",
+      metadata: { originalDocumentId: document.id, replacementDocumentId: replacement.id },
+    },
+  });
+
+  revalidatePath(`/dashboard/students/${studentId}`);
+  revalidatePath("/dashboard/internal-staff");
+  revalidatePath("/dashboard/sub-admin");
+  revalidatePath("/dashboard/admin");
+  redirect(`/dashboard/students/${studentId}?tab=tasks`);
+}
+
+async function updateStudentDocumentVerificationAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (
+    !session?.user ||
+    (session.user.role !== "ADMIN" &&
+      session.user.role !== "SUB_ADMIN" &&
+      session.user.role !== "INTERNAL_STAFF")
+  ) {
+    redirect("/login");
+  }
+
+  const studentId = String(formData.get("studentId") ?? "");
+  const documentId = String(formData.get("documentId") ?? "");
+  const mode = String(formData.get("mode") ?? "").trim();
+  const statusRaw = String(formData.get("status") ?? "PENDING") as DocumentVerificationStatus;
+  const note = String(formData.get("note") ?? "").trim();
+  const status: DocumentVerificationStatus = ["PENDING", "VERIFIED", "REJECTED"].includes(statusRaw)
+    ? statusRaw
+    : "PENDING";
+
+  if (!studentId || !documentId) redirect(`/dashboard/students/${studentId}?tab=tasks`);
+
+  const document = await prisma.studentDocument.findUnique({
+    where: { id: documentId },
+    include: {
+      studentProfile: {
+        select: {
+          id: true,
+          userId: true,
+          assignments: {
+            where: { isActive: true },
+            select: { assignedToId: true },
+          },
+          user: { select: { name: true, email: true } },
+        },
+      },
+      returnedBy: { select: { id: true } },
+      verifiedBy: { select: { id: true, role: true } },
+    },
+  });
+  if (!document || document.studentProfile.userId !== studentId) {
+    redirect(`/dashboard/students/${studentId}?tab=tasks`);
+  }
+
+  if (session.user.role === "INTERNAL_STAFF") {
+    const isAssigned = document.studentProfile.assignments.some(
+      (assignment) => assignment.assignedToId === session.user.id,
+    );
+    if (!isAssigned) redirect(studentTasksUrl(studentId));
+  }
+
+  if (session.user.role === "SUB_ADMIN") {
+    const isReverse = mode === "reverse";
+    if (!isReverse) redirect(studentTasksUrl(studentId));
+    if (document.verificationStatus !== "VERIFIED") redirect(`/dashboard/students/${studentId}?tab=tasks`);
+    if (!["PENDING", "REJECTED"].includes(status) || !note) {
+      redirect(`/dashboard/students/${studentId}?tab=tasks`);
+    }
+
+    const returnedAt = new Date();
+    await prisma.studentDocument.update({
+      where: { id: document.id },
+      data: {
+        verificationStatus: status,
+        notes: note,
+        returnedById: session.user.id,
+        returnedAt,
+        returnedNote: note,
+        returnResolvedAt: null,
+      },
+    });
+
+    if (document.verifiedBy && document.verifiedBy.role === "INTERNAL_STAFF") {
+      await createWorkflowNotification({
+        recipientId: document.verifiedBy.id,
+        actorId: session.user.id,
+        studentProfileId: document.studentProfileId,
+        documentId: document.id,
+        type: "DOCUMENT_RETURNED",
+        title: "Document verification returned",
+        message: `${document.studentProfile.user.name ?? document.studentProfile.user.email} - ${document.title} was returned to ${status}`,
+        note,
+        link: `/dashboard/students/${studentId}?tab=tasks`,
+        actionRequired: true,
+        metadata: { fromStatus: "VERIFIED", toStatus: status },
+      });
+    }
+
+    await prisma.activityLog.create({
+      data: {
+        actorId: session.user.id,
+        targetStudentProfileId: document.studentProfileId,
+        targetUserId: document.verifiedBy?.id ?? null,
+        entityType: "DOCUMENT",
+        entityId: document.id,
+        action: `Returned verified document to ${status}`,
+        metadata: { note, previousStatus: "VERIFIED", status },
+      },
+    });
+  } else {
+    await prisma.studentDocument.update({
+      where: { id: document.id },
+      data: {
+        verificationStatus: status,
+        notes: note || null,
+        verifiedById: status === "VERIFIED" ? session.user.id : document.verifiedById,
+        verifiedAt: status === "VERIFIED" ? new Date() : document.verifiedAt,
+        returnResolvedAt:
+          document.returnedAt && document.returnResolvedAt === null ? new Date() : document.returnResolvedAt,
+      },
+    });
+
+    if (
+      session.user.role === "INTERNAL_STAFF" &&
+      status === "VERIFIED" &&
+      document.returnedAt &&
+      document.returnedById &&
+      document.returnResolvedAt === null
+    ) {
+      await createWorkflowNotification({
+        recipientId: document.returnedById,
+        actorId: session.user.id,
+        studentProfileId: document.studentProfileId,
+        documentId: document.id,
+        type: "DOCUMENT_REVERIFIED",
+        title: "Returned document re-verified",
+        message: `${document.studentProfile.user.name ?? document.studentProfile.user.email} - ${document.title} has been re-verified`,
+        note: note || null,
+        link: `/dashboard/students/${studentId}?tab=tasks`,
+        actionRequired: true,
+      });
+    }
+
+    await prisma.activityLog.create({
+      data: {
+        actorId: session.user.id,
+        targetStudentProfileId: document.studentProfileId,
+        entityType: "DOCUMENT",
+        entityId: document.id,
+        action: `Set document verification status to ${status}`,
+        metadata: note ? { note } : undefined,
+      },
+    });
+  }
+
+  revalidatePath(`/dashboard/students/${studentId}`);
+  revalidatePath("/dashboard/internal-staff");
+  revalidatePath("/dashboard/sub-admin");
+  revalidatePath("/dashboard/admin");
+  redirect(`/dashboard/students/${studentId}?tab=tasks`);
+}
+
+async function disputeStudentDocumentReturnAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user || (session.user.role !== "INTERNAL_STAFF" && session.user.role !== "ADMIN")) {
+    redirect("/login");
+  }
+
+  const studentId = String(formData.get("studentId") ?? "");
+  const documentId = String(formData.get("documentId") ?? "");
+  const note = String(formData.get("note") ?? "").trim();
+  if (!studentId || !documentId || !note) {
+    redirect(`/dashboard/students/${studentId}?tab=tasks`);
+  }
+
+  const document = await prisma.studentDocument.findUnique({
+    where: { id: documentId },
+    include: {
+      studentProfile: {
+        select: {
+          id: true,
+          userId: true,
+          assignments: { where: { isActive: true }, select: { assignedToId: true } },
+          user: { select: { name: true, email: true } },
+        },
+      },
+    },
+  });
+  if (!document || document.studentProfile.userId !== studentId || !document.returnedById) {
+    redirect(`/dashboard/students/${studentId}?tab=tasks`);
+  }
+
+  if (session.user.role === "INTERNAL_STAFF") {
+    const isAssigned = document.studentProfile.assignments.some(
+      (assignment) => assignment.assignedToId === session.user.id,
+    );
+    if (!isAssigned) redirect(studentTasksUrl(studentId));
+  }
+
+  await prisma.studentDocument.update({
+    where: { id: document.id },
+    data: {
+      returnResolvedAt: new Date(),
+      notes: note,
+    },
+  });
+
+  await createWorkflowNotification({
+    recipientId: document.returnedById,
+    actorId: session.user.id,
+    studentProfileId: document.studentProfileId,
+    documentId: document.id,
+    type: "DOCUMENT_RETURN_DISPUTED",
+    title: "Return disputed by internal staff",
+    message: `${document.studentProfile.user.name ?? document.studentProfile.user.email} - ${document.title}`,
+    note,
+    link: `/dashboard/students/${studentId}?tab=tasks`,
+    actionRequired: true,
+  });
+
+  await prisma.activityLog.create({
+    data: {
+      actorId: session.user.id,
+      targetStudentProfileId: document.studentProfileId,
+      targetUserId: document.returnedById,
+      entityType: "DOCUMENT",
+      entityId: document.id,
+      action: "Disputed returned document",
+      metadata: { note },
+    },
+  });
+
+  revalidatePath(`/dashboard/students/${studentId}`);
+  revalidatePath("/dashboard/internal-staff");
+  revalidatePath("/dashboard/sub-admin");
+  revalidatePath("/dashboard/admin");
+  redirect(`/dashboard/students/${studentId}?tab=tasks`);
+}
+
 async function deleteStudentDocumentAction(formData: FormData) {
   "use server";
   const session = await auth();
@@ -2286,7 +2786,7 @@ async function deleteStudentDocumentAction(formData: FormData) {
       select: { id: true },
     });
     if (!assigned) {
-      redirect("/dashboard/internal-staff");
+      redirect(studentTasksUrl(studentId));
     }
   }
 
@@ -2319,7 +2819,7 @@ async function createContractPreviewAction(formData: FormData) {
   }
   const studentId = String(formData.get("studentId") ?? "");
   const templateId = String(formData.get("templateId") ?? "");
-  if (!studentId || !templateId) redirect(`/dashboard/students/${studentId}`);
+  if (!studentId || !templateId) redirect(studentFinancialsUrl(studentId));
 
   if (session.user.role === "SUB_ADMIN") {
     const assigned = await prisma.questionnaireSubmission.findFirst({
@@ -2329,7 +2829,7 @@ async function createContractPreviewAction(formData: FormData) {
       },
       select: { id: true },
     });
-    if (!assigned) redirect("/dashboard/sub-admin");
+    if (!assigned) redirect(studentFinancialsUrl(studentId));
   }
 
   if (session.user.role === "INTERNAL_STAFF") {
@@ -2341,7 +2841,7 @@ async function createContractPreviewAction(formData: FormData) {
       },
       select: { id: true },
     });
-    if (!assigned) redirect("/dashboard/internal-staff");
+    if (!assigned) redirect(studentFinancialsUrl(studentId));
   }
 
   const [student, template] = await Promise.all([
@@ -2351,7 +2851,7 @@ async function createContractPreviewAction(formData: FormData) {
     }),
     prisma.emailTemplate.findUnique({ where: { id: templateId } }),
   ]);
-  if (!student || !student.studentProfile || !template) redirect(`/dashboard/students/${studentId}`);
+  if (!student || !student.studentProfile || !template) redirect(studentFinancialsUrl(studentId));
 
   const variables = {
     studentName: student.name ?? student.email,
@@ -2399,7 +2899,7 @@ async function createInvoicePreviewAction(formData: FormData) {
   }
   const studentId = String(formData.get("studentId") ?? "");
   const templateId = String(formData.get("templateId") ?? "");
-  if (!studentId || !templateId) redirect(`/dashboard/students/${studentId}`);
+  if (!studentId || !templateId) redirect(studentFinancialsUrl(studentId));
 
   if (session.user.role === "SUB_ADMIN") {
     const assigned = await prisma.questionnaireSubmission.findFirst({
@@ -2409,7 +2909,7 @@ async function createInvoicePreviewAction(formData: FormData) {
       },
       select: { id: true },
     });
-    if (!assigned) redirect("/dashboard/sub-admin");
+    if (!assigned) redirect(studentFinancialsUrl(studentId));
   }
 
   if (session.user.role === "INTERNAL_STAFF") {
@@ -2421,7 +2921,7 @@ async function createInvoicePreviewAction(formData: FormData) {
       },
       select: { id: true },
     });
-    if (!assigned) redirect("/dashboard/internal-staff");
+    if (!assigned) redirect(studentFinancialsUrl(studentId));
   }
 
   const description = String(formData.get("lineItemDescription") ?? "").trim() || "Consultancy Service";
@@ -2436,7 +2936,7 @@ async function createInvoicePreviewAction(formData: FormData) {
     }),
     prisma.emailTemplate.findUnique({ where: { id: templateId } }),
   ]);
-  if (!student || !student.studentProfile || !template) redirect(`/dashboard/students/${studentId}`);
+  if (!student || !student.studentProfile || !template) redirect(studentFinancialsUrl(studentId));
 
   const normalizedItems = normalizeInvoiceItems([{ description, quantity, unitPrice }]);
   const totals = calculateInvoiceTotals(normalizedItems, taxRate);
@@ -2675,14 +3175,14 @@ async function deleteContractAction(formData: FormData) {
   }
   const contractId = String(formData.get("contractId") ?? "");
   const studentId = String(formData.get("studentId") ?? "");
-  if (!contractId || !studentId) redirect("/dashboard");
+  if (!contractId || !studentId) redirect(studentId ? studentFinancialsUrl(studentId) : "/dashboard");
 
   if (session.user.role === "SUB_ADMIN") {
     const assigned = await prisma.questionnaireSubmission.findFirst({
       where: { studentId, OR: [{ assignedToId: session.user.id }, { assignedToId: null }] },
       select: { id: true },
     });
-    if (!assigned) redirect("/dashboard/sub-admin");
+    if (!assigned) redirect(studentFinancialsUrl(studentId));
   }
   if (session.user.role === "INTERNAL_STAFF") {
     const assigned = await prisma.studentAssignment.findFirst({
@@ -2693,14 +3193,14 @@ async function deleteContractAction(formData: FormData) {
       },
       select: { id: true },
     });
-    if (!assigned) redirect("/dashboard/internal-staff");
+    if (!assigned) redirect(studentFinancialsUrl(studentId));
   }
 
   const contract = await prisma.contract.findUnique({
     where: { id: contractId },
     select: { id: true, studentProfileId: true },
   });
-  if (!contract) redirect(`/dashboard/students/${studentId}`);
+  if (!contract) redirect(studentFinancialsUrl(studentId));
 
   await prisma.outboundEmailLog.deleteMany({
     where: { relatedContractId: contract.id },
@@ -2719,7 +3219,7 @@ async function deleteContractAction(formData: FormData) {
   });
 
   revalidatePath(`/dashboard/students/${studentId}`);
-  redirect(`/dashboard/students/${studentId}`);
+  redirect(studentFinancialsUrl(studentId));
 }
 
 async function deleteInvoiceAction(formData: FormData) {
@@ -2735,14 +3235,14 @@ async function deleteInvoiceAction(formData: FormData) {
   }
   const invoiceId = String(formData.get("invoiceId") ?? "");
   const studentId = String(formData.get("studentId") ?? "");
-  if (!invoiceId || !studentId) redirect("/dashboard");
+  if (!invoiceId || !studentId) redirect(studentId ? studentFinancialsUrl(studentId) : "/dashboard");
 
   if (session.user.role === "SUB_ADMIN") {
     const assigned = await prisma.questionnaireSubmission.findFirst({
       where: { studentId, OR: [{ assignedToId: session.user.id }, { assignedToId: null }] },
       select: { id: true },
     });
-    if (!assigned) redirect("/dashboard/sub-admin");
+    if (!assigned) redirect(studentFinancialsUrl(studentId));
   }
   if (session.user.role === "INTERNAL_STAFF") {
     const assigned = await prisma.studentAssignment.findFirst({
@@ -2753,14 +3253,14 @@ async function deleteInvoiceAction(formData: FormData) {
       },
       select: { id: true },
     });
-    if (!assigned) redirect("/dashboard/internal-staff");
+    if (!assigned) redirect(studentFinancialsUrl(studentId));
   }
 
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
     select: { id: true, studentProfileId: true },
   });
-  if (!invoice) redirect(`/dashboard/students/${studentId}`);
+  if (!invoice) redirect(studentFinancialsUrl(studentId));
 
   await prisma.outboundEmailLog.deleteMany({
     where: { relatedInvoiceId: invoice.id },
@@ -2779,7 +3279,7 @@ async function deleteInvoiceAction(formData: FormData) {
   });
 
   revalidatePath(`/dashboard/students/${studentId}`);
-  redirect(`/dashboard/students/${studentId}`);
+  redirect(studentFinancialsUrl(studentId));
 }
 
 async function createLeadAction(formData: FormData) {
@@ -3499,7 +3999,7 @@ async function ensureLeadWorkflowAccess(
       },
       select: { id: true },
     });
-    if (!assigned) redirect("/dashboard/sub-admin");
+    if (!assigned) redirect(studentOverviewUrl(studentId));
   }
 
   if (user.role === "INTERNAL_STAFF") {
@@ -3511,14 +4011,14 @@ async function ensureLeadWorkflowAccess(
       },
       select: { id: true },
     });
-    if (!assigned) redirect("/dashboard/internal-staff");
+    if (!assigned) redirect(studentOverviewUrl(studentId));
   }
 
   if (student.studentProfile) {
     return { studentProfileId: student.studentProfile.id };
   }
   if (!createProfileIfMissing) {
-    redirect(`/dashboard/students/${studentId}`);
+    redirect(studentOverviewUrl(studentId));
   }
 
   const createdProfile = await prisma.studentProfile.create({

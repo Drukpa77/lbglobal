@@ -7,6 +7,7 @@ import { prioritizedCountries } from "@/lib/countries";
 import { parseTemplateQuestions } from "@/lib/questionnaire";
 import { prisma } from "@/lib/prisma";
 import { queueDevEmail } from "@/lib/email-outbox";
+import { notifyStaffOfNewApplication } from "@/lib/workflow-notifications";
 import { SubmitButton } from "@/components/submit-button";
 import { ApplyFormFields } from "./apply-form-fields";
 
@@ -213,7 +214,23 @@ async function submitQuestionnaireAction(formData: FormData) {
 
   const existingUser = await prisma.user.findUnique({
     where: { email },
-    select: { id: true, role: true, name: true, studentProfile: { select: { id: true } } },
+    select: {
+      id: true,
+      role: true,
+      name: true,
+      studentProfile: {
+        select: {
+          id: true,
+          phone: true,
+          city: true,
+          nationality: true,
+          currentEducationLevel: true,
+          targetCourse: true,
+          preferredIntake: true,
+          englishTestScore: true,
+        },
+      },
+    },
   });
   if (existingUser && existingUser.role !== "USER") {
     redirect("/apply?error=staff-email");
@@ -244,20 +261,54 @@ async function submitQuestionnaireAction(formData: FormData) {
 
   const city = answers.city?.trim() ?? answers.addressCity?.trim() ?? "";
   const country = answers.country?.trim() ?? answers.addressCountry?.trim() ?? "";
+  const phone = answers.phone?.trim() ?? "";
+  const currentEducationLevel = answers.currentEducationLevel?.trim() ?? "";
+  const targetCourse = answers.targetCourse?.trim() ?? "";
+  const preferredIntake = answers.preferredIntake?.trim() ?? "";
+  const englishTestScore = answers.englishTestScore?.trim() ?? "";
 
-  if (!existingUser?.studentProfile) {
-    await prisma.studentProfile.create({
+  let studentProfile: { id: string };
+  if (existingUser?.studentProfile) {
+    // Resubmissions: backfill any profile field the staff hasn't filled in yet,
+    // but never overwrite values an admin may have edited in the dashboard.
+    const existing = existingUser.studentProfile;
+    const profileUpdate: Record<string, string> = {};
+    if (!existing.phone && phone) profileUpdate.phone = phone;
+    if (!existing.city && city) profileUpdate.city = city;
+    if (!existing.nationality && country) profileUpdate.nationality = country;
+    if (!existing.currentEducationLevel && currentEducationLevel)
+      profileUpdate.currentEducationLevel = currentEducationLevel;
+    if (!existing.targetCourse && targetCourse)
+      profileUpdate.targetCourse = targetCourse;
+    if (!existing.preferredIntake && preferredIntake)
+      profileUpdate.preferredIntake = preferredIntake;
+    if (!existing.englishTestScore && englishTestScore)
+      profileUpdate.englishTestScore = englishTestScore;
+    if (Object.keys(profileUpdate).length > 0) {
+      await prisma.studentProfile.update({
+        where: { id: existing.id },
+        data: profileUpdate,
+      });
+    }
+    studentProfile = { id: existing.id };
+  } else {
+    studentProfile = await prisma.studentProfile.create({
       data: {
         userId: studentUser.id,
-        phone: answers.phone?.trim() ?? null,
+        phone: phone || null,
         city: city || null,
         nationality: country || null,
+        currentEducationLevel: currentEducationLevel || null,
+        targetCourse: targetCourse || null,
+        preferredIntake: preferredIntake || null,
+        englishTestScore: englishTestScore || null,
         followUpNotes: null,
       },
+      select: { id: true },
     });
   }
 
-  await prisma.questionnaireSubmission.create({
+  const submission = await prisma.questionnaireSubmission.create({
     data: {
       studentId: studentUser.id,
       templateId: template.id,
@@ -266,6 +317,7 @@ async function submitQuestionnaireAction(formData: FormData) {
       sourceCountry: country,
       answers: answers as object,
     },
+    select: { id: true },
   });
 
   // Queue confirmation email (logs in dev; will send when provider is configured)
@@ -278,6 +330,20 @@ async function submitQuestionnaireAction(formData: FormData) {
       <p>Thank you for submitting your application. Our team has received your inquiry and will contact you within 1–2 business days.</p>
       <p>Best regards,<br />L&B Global</p>
     `,
+  });
+
+  // Fan out a bell notification + email to every SUB_ADMIN and ADMIN so the
+  // unassigned application surfaces immediately (failure here must not block
+  // the applicant – the helper logs and swallows errors internally).
+  await notifyStaffOfNewApplication({
+    studentProfileId: studentProfile.id,
+    studentUserId: studentUser.id,
+    studentName: fullName,
+    studentEmail: email,
+    submissionId: submission.id,
+    sourceCity: city || null,
+    sourceCountry: country || null,
+    hearFrom: hearFrom || null,
   });
 
   revalidatePath("/apply");

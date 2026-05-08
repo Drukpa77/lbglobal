@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { queueDevEmail } from "@/lib/email-outbox";
 import { prisma } from "@/lib/prisma";
 import { getRemindersForUser } from "@/lib/reminders";
+import { createWorkflowNotification } from "@/lib/workflow-notifications";
 
 /**
  * Cron API route for scheduled reminder processing.
@@ -71,9 +72,67 @@ export async function GET(req: Request) {
     processed++;
   }
 
+  const followUpCutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
+  const staleReturnedDocuments = await prisma.studentDocument.findMany({
+    where: {
+      returnedById: { not: null },
+      returnedAt: { lte: followUpCutoff },
+      returnResolvedAt: null,
+    },
+    include: {
+      studentProfile: {
+        include: {
+          user: { select: { id: true, name: true, email: true } },
+        },
+      },
+    },
+    take: 200,
+  });
+
+  let followUpNotifications = 0;
+  for (const doc of staleReturnedDocuments) {
+    if (!doc.returnedById || !doc.returnedAt) continue;
+    const existing = await prisma.workflowNotification.findFirst({
+      where: {
+        recipientId: doc.returnedById,
+        documentId: doc.id,
+        type: "DOCUMENT_RETURN_FOLLOW_UP",
+        createdAt: { gte: doc.returnedAt },
+      },
+      select: { id: true },
+    });
+    if (existing) continue;
+
+    await createWorkflowNotification({
+      recipientId: doc.returnedById,
+      studentProfileId: doc.studentProfileId,
+      documentId: doc.id,
+      type: "DOCUMENT_RETURN_FOLLOW_UP",
+      title: "Returned document still pending action",
+      message: `${doc.studentProfile.user.name ?? doc.studentProfile.user.email} - ${doc.title} has not been handled for 48+ hours`,
+      note: doc.returnedNote,
+      link: `/dashboard/students/${doc.studentProfile.userId}?tab=tasks`,
+      actionRequired: true,
+      metadata: { returnedAt: doc.returnedAt.toISOString() },
+    });
+
+    await prisma.activityLog.create({
+      data: {
+        actorId: doc.returnedById,
+        targetStudentProfileId: doc.studentProfileId,
+        entityType: "DOCUMENT",
+        entityId: doc.id,
+        action: "Scheduled follow-up notification for stale document return",
+        metadata: { returnedAt: doc.returnedAt.toISOString() },
+      },
+    });
+    followUpNotifications += 1;
+  }
+
   return NextResponse.json({
     ok: true,
     message: `Processed reminders for ${processed} staff user(s)`,
     usersChecked: staffUsers.length,
+    documentReturnFollowUps: followUpNotifications,
   });
 }

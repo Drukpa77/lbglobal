@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 
 import { auth, signOut } from "@/auth";
 import { ChatPopup } from "@/components/chat-popup";
+import { WorkflowNotificationsBell } from "@/components/workflow-notifications-bell";
 import { UnreadChatBadge } from "@/components/unread-chat-badge";
 import { StudentSearch } from "@/components/student-search";
 import { getRoleLabel } from "@/lib/roles";
@@ -23,6 +24,7 @@ export default async function DashboardLayout({
     session.user.role === "ADMIN" ||
     session.user.role === "SUB_ADMIN" ||
     session.user.role === "INTERNAL_STAFF";
+  const showWorkflowNotifications = showChat;
   const isSubAdmin = session.user.role === "SUB_ADMIN";
 
   return (
@@ -30,7 +32,7 @@ export default async function DashboardLayout({
       {isSubAdmin ? (
         <div className="dashboard-shell flex min-h-screen bg-slate-100">
           <div className="flex min-h-screen min-w-0 flex-1 flex-col">
-            <header className="border-b border-slate-200/80 bg-white/85 backdrop-blur-xl">
+            <header className="relative z-40 border-b border-slate-200/80 bg-white/85 backdrop-blur-xl">
               <div className="dashboard-topbar-inner mx-auto flex max-w-7xl items-center justify-between gap-4 px-6 py-4">
                 <div className="flex items-center gap-3">
                   <Link href="/" className="flex items-center gap-3">
@@ -68,6 +70,7 @@ export default async function DashboardLayout({
                   >
                     My Dashboard
                   </Link>
+                  {showWorkflowNotifications && <WorkflowNotificationsBell />}
                   {showChat && <UnreadChatBadge />}
                   <form action={logoutAction}>
                     <button
@@ -87,7 +90,7 @@ export default async function DashboardLayout({
         </div>
       ) : (
         <>
-          <header className="border-b border-slate-200/80 bg-white/85 backdrop-blur-xl">
+          <header className="relative z-40 border-b border-slate-200/80 bg-white/85 backdrop-blur-xl">
             <div className="dashboard-topbar-inner mx-auto flex max-w-7xl items-center justify-between gap-4 px-6 py-4">
               <div className="flex items-center gap-3">
                 <Link href="/" className="flex items-center gap-3">
@@ -126,6 +129,7 @@ export default async function DashboardLayout({
                 >
                   My Dashboard
                 </Link>
+                {showWorkflowNotifications && <WorkflowNotificationsBell />}
                 {showChat && <UnreadChatBadge />}
                 <form action={logoutAction}>
                   <button

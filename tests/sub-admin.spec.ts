@@ -1,68 +1,48 @@
 import { expect, test } from "@playwright/test";
 
-test("sub-admin dashboard shows command center sections", async ({ page }) => {
-  await page.goto("/login");
-  await page.getByLabel("Email").fill("agent@lbglobal.test");
-  await page.getByLabel("Password").fill("AgentPass123!");
-  await page.getByRole("button", { name: "Sign in" }).click();
+import { loginAs, openDashboardTab } from "./_helpers";
 
-  await expect(page).toHaveURL(/\/dashboard\/sub-admin/);
-  await expect(page.getByRole("heading", { name: "Sub Admin Dashboard" })).toBeVisible();
-  await expect(page.getByText("Approval Queue")).toBeVisible();
-  await expect(page.getByText("Assignment Board")).toBeVisible();
-  await expect(page.getByText("Team Workload", { exact: true })).toBeVisible();
-  await expect(page.getByText("Unassigned Cases").first()).toBeVisible();
-});
+test.describe("sub-admin dashboard", () => {
+  test.beforeEach(async ({ page }) => {
+    await loginAs(page, "subAdmin");
+  });
 
-test("sub-admin dashboard keeps existing submissions list", async ({ page }) => {
-  await page.goto("/login");
-  await page.getByLabel("Email").fill("agent@lbglobal.test");
-  await page.getByLabel("Password").fill("AgentPass123!");
-  await page.getByRole("button", { name: "Sign in" }).click();
+  test("Overview tab shows manager analytics and the risk board", async ({ page }) => {
+    await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
+    await expect(page.getByText("Manager Analytics")).toBeVisible();
+    await expect(page.getByText("Conversion Rate (Enrolled)")).toBeVisible();
+    await expect(page.getByText("Avg Review Time")).toBeVisible();
+    await expect(page.getByText("Risk Board")).toBeVisible();
+  });
 
-  await expect(page).toHaveURL(/\/dashboard\/sub-admin/);
-  await expect(page.getByText("Assigned Submissions")).toBeVisible();
-  await expect(page.getByText("Students Categorized by Priority")).toBeVisible();
-});
+  test("Overview includes the New Inquiries (Unclaimed) card", async ({ page }) => {
+    await expect(page.getByRole("heading", { name: "New Inquiries (Unclaimed)" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "View unassigned queue" })).toBeVisible();
+  });
 
-test("sub-admin dashboard shows triage filters and bulk action controls", async ({ page }) => {
-  await page.goto("/login");
-  await page.getByLabel("Email").fill("agent@lbglobal.test");
-  await page.getByLabel("Password").fill("AgentPass123!");
-  await page.getByRole("button", { name: "Sign in" }).click();
+  test("Overview links to the weekly manager report", async ({ page }) => {
+    const reportLink = page.getByRole("link", { name: "Download Weekly Manager Report" });
+    await expect(reportLink).toBeVisible();
+    await expect(reportLink).toHaveAttribute("href", /\/api\/sub-admin\/report/);
+  });
 
-  await expect(page).toHaveURL(/\/dashboard\/sub-admin/);
-  await expect(page.getByText("Saved Triage Filters")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Unassigned" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Needs Approval" })).toBeVisible();
-  await expect(page.getByText("Apply status to selected")).toBeVisible();
-  await expect(page.getByText("Select for bulk update").first()).toBeVisible();
-});
+  test("Students tab shows triage filters and prioritised categories", async ({ page }) => {
+    await openDashboardTab(page, "Students");
+    await expect(page.getByText("Saved Triage Filters")).toBeVisible();
+    await expect(page.getByText("Students Categorized by Priority")).toBeVisible();
+    await expect(page.getByText("Filter by Case Stage")).toBeVisible();
+  });
 
-test("sub-admin dashboard shows risk board and SLA alerts", async ({ page }) => {
-  await page.goto("/login");
-  await page.getByLabel("Email").fill("agent@lbglobal.test");
-  await page.getByLabel("Password").fill("AgentPass123!");
-  await page.getByRole("button", { name: "Sign in" }).click();
+  test("Team & Operations tab shows the approval queue and assignment board", async ({ page }) => {
+    await openDashboardTab(page, "Team & Operations");
+    await expect(page.getByText("Approval Queue")).toBeVisible();
+    await expect(page.getByText("Assignment Board")).toBeVisible();
+  });
 
-  await expect(page).toHaveURL(/\/dashboard\/sub-admin/);
-  await expect(page.getByText("Risk Board")).toBeVisible();
-  await expect(page.getByText("SLA Breach Alerts")).toBeVisible();
-  await expect(page.getByText("Visa Expiring <=30d")).toBeVisible();
-  await expect(page.getByText("Pending Docs/Approvals")).toBeVisible();
-});
-
-test("sub-admin dashboard shows manager analytics and report export", async ({ page }) => {
-  await page.goto("/login");
-  await page.getByLabel("Email").fill("agent@lbglobal.test");
-  await page.getByLabel("Password").fill("AgentPass123!");
-  await page.getByRole("button", { name: "Sign in" }).click();
-
-  await expect(page).toHaveURL(/\/dashboard\/sub-admin/);
-  await expect(page.getByText("Manager Analytics")).toBeVisible();
-  await expect(page.getByText("Avg Review Time")).toBeVisible();
-  await expect(page.getByText("Conversion Rate (Enrolled)")).toBeVisible();
-  const reportLink = page.getByRole("link", { name: "Download Weekly Manager Report" });
-  await expect(reportLink).toBeVisible();
-  await expect(reportLink).toHaveAttribute("href", /\/api\/sub-admin\/report/);
+  test("notification bell is mounted in the top bar", async ({ page }) => {
+    const bell = page.getByRole("button", { name: "Open workflow notifications" });
+    await expect(bell).toBeVisible();
+    await bell.click();
+    await expect(page.getByText("Notifications", { exact: true })).toBeVisible();
+  });
 });

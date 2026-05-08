@@ -78,6 +78,15 @@ enum DocumentVerificationStatus {
   REJECTED
 }
 
+enum WorkflowNotificationType {
+  DOCUMENT_RETURNED
+  DOCUMENT_REVERIFIED
+  DOCUMENT_RETURN_DISPUTED
+  DOCUMENT_RETURN_FOLLOW_UP
+  DOCUMENT_REPLACEMENT_UPLOADED
+  NEW_STUDENT_APPLICATION
+}
+
 enum ContractStatus {
   DRAFT
   SENT
@@ -227,6 +236,10 @@ model User {
   submittedQuotes         Quote[]                  @relation("QuoteSubmitter")
   approvedQuotes          Quote[]                  @relation("QuoteApprover")
   rejectedQuotes          Quote[]                  @relation("QuoteRejecter")
+  documentVerifications   StudentDocument[]        @relation("DocumentVerifier")
+  documentReturns         StudentDocument[]        @relation("DocumentReturnedBy")
+  workflowNotifications   WorkflowNotification[]   @relation("WorkflowNotificationRecipient")
+  workflowNotificationsSent WorkflowNotification[] @relation("WorkflowNotificationActor")
 }
 
 model StudentProfile {
@@ -259,6 +272,7 @@ model StudentProfile {
   conversations         Conversation[] @relation("StudentConversation")
   assignments           StudentAssignment[]
   activities            ActivityLog[] @relation("ActivityTargetStudent")
+  workflowNotifications WorkflowNotification[]
   leads                 Lead[]
 }
 
@@ -379,6 +393,9 @@ model StudentDocument {
   id                 String                     @id @default(cuid())
   studentProfileId   String
   uploadedById       String
+  verifiedById       String?
+  returnedById       String?
+  replacedDocumentId String?
   category           DocumentCategory           @default(OTHER)
   title              String
   originalFileName   String
@@ -387,10 +404,21 @@ model StudentDocument {
   sizeBytes          Int
   verificationStatus DocumentVerificationStatus @default(PENDING)
   notes              String?
+  verifiedAt         DateTime?
+  returnedAt         DateTime?
+  returnedNote       String?
+  returnResolvedAt   DateTime?
   createdAt          DateTime                   @default(now())
   updatedAt          DateTime                   @updatedAt
   studentProfile     StudentProfile             @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
   uploadedBy         User                       @relation("DocumentUploader", fields: [uploadedById], references: [id], onDelete: Cascade)
+  verifiedBy         User?                      @relation("DocumentVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
+  returnedBy         User?                      @relation("DocumentReturnedBy", fields: [returnedById], references: [id], onDelete: SetNull)
+  replacedDocument   StudentDocument?           @relation("DocumentReplacementChain", fields: [replacedDocumentId], references: [id], onDelete: SetNull)
+  replacementDocuments StudentDocument[]        @relation("DocumentReplacementChain")
+  workflowNotifications WorkflowNotification[]
+
+  @@index([replacedDocumentId])
 }
 
 model EmailTemplate {
@@ -544,6 +572,32 @@ model ActivityLog {
   actor                  User               @relation("ActivityCreator", fields: [actorId], references: [id], onDelete: Cascade)
   targetUser             User?              @relation("ActivityTargetUser", fields: [targetUserId], references: [id], onDelete: SetNull)
   targetStudentProfile   StudentProfile?    @relation("ActivityTargetStudent", fields: [targetStudentProfileId], references: [id], onDelete: SetNull)
+}
+
+model WorkflowNotification {
+  id               String                   @id @default(cuid())
+  recipientId      String
+  actorId          String?
+  studentProfileId String
+  documentId       String?
+  type             WorkflowNotificationType
+  title            String
+  message          String
+  note             String?
+  link             String
+  actionRequired   Boolean                  @default(true)
+  metadata         Json?
+  readAt           DateTime?
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+  recipient        User                     @relation("WorkflowNotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  actor            User?                    @relation("WorkflowNotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  studentProfile   StudentProfile           @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+  document         StudentDocument?         @relation(fields: [documentId], references: [id], onDelete: SetNull)
+
+  @@index([recipientId, readAt, actionRequired])
+  @@index([studentProfileId, createdAt])
+  @@index([documentId, type])
 }
 
 model CrmAccount {

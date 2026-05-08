@@ -12,6 +12,7 @@ import { DashboardTabBar } from "@/components/dashboard-tab-bar";
 import { DelegationSuccessToast } from "@/components/delegation-success-toast";
 import { DeleteWithConfirm } from "@/components/delete-with-confirm";
 import { DeleteStaffButton } from "@/components/delete-staff-button";
+import { NewInquiriesCard } from "@/components/new-inquiries-card";
 import { RemindersWidget } from "@/components/reminders-widget";
 import { getContributions } from "@/lib/contributions";
 import { prisma } from "@/lib/prisma";
@@ -68,6 +69,14 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
     course,
   });
 
+  const nowForFreshInquiries = new Date();
+  const oneDayAgoForFreshInquiries = new Date(
+    nowForFreshInquiries.getTime() - 24 * 60 * 60 * 1000,
+  );
+  const sevenDaysAgoForFreshInquiries = new Date(
+    nowForFreshInquiries.getTime() - 7 * 24 * 60 * 60 * 1000,
+  );
+
   const [reminders, totalStudents, submissionsCount, activeSubAdmins, convertedCount, byCountry, byCourse,
     byIntake,
     recentSubmissions,
@@ -81,6 +90,8 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
     recentAssignments,
     openTaskCount,
     stagePipelineCounts,
+    newInquiries,
+    newInquiriesLast24hCount,
   ] = await Promise.all([
     getRemindersForUser("ADMIN", session.user.id),
     prisma.user.count({ where: { role: "USER" } }),
@@ -192,6 +203,27 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
     prisma.studentProfile.groupBy({
       by: ["caseStage"],
       _count: { _all: true },
+    }),
+    prisma.questionnaireSubmission.findMany({
+      where: {
+        assignedToId: null,
+        submittedAt: { gte: sevenDaysAgoForFreshInquiries },
+      },
+      select: {
+        id: true,
+        submittedAt: true,
+        sourceCity: true,
+        sourceCountry: true,
+        student: { select: { id: true, name: true, email: true } },
+      },
+      orderBy: { submittedAt: "desc" },
+      take: 8,
+    }),
+    prisma.questionnaireSubmission.count({
+      where: {
+        assignedToId: null,
+        submittedAt: { gte: oneDayAgoForFreshInquiries },
+      },
     }),
   ]);
 
@@ -371,6 +403,13 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
           {reminders.length > 0 && (
             <RemindersWidget reminders={reminders} title="Reminders" maxItems={8} />
           )}
+
+          <NewInquiriesCard
+            inquiries={newInquiries}
+            last24hCount={newInquiriesLast24hCount}
+            claimAction={claimSubmissionAction}
+            viewAllHref="/dashboard/admin?tab=students"
+          />
 
           <section className="rounded-lg border bg-white p-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -1691,6 +1730,37 @@ async function deleteInternalStaffAction(formData: FormData) {
   revalidatePath("/dashboard/admin");
   revalidatePath("/dashboard/sub-admin");
   revalidatePath("/dashboard/internal-staff");
+  redirect("/dashboard/admin");
+}
+
+async function claimSubmissionAction(formData: FormData) {
+  "use server";
+
+  const session = await auth();
+  if (!session?.user || session.user.role !== "ADMIN") {
+    redirect("/login");
+  }
+
+  const submissionId = String(formData.get("submissionId") ?? "");
+  if (!submissionId) redirect("/dashboard/admin");
+
+  const submission = await prisma.questionnaireSubmission.findUnique({
+    where: { id: submissionId },
+    select: { id: true, assignedToId: true, studentId: true },
+  });
+  if (!submission) redirect("/dashboard/admin");
+
+  await prisma.questionnaireSubmission.update({
+    where: { id: submission.id },
+    data: {
+      assignedToId: session.user.id,
+      status: submission.assignedToId ? undefined : "UNDER_REVIEW",
+    },
+  });
+
+  revalidatePath("/dashboard/admin");
+  revalidatePath("/dashboard/sub-admin");
+  revalidatePath(`/dashboard/students/${submission.studentId}`);
   redirect("/dashboard/admin");
 }
 

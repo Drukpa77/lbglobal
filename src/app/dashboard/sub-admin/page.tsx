@@ -8,6 +8,7 @@ import { auth } from "@/auth";
 import { ContributionLeaderboard } from "@/components/contribution-leaderboard";
 import { DashboardTabBar } from "@/components/dashboard-tab-bar";
 import { DelegationSuccessToast } from "@/components/delegation-success-toast";
+import { NewInquiriesCard } from "@/components/new-inquiries-card";
 import { RemindersWidget } from "@/components/reminders-widget";
 import { getContributions } from "@/lib/contributions";
 import { prisma } from "@/lib/prisma";
@@ -78,6 +79,8 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   const today = new Date();
   const trendWindowStart = new Date(today);
   trendWindowStart.setDate(trendWindowStart.getDate() - 56);
+  const oneDayAgo = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+  const sevenDaysAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
 
   const [
     reminders,
@@ -91,6 +94,8 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     openTaskCount,
     allInternalStaff,
     stagePipelineCounts,
+    newInquiries,
+    newInquiriesLast24hCount,
   ] =
     await Promise.all([
       getRemindersForUser(session.user.role as "ADMIN" | "SUB_ADMIN", session.user.id),
@@ -217,6 +222,27 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                 },
               },
         _count: { _all: true },
+      }),
+      prisma.questionnaireSubmission.findMany({
+        where: {
+          assignedToId: null,
+          submittedAt: { gte: sevenDaysAgo },
+        },
+        select: {
+          id: true,
+          submittedAt: true,
+          sourceCity: true,
+          sourceCountry: true,
+          student: { select: { id: true, name: true, email: true } },
+        },
+        orderBy: { submittedAt: "desc" },
+        take: 8,
+      }),
+      prisma.questionnaireSubmission.count({
+        where: {
+          assignedToId: null,
+          submittedAt: { gte: oneDayAgo },
+        },
       }),
     ]);
 
@@ -441,6 +467,12 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
           {reminders.length > 0 && (
             <RemindersWidget reminders={reminders} title="Reminders" maxItems={8} />
           )}
+
+          <NewInquiriesCard
+            inquiries={newInquiries}
+            last24hCount={newInquiriesLast24hCount}
+            claimAction={claimSubmissionAction}
+          />
 
           <section className="grid gap-4 md:grid-cols-5">
             <StatCard
