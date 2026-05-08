@@ -27,7 +27,96 @@ type DocumentRow = {
     name: string | null;
     email: string;
   };
+  previousVersions?: PreviousDocumentVersion[];
 };
+
+type PreviousDocumentVersion = {
+  id: string;
+  title: string;
+  storagePath: string;
+  verificationStatus: string;
+  returnedAt: Date | null;
+  returnedNote: string | null;
+  returnedBy: {
+    name: string | null;
+    email: string;
+  } | null;
+  uploadedBy: {
+    name: string | null;
+    email: string;
+  };
+  createdAt: Date;
+};
+
+const DOCUMENT_CATEGORY_ORDER = [
+  "PASSPORT",
+  "IDENTITY",
+  "TRANSCRIPT",
+  "SOP",
+  "OFFER_LETTER",
+  "VISA",
+  "FINANCIAL",
+  "OTHER",
+] as const;
+
+const DOCUMENT_CATEGORY_LABELS: Record<string, string> = {
+  PASSPORT: "Asset",
+  IDENTITY: "Identity",
+  TRANSCRIPT: "Transcripts",
+  SOP: "Statement of Purpose",
+  OFFER_LETTER: "Offer Letters",
+  VISA: "Visa",
+  FINANCIAL: "Financial",
+  OTHER: "Other",
+};
+
+const DOCUMENT_CATEGORY_BADGE_CLASSES: Record<string, string> = {
+  PASSPORT: "bg-indigo-50 text-indigo-700 border-indigo-200",
+  IDENTITY: "bg-amber-50 text-amber-800 border-amber-200",
+  TRANSCRIPT: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  SOP: "bg-purple-50 text-purple-700 border-purple-200",
+  OFFER_LETTER: "bg-blue-50 text-blue-700 border-blue-200",
+  VISA: "bg-cyan-50 text-cyan-700 border-cyan-200",
+  FINANCIAL: "bg-rose-50 text-rose-700 border-rose-200",
+  OTHER: "bg-slate-100 text-slate-700 border-slate-200",
+};
+
+function getCategoryLabel(category: string) {
+  return DOCUMENT_CATEGORY_LABELS[category] ?? category;
+}
+
+function getCategoryBadgeClasses(category: string) {
+  return (
+    DOCUMENT_CATEGORY_BADGE_CLASSES[category] ??
+    DOCUMENT_CATEGORY_BADGE_CLASSES.OTHER
+  );
+}
+
+function groupDocumentsByCategory(documents: DocumentRow[]) {
+  const groups = new Map<string, DocumentRow[]>();
+  for (const doc of documents) {
+    const key = doc.category in DOCUMENT_CATEGORY_LABELS ? doc.category : "OTHER";
+    const existing = groups.get(key);
+    if (existing) {
+      existing.push(doc);
+    } else {
+      groups.set(key, [doc]);
+    }
+  }
+  const ordered: { category: string; documents: DocumentRow[] }[] = [];
+  for (const category of DOCUMENT_CATEGORY_ORDER) {
+    const docs = groups.get(category);
+    if (docs && docs.length > 0) {
+      ordered.push({ category, documents: docs });
+    }
+  }
+  for (const [category, docs] of groups.entries()) {
+    if (!DOCUMENT_CATEGORY_ORDER.includes(category as (typeof DOCUMENT_CATEGORY_ORDER)[number])) {
+      ordered.push({ category, documents: docs });
+    }
+  }
+  return ordered;
+}
 
 type TasksDocumentsTabProps = {
   studentId: string;
@@ -188,14 +277,11 @@ export function TasksDocumentsTab({
             defaultValue="OTHER"
             className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
           >
-            <option value="PASSPORT">PASSPORT</option>
-            <option value="TRANSCRIPT">TRANSCRIPT</option>
-            <option value="SOP">SOP</option>
-            <option value="OFFER_LETTER">OFFER_LETTER</option>
-            <option value="VISA">VISA</option>
-            <option value="FINANCIAL">FINANCIAL</option>
-            <option value="IDENTITY">IDENTITY</option>
-            <option value="OTHER">OTHER</option>
+            {DOCUMENT_CATEGORY_ORDER.map((category) => (
+              <option key={category} value={category}>
+                {getCategoryLabel(category)}
+              </option>
+            ))}
           </select>
           <input
             name="file"
@@ -214,150 +300,246 @@ export function TasksDocumentsTab({
         {documents.length === 0 ? (
           <p className="mt-4 text-base text-slate-600">No documents uploaded yet.</p>
         ) : (
-          <ul className="mt-4 max-h-72 space-y-3 overflow-y-auto pr-1">
-            {documents.map((doc) => (
-              <li key={doc.id} className="rounded-lg border border-slate-200 bg-slate-50/50 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="font-medium text-slate-900">
-                      {doc.title}
-                      <span className="ml-2 text-sm font-normal text-slate-500">({doc.category})</span>
-                    </p>
-                    <p className="mt-0.5 text-sm text-slate-600">
-                      Uploaded by {doc.uploadedBy.name ?? doc.uploadedBy.email} · {doc.verificationStatus}
-                    </p>
-                    {doc.notes ? (
-                      <p className="mt-1 text-xs text-slate-600">Verification note: {doc.notes}</p>
-                    ) : null}
-                    {doc.returnedAt ? (
-                      <p className="mt-1 text-xs text-amber-700">
-                        Returned by {doc.returnedBy?.name ?? doc.returnedBy?.email ?? "Sub-admin"} on{" "}
-                        {doc.returnedAt.toLocaleString()}
-                        {doc.returnedNote ? ` - ${doc.returnedNote}` : ""}
-                      </p>
-                    ) : null}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <a
-                      href={doc.storagePath}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          <div className="mt-4 max-h-[32rem] space-y-3 overflow-y-auto pr-1">
+            {groupDocumentsByCategory(documents).map(({ category, documents: groupDocs }) => (
+              <details
+                key={category}
+                open
+                className="group rounded-xl border border-slate-200 bg-white shadow-sm"
+              >
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-xl px-4 py-3 hover:bg-slate-50">
+                  <div className="flex items-center gap-3">
+                    <span
+                      aria-hidden="true"
+                      className="text-slate-400 transition-transform group-open:rotate-90"
                     >
-                      Open
-                    </a>
-                    {(viewerRole === "INTERNAL_STAFF" || viewerRole === "ADMIN") && (
-                      <form action={updateStudentDocumentVerificationAction} className="flex items-center gap-2">
-                        <input type="hidden" name="studentId" value={studentId} />
-                        <input type="hidden" name="documentId" value={doc.id} />
-                        <select
-                          name="status"
-                          defaultValue={doc.verificationStatus}
-                          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-                        >
-                          <option value="PENDING">PENDING</option>
-                          <option value="VERIFIED">VERIFIED</option>
-                          <option value="REJECTED">REJECTED</option>
-                        </select>
-                        <input
-                          name="note"
-                          placeholder="Note (optional)"
-                          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-                        />
-                        <button
-                          type="submit"
-                          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                        >
-                          Save
-                        </button>
-                      </form>
-                    )}
-                    {viewerRole === "SUB_ADMIN" && doc.verificationStatus === "VERIFIED" && (
-                      <form action={updateStudentDocumentVerificationAction} className="flex flex-wrap items-center gap-2">
-                        <input type="hidden" name="studentId" value={studentId} />
-                        <input type="hidden" name="documentId" value={doc.id} />
-                        <input type="hidden" name="mode" value="reverse" />
-                        <select
-                          name="status"
-                          defaultValue="PENDING"
-                          className="rounded-lg border border-amber-300 px-3 py-1.5 text-sm text-amber-900 focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
-                        >
-                          <option value="PENDING">Return to PENDING</option>
-                          <option value="REJECTED">Return to REJECTED</option>
-                        </select>
-                        <input
-                          name="note"
-                          required
-                          placeholder="Mandatory return note"
-                          className="rounded-lg border border-amber-300 px-3 py-1.5 text-sm text-amber-900 placeholder:text-amber-500 focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
-                        />
-                        <button
-                          type="submit"
-                          className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100"
-                        >
-                          Reverse
-                        </button>
-                      </form>
-                    )}
-                    {viewerRole === "INTERNAL_STAFF" &&
-                    doc.returnedAt &&
-                    !doc.returnResolvedAt &&
-                    doc.returnedBy && (
-                      <>
-                        <form action={uploadReplacementDocumentAction} className="flex flex-wrap items-center gap-2">
-                          <input type="hidden" name="studentId" value={studentId} />
-                          <input type="hidden" name="documentId" value={doc.id} />
-                          <input
-                            name="title"
-                            placeholder="Replacement title (optional)"
-                            className="rounded-lg border border-emerald-300 px-3 py-1.5 text-sm text-emerald-900 placeholder:text-emerald-500 focus:border-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-400"
-                          />
-                          <input
-                            name="file"
-                            type="file"
-                            required
-                            accept=".pdf,image/*"
-                            className="rounded-lg border border-emerald-300 px-3 py-1.5 text-sm text-emerald-900 file:mr-3 file:rounded-lg file:border-0 file:bg-emerald-50 file:px-3 file:py-1 file:text-xs file:font-medium file:text-emerald-800 hover:file:bg-emerald-100"
-                          />
-                          <button
-                            type="submit"
-                            className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-800 hover:bg-emerald-100"
-                          >
-                            Upload Replacement
-                          </button>
-                        </form>
-                        <form action={disputeStudentDocumentReturnAction} className="flex flex-wrap items-center gap-2">
-                          <input type="hidden" name="studentId" value={studentId} />
-                          <input type="hidden" name="documentId" value={doc.id} />
-                          <input
-                            name="note"
-                            required
-                            placeholder="Dispute note to sub-admin"
-                            className="rounded-lg border border-blue-300 px-3 py-1.5 text-sm text-blue-900 placeholder:text-blue-500 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
-                          />
-                          <button
-                            type="submit"
-                            className="rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-800 hover:bg-blue-100"
-                          >
-                            Dispute Return
-                          </button>
-                        </form>
-                      </>
-                    )}
-                    <DeleteWithConfirm
-                      formAction={deleteStudentDocumentAction}
-                      confirmMessage={`Delete "${doc.title}"? This cannot be undone.`}
-                      buttonLabel="Delete"
-                      buttonClassName="rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50"
+                      &#x25B6;
+                    </span>
+                    <span
+                      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide ${getCategoryBadgeClasses(
+                        category,
+                      )}`}
                     >
-                      <input type="hidden" name="studentId" value={studentId} />
-                      <input type="hidden" name="documentId" value={doc.id} />
-                    </DeleteWithConfirm>
+                      {getCategoryLabel(category)}
+                    </span>
+                    <span className="text-sm text-slate-500">
+                      {groupDocs.length} {groupDocs.length === 1 ? "document" : "documents"}
+                    </span>
                   </div>
-                </div>
-              </li>
+                </summary>
+                <ul className="space-y-3 border-t border-slate-100 px-4 py-3">
+                  {groupDocs.map((doc) => (
+                    <li key={doc.id} className="rounded-lg border border-slate-200 bg-slate-50/50 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-slate-900">
+                            {doc.title}
+                            <span
+                              className={`ml-2 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold uppercase tracking-wide ${getCategoryBadgeClasses(
+                                doc.category,
+                              )}`}
+                            >
+                              {getCategoryLabel(doc.category)}
+                            </span>
+                            {doc.previousVersions && doc.previousVersions.length > 0 ? (
+                              <span className="ml-2 inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                                Revised
+                                {doc.previousVersions.length > 1 ? ` x${doc.previousVersions.length}` : ""}
+                              </span>
+                            ) : null}
+                          </p>
+                          <p className="mt-0.5 text-sm text-slate-600">
+                            Uploaded by {doc.uploadedBy.name ?? doc.uploadedBy.email} · {doc.verificationStatus}
+                          </p>
+                          {doc.notes ? (
+                            <p className="mt-1 text-xs text-slate-600">Verification note: {doc.notes}</p>
+                          ) : null}
+                          {doc.returnedAt ? (
+                            <p className="mt-1 text-xs text-amber-700">
+                              Returned by {doc.returnedBy?.name ?? doc.returnedBy?.email ?? "Sub-admin"} on{" "}
+                              {doc.returnedAt.toLocaleString()}
+                              {doc.returnedNote ? ` - ${doc.returnedNote}` : ""}
+                            </p>
+                          ) : null}
+                          {doc.previousVersions && doc.previousVersions.length > 0 ? (
+                            <details className="mt-2 rounded-lg border border-slate-200 bg-white">
+                              <summary className="cursor-pointer list-none px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                                <span className="text-slate-400">&#x25B6; </span>
+                                View previous {doc.previousVersions.length === 1 ? "version" : `${doc.previousVersions.length} versions`}
+                              </summary>
+                              <ol className="space-y-2 border-t border-slate-100 px-3 py-2">
+                                {doc.previousVersions.map((prev, index) => (
+                                  <li
+                                    key={prev.id}
+                                    className="rounded-md border border-slate-100 bg-slate-50/60 p-2 text-xs text-slate-600"
+                                  >
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                      <div className="min-w-0">
+                                        <p className="font-medium text-slate-700">
+                                          v{doc.previousVersions!.length - index}: {prev.title}
+                                        </p>
+                                        <p className="mt-0.5">
+                                          Uploaded by {prev.uploadedBy.name ?? prev.uploadedBy.email} on{" "}
+                                          {prev.createdAt.toLocaleString()} ·{" "}
+                                          <span className="font-medium">{prev.verificationStatus}</span>
+                                        </p>
+                                        {prev.returnedAt ? (
+                                          <p className="mt-0.5 text-amber-700">
+                                            Returned by{" "}
+                                            {prev.returnedBy?.name ?? prev.returnedBy?.email ?? "Sub-admin"} on{" "}
+                                            {prev.returnedAt.toLocaleString()}
+                                            {prev.returnedNote ? ` - ${prev.returnedNote}` : ""}
+                                          </p>
+                                        ) : null}
+                                      </div>
+                                      <a
+                                        href={prev.storagePath}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="shrink-0 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                                      >
+                                        Open
+                                      </a>
+                                    </div>
+                                  </li>
+                                ))}
+                              </ol>
+                            </details>
+                          ) : null}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <a
+                            href={doc.storagePath}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                          >
+                            Open
+                          </a>
+                          {(viewerRole === "INTERNAL_STAFF" || viewerRole === "ADMIN") && (
+                            <form action={updateStudentDocumentVerificationAction} className="flex items-center gap-2">
+                              <input type="hidden" name="studentId" value={studentId} />
+                              <input type="hidden" name="documentId" value={doc.id} />
+                              <select
+                                name="status"
+                                defaultValue={doc.verificationStatus}
+                                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                              >
+                                <option value="PENDING">PENDING</option>
+                                <option value="VERIFIED">VERIFIED</option>
+                                <option value="REJECTED">REJECTED</option>
+                              </select>
+                              <input
+                                name="note"
+                                placeholder="Note (optional)"
+                                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                              />
+                              <button
+                                type="submit"
+                                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                              >
+                                Save
+                              </button>
+                            </form>
+                          )}
+                          {viewerRole === "SUB_ADMIN" && doc.verificationStatus === "VERIFIED" && (
+                            <form
+                              action={updateStudentDocumentVerificationAction}
+                              className="flex flex-wrap items-center gap-2"
+                            >
+                              <input type="hidden" name="studentId" value={studentId} />
+                              <input type="hidden" name="documentId" value={doc.id} />
+                              <input type="hidden" name="mode" value="reverse" />
+                              <select
+                                name="status"
+                                defaultValue="PENDING"
+                                className="rounded-lg border border-amber-300 px-3 py-1.5 text-sm text-amber-900 focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                              >
+                                <option value="PENDING">Return to PENDING</option>
+                                <option value="REJECTED">Return to REJECTED</option>
+                              </select>
+                              <input
+                                name="note"
+                                required
+                                placeholder="Mandatory return note"
+                                className="rounded-lg border border-amber-300 px-3 py-1.5 text-sm text-amber-900 placeholder:text-amber-500 focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                              />
+                              <button
+                                type="submit"
+                                className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100"
+                              >
+                                Reverse
+                              </button>
+                            </form>
+                          )}
+                          {viewerRole === "INTERNAL_STAFF" &&
+                          doc.returnedAt &&
+                          !doc.returnResolvedAt &&
+                          doc.returnedBy && (
+                            <>
+                              <form
+                                action={uploadReplacementDocumentAction}
+                                className="flex flex-wrap items-center gap-2"
+                              >
+                                <input type="hidden" name="studentId" value={studentId} />
+                                <input type="hidden" name="documentId" value={doc.id} />
+                                <input
+                                  name="title"
+                                  placeholder="Replacement title (optional)"
+                                  className="rounded-lg border border-emerald-300 px-3 py-1.5 text-sm text-emerald-900 placeholder:text-emerald-500 focus:border-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-400"
+                                />
+                                <input
+                                  name="file"
+                                  type="file"
+                                  required
+                                  accept=".pdf,image/*"
+                                  className="rounded-lg border border-emerald-300 px-3 py-1.5 text-sm text-emerald-900 file:mr-3 file:rounded-lg file:border-0 file:bg-emerald-50 file:px-3 file:py-1 file:text-xs file:font-medium file:text-emerald-800 hover:file:bg-emerald-100"
+                                />
+                                <button
+                                  type="submit"
+                                  className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-800 hover:bg-emerald-100"
+                                >
+                                  Upload Replacement
+                                </button>
+                              </form>
+                              <form
+                                action={disputeStudentDocumentReturnAction}
+                                className="flex flex-wrap items-center gap-2"
+                              >
+                                <input type="hidden" name="studentId" value={studentId} />
+                                <input type="hidden" name="documentId" value={doc.id} />
+                                <input
+                                  name="note"
+                                  required
+                                  placeholder="Dispute note to sub-admin"
+                                  className="rounded-lg border border-blue-300 px-3 py-1.5 text-sm text-blue-900 placeholder:text-blue-500 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                />
+                                <button
+                                  type="submit"
+                                  className="rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-800 hover:bg-blue-100"
+                                >
+                                  Dispute Return
+                                </button>
+                              </form>
+                            </>
+                          )}
+                          <DeleteWithConfirm
+                            formAction={deleteStudentDocumentAction}
+                            confirmMessage={`Delete "${doc.title}"? This cannot be undone.`}
+                            buttonLabel="Delete"
+                            buttonClassName="rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50"
+                          >
+                            <input type="hidden" name="studentId" value={studentId} />
+                            <input type="hidden" name="documentId" value={doc.id} />
+                          </DeleteWithConfirm>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </details>
             ))}
-          </ul>
+          </div>
         )}
       </section>
     </>

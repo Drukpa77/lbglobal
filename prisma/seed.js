@@ -241,7 +241,7 @@ async function main() {
     role: Role.USER,
   });
 
-  const questionTemplateTitle = "Australia Student Application Questionnaire";
+  const questionTemplateTitle = "Student or Visa Application Questionnaire";
   const existingTemplate = await prisma.questionnaireTemplate.findFirst({
     where: { title: questionTemplateTitle },
     select: { id: true },

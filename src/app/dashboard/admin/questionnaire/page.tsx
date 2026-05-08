@@ -75,7 +75,7 @@ export default async function QuestionnaireManagerPage(props: {
           <input
             type="text"
             name="title"
-            defaultValue={template?.title ?? "Australia Student Application Questionnaire"}
+            defaultValue={template?.title ?? "Student or Visa Application Questionnaire"}
             className="mt-1 w-full rounded-md border bg-white px-3 py-2 text-gray-900"
           />
         </label>

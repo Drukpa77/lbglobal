@@ -222,7 +222,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
       })
     : [];
 
-  const documents = needsTasksData
+  const allDocuments = needsTasksData
     ? await prisma.studentDocument.findMany({
         where: { studentProfileId },
         include: {
@@ -230,9 +230,45 @@ export default async function StudentProfileManagementPage(props: { params: Para
           returnedBy: { select: { id: true, name: true, email: true } },
         },
         orderBy: { createdAt: "desc" },
-        take: 30,
       })
     : [];
+
+  const documentsById = new Map(allDocuments.map((doc) => [doc.id, doc]));
+  const supersededDocumentIds = new Set(
+    allDocuments
+      .map((doc) => doc.replacedDocumentId)
+      .filter((id): id is string => Boolean(id)),
+  );
+
+  const documents = allDocuments
+    .filter((doc) => !supersededDocumentIds.has(doc.id))
+    .slice(0, 30)
+    .map((doc) => {
+      const previousVersions: typeof allDocuments = [];
+      let cursor = doc.replacedDocumentId ? documentsById.get(doc.replacedDocumentId) : undefined;
+      const seen = new Set<string>();
+      while (cursor && !seen.has(cursor.id)) {
+        seen.add(cursor.id);
+        previousVersions.push(cursor);
+        cursor = cursor.replacedDocumentId ? documentsById.get(cursor.replacedDocumentId) : undefined;
+      }
+      return {
+        ...doc,
+        previousVersions: previousVersions.map((prev) => ({
+          id: prev.id,
+          title: prev.title,
+          storagePath: prev.storagePath,
+          verificationStatus: prev.verificationStatus,
+          returnedAt: prev.returnedAt,
+          returnedNote: prev.returnedNote,
+          returnedBy: prev.returnedBy
+            ? { name: prev.returnedBy.name, email: prev.returnedBy.email }
+            : null,
+          uploadedBy: { name: prev.uploadedBy.name, email: prev.uploadedBy.email },
+          createdAt: prev.createdAt,
+        })),
+      };
+    });
 
   const templates = needsFinancialData
     ? await prisma.emailTemplate.findMany({
