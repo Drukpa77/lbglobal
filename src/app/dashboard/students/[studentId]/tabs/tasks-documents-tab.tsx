@@ -131,6 +131,7 @@ type TasksDocumentsTabProps = {
   uploadReplacementDocumentAction: (formData: FormData) => Promise<void>;
   deleteStudentDocumentAction: (formData: FormData) => Promise<void>;
   viewerRole: "ADMIN" | "SUB_ADMIN" | "INTERNAL_STAFF";
+  canCreateTasks: boolean;
 };
 
 export function TasksDocumentsTab({
@@ -146,41 +147,48 @@ export function TasksDocumentsTab({
   uploadReplacementDocumentAction,
   deleteStudentDocumentAction,
   viewerRole,
+  canCreateTasks,
 }: TasksDocumentsTabProps) {
   return (
     <>
       <section id="tasks" className="scroll-mt-24 rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">My Tasks</h2>
-        <form action={createTaskAction} className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <input type="hidden" name="studentId" value={studentId} />
-          <input
-            name="title"
-            required
-            placeholder="Task title"
-            className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400 lg:col-span-2"
-          />
-          <input
-            name="description"
-            placeholder="Task description (optional)"
-            className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400 lg:col-span-2"
-          />
-          <select
-            name="priority"
-            defaultValue="MEDIUM"
-            className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-          >
-            <option value="LOW">Low priority</option>
-            <option value="MEDIUM">Medium priority</option>
-            <option value="HIGH">High priority</option>
-            <option value="URGENT">Urgent</option>
-          </select>
-          <button
-            type="submit"
-            className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
-          >
-            Create task
-          </button>
-        </form>
+        {canCreateTasks ? (
+          <form action={createTaskAction} className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <input type="hidden" name="studentId" value={studentId} />
+            <input
+              name="title"
+              required
+              placeholder="Task title"
+              className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400 lg:col-span-2"
+            />
+            <input
+              name="description"
+              placeholder="Task description (optional)"
+              className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400 lg:col-span-2"
+            />
+            <select
+              name="priority"
+              defaultValue="MEDIUM"
+              className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+            >
+              <option value="LOW">Low priority</option>
+              <option value="MEDIUM">Medium priority</option>
+              <option value="HIGH">High priority</option>
+              <option value="URGENT">Urgent</option>
+            </select>
+            <button
+              type="submit"
+              className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
+            >
+              Create task
+            </button>
+          </form>
+        ) : viewerRole === "INTERNAL_STAFF" ? (
+          <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+            You are not assigned to this student. Ask an administrator or case manager to assign you before you can create tasks here.
+          </p>
+        ) : null}
         <div className="mt-4">
           <form
             id="task-checklist-form"
