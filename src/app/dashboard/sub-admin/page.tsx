@@ -1631,7 +1631,6 @@ async function claimSubmissionAction(formData: FormData) {
   revalidatePath(`/dashboard/students/${submission.studentId}`);
   redirect(returnToStudentsTab);
 }
-
 async function escalateSubmissionAction(formData: FormData) {
   "use server";
   const session = await auth();
@@ -1685,3 +1684,4 @@ async function escalateSubmissionAction(formData: FormData) {
   revalidatePath(`/dashboard/students/${submission.studentId}`);
   redirect("/dashboard/sub-admin");
 }
+
