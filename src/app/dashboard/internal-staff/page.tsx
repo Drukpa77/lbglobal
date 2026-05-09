@@ -8,6 +8,7 @@ import { ContributionLeaderboard } from "@/components/contribution-leaderboard";
 import { DashboardTabBar } from "@/components/dashboard-tab-bar";
 import { RemindersWidget } from "@/components/reminders-widget";
 import { getContributions } from "@/lib/contributions";
+import { queueDevEmail } from "@/lib/email-outbox";
 import { prisma } from "@/lib/prisma";
 import { getRemindersForUser } from "@/lib/reminders";
 import { createWorkflowNotification } from "@/lib/workflow-notifications";
@@ -19,7 +20,7 @@ import {
   caseStageTone,
 } from "@/lib/case-stage";
 
-type SearchParams = Promise<{ filter?: string; tab?: string }>;
+type SearchParams = Promise<{ filter?: string; tab?: string; manualError?: string; manualSuccess?: string }>;
 
 export default async function InternalStaffDashboardPage(props: { searchParams: SearchParams }) {
   const session = await auth();
@@ -37,6 +38,15 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
   const filterRaw = String(searchParams.filter ?? "all");
   const filter: "all" | "overdue" | "today" =
     filterRaw === "overdue" || filterRaw === "today" ? filterRaw : "all";
+  const manualStudentError =
+    searchParams.manualError === "duplicate"
+      ? "A student or staff account already exists with that email."
+      : searchParams.manualError === "validation"
+        ? "Please complete all required fields with valid details."
+        : searchParams.manualError === "template"
+          ? "No active questionnaire template is available for internal intake."
+          : null;
+  const manualStudentSuccess = searchParams.manualSuccess === "1";
 
   const isAdmin = session.user.role === "ADMIN";
   const today = new Date();
@@ -648,6 +658,91 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
       {/* ── STUDENTS TAB ───────────────────────────────────────── */}
       {tab === "students" && (
         <div className="space-y-6">
+          {session.user.role === "INTERNAL_STAFF" ? (
+            <section className="rounded-lg border bg-white p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-sm font-semibold">Add Student</h2>
+                  <p className="mt-1 text-xs text-gray-600">
+                    Create a student record and assign it to yourself.
+                  </p>
+                </div>
+                {manualStudentSuccess ? (
+                  <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                    Student added
+                  </span>
+                ) : null}
+              </div>
+              {manualStudentError ? (
+                <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  {manualStudentError}
+                </p>
+              ) : null}
+              <form action={createManualStudentAction} className="mt-4 grid gap-3 md:grid-cols-2">
+                <label className="text-xs font-medium text-gray-700">
+                  Name
+                  <input
+                    name="name"
+                    required
+                    minLength={2}
+                    maxLength={100}
+                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="text-xs font-medium text-gray-700">
+                  Email
+                  <input
+                    name="email"
+                    type="email"
+                    required
+                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="text-xs font-medium text-gray-700">
+                  Phone
+                  <input name="phone" required className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
+                </label>
+                <label className="text-xs font-medium text-gray-700">
+                  Country
+                  <input name="country" required className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
+                </label>
+                <label className="text-xs font-medium text-gray-700">
+                  City
+                  <input name="city" required className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
+                </label>
+                <label className="text-xs font-medium text-gray-700">
+                  Course
+                  <input name="course" required className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
+                </label>
+                <label className="text-xs font-medium text-gray-700">
+                  Intake
+                  <input name="intake" required className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
+                </label>
+                <label className="text-xs font-medium text-gray-700">
+                  Current education
+                  <input
+                    name="currentEducation"
+                    required
+                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="text-xs font-medium text-gray-700 md:col-span-2">
+                  Notes
+                  <textarea
+                    name="notes"
+                    rows={3}
+                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  />
+                </label>
+                <div className="md:col-span-2">
+                  <button type="submit" className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white">
+                    Add and assign to me
+                  </button>
+                </div>
+              </form>
+            </section>
+          ) : null}
+
           <section className="rounded-lg border bg-white p-4">
             <h2 className="text-sm font-semibold">Assigned Students</h2>
             {assignments.length === 0 ? (
@@ -807,6 +902,213 @@ async function InternalStaffContributionsTabPanel() {
       )}
     </div>
   );
+}
+
+async function createManualStudentAction(formData: FormData) {
+  "use server";
+
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+  if (session.user.role !== "INTERNAL_STAFF") redirect("/dashboard/internal-staff?tab=students");
+
+  const name = String(formData.get("name") ?? "").trim();
+  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const phone = String(formData.get("phone") ?? "").trim();
+  const country = String(formData.get("country") ?? "").trim();
+  const city = String(formData.get("city") ?? "").trim();
+  const course = String(formData.get("course") ?? "").trim();
+  const intake = String(formData.get("intake") ?? "").trim();
+  const currentEducation = String(formData.get("currentEducation") ?? "").trim();
+  const notes = String(formData.get("notes") ?? "").trim();
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (
+    name.length < 2 ||
+    name.length > 100 ||
+    !emailRegex.test(email) ||
+    !phone ||
+    !country ||
+    !city ||
+    !course ||
+    !intake ||
+    !currentEducation
+  ) {
+    redirect("/dashboard/internal-staff?tab=students&manualError=validation");
+  }
+
+  const [existingUser, template] = await Promise.all([
+    prisma.user.findUnique({ where: { email }, select: { id: true } }),
+    prisma.questionnaireTemplate.findFirst({
+      where: { isActive: true },
+      orderBy: { updatedAt: "desc" },
+      select: { id: true },
+    }),
+  ]);
+
+  if (existingUser) redirect("/dashboard/internal-staff?tab=students&manualError=duplicate");
+  if (!template) redirect("/dashboard/internal-staff?tab=students&manualError=template");
+
+  const answers = {
+    fullName: name,
+    email,
+    phone,
+    country,
+    city,
+    currentEducationLevel: currentEducation,
+    targetCourse: course,
+    preferredIntake: intake,
+    additionalNote: notes,
+    source: "Internal staff",
+  };
+
+  const created = await prisma.$transaction(async (tx) => {
+    const studentUser = await tx.user.create({
+      data: {
+        name,
+        email,
+        role: "USER",
+      },
+      select: { id: true, email: true, name: true },
+    });
+
+    const studentProfile = await tx.studentProfile.create({
+      data: {
+        userId: studentUser.id,
+        phone,
+        city,
+        nationality: country,
+        currentEducationLevel: currentEducation,
+        targetCourse: course,
+        preferredIntake: intake,
+        followUpNotes: notes || null,
+      },
+      select: { id: true },
+    });
+
+    const submission = await tx.questionnaireSubmission.create({
+      data: {
+        studentId: studentUser.id,
+        templateId: template.id,
+        assignedToId: null,
+        sourceCity: city,
+        sourceCountry: country,
+        intendedCourse: course,
+        intendedIntake: intake,
+        answers,
+      },
+      select: { id: true },
+    });
+
+    await tx.studentAssignment.create({
+      data: {
+        studentProfileId: studentProfile.id,
+        assignedToId: session.user.id,
+        assignedById: session.user.id,
+        notes: notes || "Created by internal staff",
+        isActive: true,
+      },
+    });
+
+    await tx.activityLog.create({
+      data: {
+        actorId: session.user.id,
+        targetUserId: studentUser.id,
+        targetStudentProfileId: studentProfile.id,
+        entityType: "STUDENT",
+        entityId: studentUser.id,
+        action: "Created student through internal staff intake",
+        metadata: {
+          source: "internal_staff",
+          submissionId: submission.id,
+          assignedToId: session.user.id,
+        },
+      },
+    });
+
+    return {
+      studentUserId: studentUser.id,
+      studentProfileId: studentProfile.id,
+      submissionId: submission.id,
+      studentEmail: studentUser.email,
+      studentName: studentUser.name ?? studentUser.email,
+    };
+  });
+
+  const creatorLabel = session.user.name ?? session.user.email ?? "Internal staff";
+  const managers = await prisma.staffTeamMembership.findMany({
+    where: { internalStaffId: session.user.id },
+    select: {
+      manager: { select: { id: true, email: true } },
+    },
+  });
+  const fallbackRecipients =
+    managers.length > 0
+      ? []
+      : await prisma.user.findMany({
+          where: { role: { in: ["SUB_ADMIN", "ADMIN"] } },
+          select: { id: true, email: true },
+        });
+  const recipients = managers.length > 0 ? managers.map((item) => item.manager) : fallbackRecipients;
+
+  await Promise.all(
+    recipients.map((recipient) =>
+      createWorkflowNotification({
+        recipientId: recipient.id,
+        actorId: session.user.id,
+        studentProfileId: created.studentProfileId,
+        type: "NEW_STUDENT_APPLICATION",
+        title: "Student added by internal staff",
+        message: `${created.studentName} was added by ${creatorLabel}.`,
+        note: notes || null,
+        link: `/dashboard/sub-admin?tab=students#submission-${created.submissionId}`,
+        actionRequired: true,
+        metadata: {
+          source: "internal_staff",
+          submissionId: created.submissionId,
+          internalStaffId: session.user.id,
+        },
+      }),
+    ),
+  );
+
+  await Promise.all([
+    queueDevEmail({
+      createdById: session.user.id,
+      toEmail: created.studentEmail,
+      subject: "Your student profile has been created - L&B Global",
+      htmlBody: `
+        <p>Dear ${escapeHtml(created.studentName)},</p>
+        <p>Your student profile has been created by ${escapeHtml(creatorLabel)} at L&amp;B Global.</p>
+        <p>Our team will contact you with the next steps for your course and visa process.</p>
+        <p>Best regards,<br />L&amp;B Global</p>
+      `,
+      templateKey: "internal-staff-student-created",
+    }),
+    ...recipients.map((recipient) =>
+      queueDevEmail({
+        createdById: session.user.id,
+        toEmail: recipient.email,
+        subject: `Student added by internal staff: ${created.studentName}`,
+        htmlBody: `
+          <p>${escapeHtml(creatorLabel)} added a new student through internal intake.</p>
+          <ul>
+            <li><strong>Name:</strong> ${escapeHtml(created.studentName)}</li>
+            <li><strong>Email:</strong> ${escapeHtml(created.studentEmail)}</li>
+            <li><strong>Course:</strong> ${escapeHtml(course)}</li>
+            <li><strong>Intake:</strong> ${escapeHtml(intake)}</li>
+          </ul>
+          <p>The student has been assigned to ${escapeHtml(creatorLabel)}.</p>
+        `,
+        templateKey: "internal-staff-student-created-notice",
+      }),
+    ),
+  ]);
+
+  revalidatePath("/dashboard/internal-staff");
+  revalidatePath("/dashboard/sub-admin");
+  revalidatePath("/dashboard/admin");
+  revalidatePath(`/dashboard/students/${created.studentUserId}`);
+  redirect("/dashboard/internal-staff?tab=students&manualSuccess=1");
 }
 
 function MetricCard({
@@ -1144,4 +1446,13 @@ function FilterButton({
       <p className={`text-xs ${isActive ? "text-gray-200" : "text-gray-600"}`}>{detail}</p>
     </Link>
   );
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }

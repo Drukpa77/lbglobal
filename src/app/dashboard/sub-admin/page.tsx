@@ -110,7 +110,11 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                     where: { isActive: true },
                     take: 1,
                     orderBy: { createdAt: "desc" },
-                    select: { assignedToId: true },
+                    select: {
+                      assignedToId: true,
+                      assignedTo: { select: { name: true, email: true } },
+                      assignedBy: { select: { name: true, email: true } },
+                    },
                   },
                 },
               },
@@ -809,8 +813,10 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                 </form>
                 <div className="max-h-96 space-y-3 overflow-y-auto pr-1">
                 {filteredSubmissions.map((submission) => {
+                  const activeInternalDelegation =
+                    submission.student.studentProfile?.assignments[0] ?? null;
                   const activeInternalDelegationId =
-                    submission.student.studentProfile?.assignments[0]?.assignedToId ?? "";
+                    activeInternalDelegation?.assignedToId ?? "";
                   const delegateStaffDefault =
                     activeInternalDelegationId || suggestedAssigneeId || "";
                   const showWorkloadSuggestionBadge =
@@ -841,6 +847,23 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                         <p className="text-xs text-gray-600">
                           Current status: {formatSubmissionStatus(submission.status)}
                         </p>
+                        {activeInternalDelegation ? (
+                          <p className="text-xs text-gray-600">
+                            Assigned to internal staff:{" "}
+                            {activeInternalDelegation.assignedTo.name ??
+                              activeInternalDelegation.assignedTo.email}
+                            {activeInternalDelegation.assignedBy ? (
+                              <>
+                                {" "}
+                                | Added by{" "}
+                                {activeInternalDelegation.assignedBy.name ??
+                                  activeInternalDelegation.assignedBy.email}
+                              </>
+                            ) : null}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-gray-600">Assigned to internal staff: Not assigned</p>
+                        )}
                         {submission.student.studentProfile ? (
                           <p className="mt-1">
                             <span
