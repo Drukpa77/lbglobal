@@ -14,10 +14,30 @@ const TASK_ERROR_MESSAGES: Record<string, string> = {
 
 const DOCUMENT_UPLOAD_MESSAGES: Record<string, string> = {
   "blob-token":
-    "File storage is not wired up yet. In Vercel: add a Blob store and set BLOB_READ_WRITE_TOKEN on this deployment (Production + Preview).",
-  "file-too-large": `That file is too large for this form (max about ${MAX_STUDENT_DOCUMENT_UPLOAD_MB} MB on Vercel). Compress the PDF or use a smaller image.`,
+    "The app did not see BLOB_READ_WRITE_TOKEN on this deployment. In Vercel → Project → Settings → Environment Variables: add the exact name BLOB_READ_WRITE_TOKEN (read/write token from Storage → Blob), enable it for Production, then redeploy.",
+  "blob-auth":
+    "Blob rejected the token (wrong store, expired, or read-only token). In Vercel Storage open your Blob store, copy the read/write token again, paste as BLOB_READ_WRITE_TOKEN, redeploy, and ensure Preview vs Production envs match how you test.",
+  "blob-store":
+    "Blob store was not found or is suspended. In Vercel, confirm Storage → Blob is created and linked to this team/project.",
+  "blob-content-type":
+    "Blob rejected this content type. Try a standard PDF or JPEG/PNG export.",
+  "blob-file-too-large":
+    "This file exceeds the Blob store limit for uploads through the API. Use a smaller or compressed file.",
+  "blob-pathname":
+    "Blob rejected the file path. Try a simpler filename (letters, numbers, dot, hyphen).",
+  "blob-rate-limit":
+    "Blob rate limit reached. Wait a minute and try again.",
+  "blob-unavailable":
+    "Blob service was unavailable or the request was aborted. Try again in a moment.",
+  "blob-failed":
+    "Something went wrong while saving the file to Blob. Check Vercel function logs for this request.",
+  "file-too-large": `That file is too large for this form (max about ${MAX_STUDENT_DOCUMENT_UPLOAD_MB} MB through the server). Compress the PDF or use a smaller image.`,
+  "invalid-type":
+    "Only PDF and common images (JPEG, PNG, WebP, GIF) are accepted. HEIC, Word, or other types often fail or report an empty type—export to PDF or JPEG.",
+  "save-failed":
+    "The file uploaded to storage, but saving the database record failed. Check DATABASE_URL and Vercel logs, then try again.",
   generic:
-    `Document upload failed. Use a PDF or image under ${MAX_STUDENT_DOCUMENT_UPLOAD_MB} MB, confirm your connection, and try again.`,
+    "Upload could not be completed. Check file type and size, Vercel env vars (BLOB_READ_WRITE_TOKEN, DATABASE_URL), and function logs if it keeps happening.",
 };
 
 export function TaskActionToast() {
