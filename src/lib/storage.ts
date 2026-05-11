@@ -3,6 +3,16 @@ import path from "node:path";
 
 import { del, put } from "@vercel/blob";
 
+/** Throw this from uploads on Vercel when `BLOB_READ_WRITE_TOKEN` is missing (filesystem is not writable). */
+export class StorageNotConfiguredError extends Error {
+  constructor() {
+    super(
+      "File uploads require Vercel Blob. Set BLOB_READ_WRITE_TOKEN from your Blob store in Vercel project settings.",
+    );
+    this.name = "StorageNotConfiguredError";
+  }
+}
+
 function hasBlobToken() {
   return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
 }
@@ -26,6 +36,10 @@ export async function uploadBufferToStorage({
       addRandomSuffix: false,
     });
     return uploaded.url;
+  }
+
+  if (process.env.VERCEL) {
+    throw new StorageNotConfiguredError();
   }
 
   const normalizedRelative = localRelativePath.replace(/^\/+/, "");

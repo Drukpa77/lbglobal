@@ -28,6 +28,60 @@ type Payload = {
   groups: NotificationGroup[];
 };
 
+function normalizeWorkflowPayload(raw: unknown): Payload {
+  if (!raw || typeof raw !== "object") {
+    return { actionRequiredCount: 0, groups: [] };
+  }
+  const o = raw as Record<string, unknown>;
+  const actionRequiredCount =
+    typeof o.actionRequiredCount === "number" && Number.isFinite(o.actionRequiredCount)
+      ? Math.max(0, o.actionRequiredCount)
+      : 0;
+  const rawGroups = o.groups;
+  if (!Array.isArray(rawGroups)) {
+    return { actionRequiredCount, groups: [] };
+  }
+  const groups: NotificationGroup[] = [];
+  for (const g of rawGroups) {
+    if (!g || typeof g !== "object") continue;
+    const grp = g as Record<string, unknown>;
+    const studentId = typeof grp.studentId === "string" ? grp.studentId : null;
+    if (!studentId) continue;
+    const studentName = typeof grp.studentName === "string" ? grp.studentName : "";
+    const unreadRaw = grp.unreadCount;
+    const unreadCount =
+      typeof unreadRaw === "number" && Number.isFinite(unreadRaw)
+        ? Math.max(0, unreadRaw)
+        : 0;
+    const rawItems = grp.items;
+    const items = Array.isArray(rawItems)
+      ? rawItems
+          .filter(
+            (it): it is Record<string, unknown> =>
+              !!it && typeof it === "object" && typeof (it as Record<string, unknown>).id === "string",
+          )
+          .map((it) => ({
+            id: String(it.id),
+            title: typeof it.title === "string" ? it.title : "",
+            message: typeof it.message === "string" ? it.message : "",
+            note: typeof it.note === "string" || it.note === null ? (it.note as string | null) : null,
+            link: typeof it.link === "string" ? it.link : "#",
+            type: typeof it.type === "string" ? it.type : "UNKNOWN",
+            actionRequired: Boolean(it.actionRequired),
+            isRead: Boolean(it.isRead),
+            createdAt: typeof it.createdAt === "string" ? it.createdAt : "",
+          }))
+      : [];
+    groups.push({
+      studentId,
+      studentName,
+      unreadCount,
+      items,
+    });
+  }
+  return { actionRequiredCount, groups };
+}
+
 export function WorkflowNotificationsBell() {
   const [open, setOpen] = useState(false);
   const [data, setData] = useState<Payload>({ actionRequiredCount: 0, groups: [] });
@@ -35,8 +89,15 @@ export function WorkflowNotificationsBell() {
 
   const fetchNotifications = useCallback(() => {
     fetch("/api/notifications/workflow")
-      .then((res) => res.json())
-      .then((payload: Payload) => setData(payload))
+      .then(async (res) => {
+        const text = await res.text();
+        try {
+          return JSON.parse(text) as unknown;
+        } catch {
+          return {};
+        }
+      })
+      .then((raw) => setData(normalizeWorkflowPayload(raw)))
       .catch(() => setData({ actionRequiredCount: 0, groups: [] }));
   }, []);
 

@@ -35,7 +35,7 @@ import { auth } from "@/auth";
 import { getContributions } from "@/lib/contributions";
 import { calculateInvoiceTotals, normalizeInvoiceItems } from "@/lib/invoice-calculator";
 import { prisma } from "@/lib/prisma";
-import { deleteStoredFile, uploadBufferToStorage } from "@/lib/storage";
+import { StorageNotConfiguredError, deleteStoredFile, uploadBufferToStorage } from "@/lib/storage";
 import { renderTemplate } from "@/lib/template-renderer";
 import { createWorkflowNotification } from "@/lib/workflow-notifications";
 import { formatVisaStatus, formatYearsLeft, visaStatuses } from "@/lib/student-tracking";
@@ -51,7 +51,12 @@ import {
 } from "@/lib/case-stage";
 
 type Params = Promise<{ studentId: string }>;
-type SearchParams = Promise<{ tab?: string; taskCreated?: string; taskError?: string }>;
+type SearchParams = Promise<{
+  tab?: string;
+  taskCreated?: string;
+  taskError?: string;
+  uploadError?: string;
+}>;
 
 const studentAccountSchema = z.object({
   fullName: z.string().trim().min(2).max(100),
@@ -2366,12 +2371,21 @@ async function uploadStudentDocumentAction(formData: FormData) {
   const ext = path.extname(file.name) || mimeToExt(file.type);
   const sanitizedName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
   const relativePath = `student-docs/${studentId}/${sanitizedName}`;
-  const publicPath = await uploadBufferToStorage({
-    buffer,
-    mimeType: file.type,
-    blobPath: relativePath,
-    localRelativePath: relativePath,
-  });
+  let publicPath: string;
+  try {
+    publicPath = await uploadBufferToStorage({
+      buffer,
+      mimeType: file.type,
+      blobPath: relativePath,
+      localRelativePath: relativePath,
+    });
+  } catch (error) {
+    if (error instanceof StorageNotConfiguredError) {
+      redirect(`/dashboard/students/${studentId}?tab=tasks&uploadError=blob-token`);
+    }
+    console.error("uploadStudentDocumentAction", error);
+    redirect(`/dashboard/students/${studentId}?tab=tasks&uploadError=generic`);
+  }
 
   const safeCategory: DocumentCategory = [
     "PASSPORT",
@@ -2462,12 +2476,21 @@ async function uploadReplacementDocumentAction(formData: FormData) {
   const ext = path.extname(file.name) || mimeToExt(file.type);
   const sanitizedName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
   const relativePath = `student-docs/${studentId}/${sanitizedName}`;
-  const publicPath = await uploadBufferToStorage({
-    buffer,
-    mimeType: file.type,
-    blobPath: relativePath,
-    localRelativePath: relativePath,
-  });
+  let publicPath: string;
+  try {
+    publicPath = await uploadBufferToStorage({
+      buffer,
+      mimeType: file.type,
+      blobPath: relativePath,
+      localRelativePath: relativePath,
+    });
+  } catch (error) {
+    if (error instanceof StorageNotConfiguredError) {
+      redirect(`/dashboard/students/${studentId}?tab=tasks&uploadError=blob-token`);
+    }
+    console.error("uploadReplacementDocumentAction", error);
+    redirect(`/dashboard/students/${studentId}?tab=tasks&uploadError=generic`);
+  }
 
   const title = replacementTitle || `${document.title} (Revised)`;
   const replacement = await prisma.studentDocument.create({

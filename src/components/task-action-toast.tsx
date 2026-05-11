@@ -10,6 +10,13 @@ const TASK_ERROR_MESSAGES: Record<string, string> = {
   "missing-title": "Enter a task title before saving.",
 };
 
+const DOCUMENT_UPLOAD_MESSAGES: Record<string, string> = {
+  "blob-token":
+    "File storage is not wired up yet. In Vercel: add a Blob store and set BLOB_READ_WRITE_TOKEN on this deployment (Production + Preview).",
+  generic:
+    "Document upload failed. Use a PDF or image under 20 MB, confirm your connection, and try again.",
+};
+
 export function TaskActionToast() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -21,8 +28,9 @@ export function TaskActionToast() {
   useEffect(() => {
     const created = searchParams.get("taskCreated") === "1";
     const errCode = searchParams.get("taskError");
+    const uploadErr = searchParams.get("uploadError");
 
-    if (!created && !errCode) return;
+    if (!created && !errCode && !uploadErr) return;
 
     queueMicrotask(() => {
       if (created) {
@@ -32,11 +40,17 @@ export function TaskActionToast() {
           variant: "error",
           message: TASK_ERROR_MESSAGES[errCode] ?? "Something went wrong while saving the task.",
         });
+      } else if (uploadErr) {
+        setToast({
+          variant: "error",
+          message: DOCUMENT_UPLOAD_MESSAGES[uploadErr] ?? DOCUMENT_UPLOAD_MESSAGES.generic,
+        });
       }
 
       const params = new URLSearchParams(searchParams.toString());
       params.delete("taskCreated");
       params.delete("taskError");
+      params.delete("uploadError");
       const qs = params.toString();
       router.replace(qs ? `${pathname}?${qs}` : pathname);
     });
