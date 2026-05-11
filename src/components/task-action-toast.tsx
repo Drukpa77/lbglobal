@@ -3,6 +3,8 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { MAX_STUDENT_DOCUMENT_UPLOAD_MB } from "@/lib/upload-limits";
+
 const TASK_ERROR_MESSAGES: Record<string, string> = {
   "not-assigned": "You can only create tasks for students assigned to you.",
   "sub-admin-access": "You don't have access to create tasks for this student.",
@@ -13,8 +15,9 @@ const TASK_ERROR_MESSAGES: Record<string, string> = {
 const DOCUMENT_UPLOAD_MESSAGES: Record<string, string> = {
   "blob-token":
     "File storage is not wired up yet. In Vercel: add a Blob store and set BLOB_READ_WRITE_TOKEN on this deployment (Production + Preview).",
+  "file-too-large": `That file is too large for this form (max about ${MAX_STUDENT_DOCUMENT_UPLOAD_MB} MB on Vercel). Compress the PDF or use a smaller image.`,
   generic:
-    "Document upload failed. Use a PDF or image under 20 MB, confirm your connection, and try again.",
+    `Document upload failed. Use a PDF or image under ${MAX_STUDENT_DOCUMENT_UPLOAD_MB} MB, confirm your connection, and try again.`,
 };
 
 export function TaskActionToast() {

@@ -1,4 +1,6 @@
 import { DeleteWithConfirm } from "@/components/delete-with-confirm";
+import { FileSizeLimitedForm } from "@/components/file-size-limited-form";
+import { MAX_STUDENT_DOCUMENT_UPLOAD_MB } from "@/lib/upload-limits";
 
 type TaskRow = {
   id: string;
@@ -272,7 +274,13 @@ export function TasksDocumentsTab({
 
       <section className="scroll-mt-24 rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">Documents</h2>
-        <form action={uploadStudentDocumentAction} className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <p className="mt-1 text-sm text-slate-600">
+          PDF or image, up to about {MAX_STUDENT_DOCUMENT_UPLOAD_MB} MB per file (hosted upload limit).
+        </p>
+        <FileSizeLimitedForm
+          action={uploadStudentDocumentAction}
+          className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+        >
           <input type="hidden" name="studentId" value={studentId} />
           <input
             name="title"
@@ -304,7 +312,7 @@ export function TasksDocumentsTab({
           >
             Upload
           </button>
-        </form>
+        </FileSizeLimitedForm>
         {documents.length === 0 ? (
           <p className="mt-4 text-base text-slate-600">No documents uploaded yet.</p>
         ) : (
@@ -485,7 +493,7 @@ export function TasksDocumentsTab({
                           !doc.returnResolvedAt &&
                           doc.returnedBy && (
                             <>
-                              <form
+                              <FileSizeLimitedForm
                                 action={uploadReplacementDocumentAction}
                                 className="flex flex-wrap items-center gap-2"
                               >
@@ -509,7 +517,7 @@ export function TasksDocumentsTab({
                                 >
                                   Upload Replacement
                                 </button>
-                              </form>
+                              </FileSizeLimitedForm>
                               <form
                                 action={disputeStudentDocumentReturnAction}
                                 className="flex flex-wrap items-center gap-2"

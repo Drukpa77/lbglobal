@@ -37,6 +37,7 @@ import { calculateInvoiceTotals, normalizeInvoiceItems } from "@/lib/invoice-cal
 import { prisma } from "@/lib/prisma";
 import { StorageNotConfiguredError, deleteStoredFile, uploadBufferToStorage } from "@/lib/storage";
 import { renderTemplate } from "@/lib/template-renderer";
+import { MAX_STUDENT_DOCUMENT_UPLOAD_BYTES } from "@/lib/upload-limits";
 import { createWorkflowNotification } from "@/lib/workflow-notifications";
 import { formatVisaStatus, formatYearsLeft, visaStatuses } from "@/lib/student-tracking";
 import {
@@ -2342,8 +2343,12 @@ async function uploadStudentDocumentAction(formData: FormData) {
   if (!studentId || !title || !(file instanceof File) || file.size === 0) {
     redirect(`/dashboard/students/${studentId}?tab=tasks`);
   }
-  if (file.size > 20 * 1024 * 1024 || !allowedDocumentMime.has(file.type)) {
-    redirect(`/dashboard/students/${studentId}?tab=tasks`);
+  if (file.size > MAX_STUDENT_DOCUMENT_UPLOAD_BYTES || !allowedDocumentMime.has(file.type)) {
+    redirect(
+      `/dashboard/students/${studentId}?tab=tasks&uploadError=${
+        file.size > MAX_STUDENT_DOCUMENT_UPLOAD_BYTES ? "file-too-large" : "generic"
+      }`,
+    );
   }
 
   const studentProfile = await prisma.studentProfile.findUnique({
@@ -2440,8 +2445,12 @@ async function uploadReplacementDocumentAction(formData: FormData) {
   if (!studentId || !documentId || !(file instanceof File) || file.size === 0) {
     redirect(`/dashboard/students/${studentId}?tab=tasks`);
   }
-  if (file.size > 20 * 1024 * 1024 || !allowedDocumentMime.has(file.type)) {
-    redirect(`/dashboard/students/${studentId}?tab=tasks`);
+  if (file.size > MAX_STUDENT_DOCUMENT_UPLOAD_BYTES || !allowedDocumentMime.has(file.type)) {
+    redirect(
+      `/dashboard/students/${studentId}?tab=tasks&uploadError=${
+        file.size > MAX_STUDENT_DOCUMENT_UPLOAD_BYTES ? "file-too-large" : "generic"
+      }`,
+    );
   }
 
   const document = await prisma.studentDocument.findUnique({
