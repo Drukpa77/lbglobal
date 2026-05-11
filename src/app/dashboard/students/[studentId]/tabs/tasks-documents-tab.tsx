@@ -134,7 +134,21 @@ type TasksDocumentsTabProps = {
   deleteStudentDocumentAction: (formData: FormData) => Promise<void>;
   viewerRole: "ADMIN" | "SUB_ADMIN" | "INTERNAL_STAFF";
   canCreateTasks: boolean;
+  /** When true, HTTPS blob links use the authenticated API proxy (private Blob stores). */
+  blobOpensThroughAuthenticatedApi: boolean;
 };
+
+function documentOpenHref(
+  studentId: string,
+  documentId: string,
+  storagePath: string,
+  throughApi: boolean,
+): string {
+  if (throughApi && /^https?:\/\//i.test(storagePath)) {
+    return `/api/students/${studentId}/documents/${documentId}/open`;
+  }
+  return storagePath;
+}
 
 export function TasksDocumentsTab({
   studentId,
@@ -150,6 +164,7 @@ export function TasksDocumentsTab({
   deleteStudentDocumentAction,
   viewerRole,
   canCreateTasks,
+  blobOpensThroughAuthenticatedApi,
 }: TasksDocumentsTabProps) {
   return (
     <>
@@ -409,7 +424,12 @@ export function TasksDocumentsTab({
                                         ) : null}
                                       </div>
                                       <a
-                                        href={prev.storagePath}
+                                        href={documentOpenHref(
+                                          studentId,
+                                          prev.id,
+                                          prev.storagePath,
+                                          blobOpensThroughAuthenticatedApi,
+                                        )}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className="shrink-0 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
@@ -425,7 +445,12 @@ export function TasksDocumentsTab({
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
                           <a
-                            href={doc.storagePath}
+                            href={documentOpenHref(
+                              studentId,
+                              doc.id,
+                              doc.storagePath,
+                              blobOpensThroughAuthenticatedApi,
+                            )}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"

@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { getBlobStoreAccess } from "@/lib/blob-access";
+
 import {
   BlobAccessError,
   BlobClientTokenExpiredError,
@@ -73,6 +75,12 @@ export function blobUploadFailureQueryKey(error: unknown): string | null {
 
 export function studentDocumentUploadErrorParam(error: unknown): string {
   if (error instanceof StorageNotConfiguredError) return "blob-token";
+  if (error instanceof Error) {
+    const msg = error.message;
+    if (msg.includes("private store") && msg.includes("public access")) {
+      return "blob-store-access-mismatch";
+    }
+  }
   return blobUploadFailureQueryKey(error) ?? "generic";
 }
 
@@ -88,8 +96,9 @@ export async function uploadBufferToStorage({
   localRelativePath: string;
 }) {
   if (hasBlobToken()) {
+    const access = getBlobStoreAccess();
     const uploaded = await put(blobPath, buffer, {
-      access: "public",
+      access,
       contentType: mimeType,
       token: process.env.BLOB_READ_WRITE_TOKEN?.trim(),
       addRandomSuffix: false,

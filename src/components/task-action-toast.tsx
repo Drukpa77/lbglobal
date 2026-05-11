@@ -13,6 +13,8 @@ const TASK_ERROR_MESSAGES: Record<string, string> = {
 };
 
 const DOCUMENT_UPLOAD_MESSAGES: Record<string, string> = {
+  "blob-store-access-mismatch":
+    "Your Vercel Blob store is set to private, but the app was uploading as public. Add BLOB_STORE_ACCESS=private to your Vercel environment variables (same scope as BLOB_READ_WRITE_TOKEN), redeploy, then try again. Alternatively, switch the Blob store to public in Vercel Storage if you do not need private blobs.",
   "blob-token":
     "The app did not see BLOB_READ_WRITE_TOKEN on this deployment. In Vercel → Project → Settings → Environment Variables: add the exact name BLOB_READ_WRITE_TOKEN (read/write token from Storage → Blob), enable it for Production, then redeploy.",
   "blob-auth":

@@ -32,6 +32,7 @@ import { TaskActionToast } from "@/components/task-action-toast";
 import { AuditTab } from "@/app/dashboard/students/[studentId]/tabs/audit-tab";
 import { TasksDocumentsTab } from "@/app/dashboard/students/[studentId]/tabs/tasks-documents-tab";
 import { auth } from "@/auth";
+import { blobOpensThroughAuthenticatedApi } from "@/lib/blob-access";
 import { getContributions } from "@/lib/contributions";
 import { calculateInvoiceTotals, normalizeInvoiceItems } from "@/lib/invoice-calculator";
 import { prisma } from "@/lib/prisma";
@@ -1390,6 +1391,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
             deleteStudentDocumentAction={deleteStudentDocumentAction}
             viewerRole={session.user.role as "ADMIN" | "SUB_ADMIN" | "INTERNAL_STAFF"}
             canCreateTasks={canCreateTasks}
+            blobOpensThroughAuthenticatedApi={blobOpensThroughAuthenticatedApi()}
           />
         </>
       )}
