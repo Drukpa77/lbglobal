@@ -26,7 +26,7 @@ Next.js platform for students applying to Australia with two access levels:
 1. Copy environment variables:
 
 ```bash
-copy .env.example .env
+copy .env.example .env // dont really have to do this
 ```
 
 2. Update `DATABASE_URL` and `AUTH_SECRET` in `.env`.
