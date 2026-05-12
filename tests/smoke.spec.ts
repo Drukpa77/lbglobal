@@ -10,12 +10,11 @@ test.describe("public smoke", () => {
     await expect(page.getByRole("link", { name: "Sign in" }).first()).toBeVisible();
   });
 
-  test("login page exposes the form and seeded credential hints", async ({ page }) => {
+  test("login page exposes the form", async ({ page }) => {
     await page.goto("/login");
     await expect(page.getByRole("heading", { name: "Sign in to dashboard" })).toBeVisible();
     await expect(page.getByLabel("Email")).toBeVisible();
     await expect(page.getByLabel("Password")).toBeVisible();
-    await expect(page.getByText("Seed users")).toBeVisible();
   });
 
   test("apply page renders the inquiry form", async ({ page }) => {
