@@ -1,4 +1,6 @@
 import { DeleteWithConfirm } from "@/components/delete-with-confirm";
+import { FileSizeLimitedForm } from "@/components/file-size-limited-form";
+import { MAX_STUDENT_DOCUMENT_UPLOAD_MB } from "@/lib/upload-limits";
 
 type TaskRow = {
   id: string;
@@ -132,7 +134,21 @@ type TasksDocumentsTabProps = {
   deleteStudentDocumentAction: (formData: FormData) => Promise<void>;
   viewerRole: "ADMIN" | "SUB_ADMIN" | "INTERNAL_STAFF";
   canCreateTasks: boolean;
+  /** When true, HTTPS blob links use the authenticated API proxy (private Blob stores). */
+  blobOpensThroughAuthenticatedApi: boolean;
 };
+
+function documentOpenHref(
+  studentId: string,
+  documentId: string,
+  storagePath: string,
+  throughApi: boolean,
+): string {
+  if (throughApi && /^https?:\/\//i.test(storagePath)) {
+    return `/api/students/${studentId}/documents/${documentId}/open`;
+  }
+  return storagePath;
+}
 
 export function TasksDocumentsTab({
   studentId,
@@ -148,6 +164,7 @@ export function TasksDocumentsTab({
   deleteStudentDocumentAction,
   viewerRole,
   canCreateTasks,
+  blobOpensThroughAuthenticatedApi,
 }: TasksDocumentsTabProps) {
   return (
     <>
@@ -272,7 +289,13 @@ export function TasksDocumentsTab({
 
       <section className="scroll-mt-24 rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">Documents</h2>
-        <form action={uploadStudentDocumentAction} className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <p className="mt-1 text-sm text-slate-600">
+          PDF or image, up to about {MAX_STUDENT_DOCUMENT_UPLOAD_MB} MB per file (hosted upload limit).
+        </p>
+        <FileSizeLimitedForm
+          action={uploadStudentDocumentAction}
+          className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+        >
           <input type="hidden" name="studentId" value={studentId} />
           <input
             name="title"
@@ -304,7 +327,7 @@ export function TasksDocumentsTab({
           >
             Upload
           </button>
-        </form>
+        </FileSizeLimitedForm>
         {documents.length === 0 ? (
           <p className="mt-4 text-base text-slate-600">No documents uploaded yet.</p>
         ) : (
@@ -401,7 +424,12 @@ export function TasksDocumentsTab({
                                         ) : null}
                                       </div>
                                       <a
-                                        href={prev.storagePath}
+                                        href={documentOpenHref(
+                                          studentId,
+                                          prev.id,
+                                          prev.storagePath,
+                                          blobOpensThroughAuthenticatedApi,
+                                        )}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className="shrink-0 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
@@ -417,7 +445,12 @@ export function TasksDocumentsTab({
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
                           <a
-                            href={doc.storagePath}
+                            href={documentOpenHref(
+                              studentId,
+                              doc.id,
+                              doc.storagePath,
+                              blobOpensThroughAuthenticatedApi,
+                            )}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
@@ -485,7 +518,7 @@ export function TasksDocumentsTab({
                           !doc.returnResolvedAt &&
                           doc.returnedBy && (
                             <>
-                              <form
+                              <FileSizeLimitedForm
                                 action={uploadReplacementDocumentAction}
                                 className="flex flex-wrap items-center gap-2"
                               >
@@ -509,7 +542,7 @@ export function TasksDocumentsTab({
                                 >
                                   Upload Replacement
                                 </button>
-                              </form>
+                              </FileSizeLimitedForm>
                               <form
                                 action={disputeStudentDocumentReturnAction}
                                 className="flex flex-wrap items-center gap-2"

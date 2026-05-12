@@ -13,16 +13,17 @@ export async function GET() {
     return NextResponse.json({ actionRequiredCount: 0, groups: [] }, { status: 200 });
   }
 
-  const notifications = await prisma.workflowNotification.findMany({
-    where: { recipientId: session.user.id },
-    include: {
-      studentProfile: {
-        select: { user: { select: { id: true, name: true, email: true } } },
+  try {
+    const notifications = await prisma.workflowNotification.findMany({
+      where: { recipientId: session.user.id },
+      include: {
+        studentProfile: {
+          select: { user: { select: { id: true, name: true, email: true } } },
+        },
       },
-    },
-    orderBy: [{ readAt: "asc" }, { createdAt: "desc" }],
-    take: 80,
-  });
+      orderBy: [{ readAt: "asc" }, { createdAt: "desc" }],
+      take: 80,
+    });
 
   const actionRequiredCount = notifications.filter((item) => !item.readAt && item.actionRequired).length;
   const groupsMap = new Map<
@@ -46,8 +47,11 @@ export async function GET() {
   >();
 
   for (const notification of notifications) {
-    const studentId = notification.studentProfile.user.id;
-    const studentName = notification.studentProfile.user.name ?? notification.studentProfile.user.email;
+    const user = notification.studentProfile?.user;
+    if (!user) continue;
+
+    const studentId = user.id;
+    const studentName = user.name ?? user.email;
     const group = groupsMap.get(studentId) ?? {
       studentId,
       studentName,
@@ -69,7 +73,11 @@ export async function GET() {
     groupsMap.set(studentId, group);
   }
 
-  const groups = Array.from(groupsMap.values());
+    const groups = Array.from(groupsMap.values());
 
-  return NextResponse.json({ actionRequiredCount, groups }, { status: 200 });
+    return NextResponse.json({ actionRequiredCount, groups }, { status: 200 });
+  } catch (error) {
+    console.error("GET /api/notifications/workflow", error);
+    return NextResponse.json({ actionRequiredCount: 0, groups: [] }, { status: 200 });
+  }
 }

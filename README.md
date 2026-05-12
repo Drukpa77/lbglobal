@@ -29,7 +29,14 @@ Next.js platform for students applying to Australia with two access levels:
 copy .env.example .env // dont really have to do this
 ```
 
-2. Update `DATABASE_URL` and `AUTH_SECRET` in `.env`.
+2. Update `DATABASE_URL`, `AUTH_SECRET`, and Blob settings in `.env`.
+
+For student document uploads on a private Vercel Blob store, set:
+
+```bash
+BLOB_READ_WRITE_TOKEN="vercel_blob_rw_..."
+BLOB_STORE_ACCESS="private"
+```
 
 3. Generate Prisma client and push schema:
 
