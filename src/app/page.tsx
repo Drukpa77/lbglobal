@@ -9,6 +9,9 @@ const siteDescription =
   "Premium overseas education and visa support from inquiry to enrollment.";
 const siteUrl = "https://lbglobal.com";
 
+// Rebuild the homepage at most once per hour; serve cached HTML instantly to all other visitors
+export const revalidate = 3600;
+
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"),
   title: `${siteName} | Overseas Education & Visa`,
@@ -52,7 +55,7 @@ async function getHomePosts(): Promise<HomePostItem[]> {
         metaDescription: true,
       },
       orderBy: { publishDate: "desc" },
-      take: 8,
+      take: 3,
     });
 
     return posts.map((post) => ({

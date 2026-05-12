@@ -90,14 +90,14 @@ export function ContactSection() {
                     </p>
                     <a
                       href={`tel:${office.phone.replace(/\s/g, "")}`}
-                      className="flex items-center gap-2 text-sm text-slate-600 transition hover:text-[#0e2558]"
+                      className="flex items-center gap-2 text-sm text-slate-600 transition hover:text-blue-900"
                     >
                       <Phone className="h-4 w-4 shrink-0 text-rose-500" />
                       {office.phone}
                     </a>
                     <a
                       href={`mailto:${office.email}`}
-                      className="flex items-center gap-2 text-sm text-orange-500 transition hover:text-orange-600"
+                      className="flex items-center gap-2 text-sm text-rose-500 transition hover:text-rose-600"
                     >
                       <Mail className="h-4 w-4 shrink-0 text-rose-500" />
                       {office.email}

@@ -1,5 +1,3 @@
-"use client";
-
 import dynamic from "next/dynamic";
 import type { HomePostItem } from "@/components/home/types";
 import { HomeNav } from "@/components/home/home-nav";
