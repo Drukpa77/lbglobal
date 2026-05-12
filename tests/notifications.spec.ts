@@ -46,7 +46,10 @@ test.describe("apply -> bell + new inquiries card", () => {
     await expect(bell).toBeVisible();
     await bell.click();
     await expect(staffPage.getByText("Notifications", { exact: true })).toBeVisible();
-    await expect(staffPage.getByText(applicantName)).toBeVisible();
+    // Bell dropdown and overview both mention the applicant; scope to the panel
+    // adjacent to the bell (button + dropdown div) to satisfy strict mode.
+    const bellDropdown = bell.locator("+ div");
+    await expect(bellDropdown.getByText(applicantName, { exact: true })).toBeVisible();
 
     // Toggle the bell shut so its absolute-positioned dropdown can't intercept
     // pointer events on the New Inquiries card below. The component has no
