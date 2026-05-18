@@ -586,6 +586,51 @@ export default async function StudentProfileManagementPage(props: { params: Para
               className="mt-1.5 w-full rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
             />
           </Field>
+          <Field label="Current Address" className="sm:col-span-2">
+            <textarea
+              name="currentAddress"
+              defaultValue={student.studentProfile?.currentAddress ?? ""}
+              rows={3}
+              className="mt-1.5 w-full rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+            />
+          </Field>
+          <div className="sm:col-span-2">
+            <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-500">
+              Emergency Contact Details
+            </h3>
+          </div>
+          <Field label="Emergency Contact Full Name">
+            <input
+              type="text"
+              name="emergencyContactName"
+              defaultValue={student.studentProfile?.emergencyContactName ?? ""}
+              className="mt-1.5 w-full rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+            />
+          </Field>
+          <Field label="Emergency Contact Email Address">
+            <input
+              type="email"
+              name="emergencyContactEmail"
+              defaultValue={student.studentProfile?.emergencyContactEmail ?? ""}
+              className="mt-1.5 w-full rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+            />
+          </Field>
+          <Field label="Emergency Contact Phone Number">
+            <input
+              type="text"
+              name="emergencyContactPhone"
+              defaultValue={student.studentProfile?.emergencyContactPhone ?? ""}
+              className="mt-1.5 w-full rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+            />
+          </Field>
+          <Field label="Emergency Contact Residential Address" className="sm:col-span-2">
+            <textarea
+              name="emergencyContactAddress"
+              defaultValue={student.studentProfile?.emergencyContactAddress ?? ""}
+              rows={3}
+              className="mt-1.5 w-full rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+            />
+          </Field>
           <Field label="Current Education Level">
             <input
               type="text"
@@ -1628,12 +1673,14 @@ export default async function StudentProfileManagementPage(props: { params: Para
 function Field({
   label,
   children,
+  className = "",
 }: {
   label: string;
   children: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <label className="block">
+    <label className={`block ${className}`}>
       <span className="text-sm font-medium text-slate-700">{label}</span>
       {children}
     </label>
@@ -1895,6 +1942,11 @@ async function saveStudentProfileAction(formData: FormData) {
       phone: nullableText(formData.get("phone")),
       city: nullableText(formData.get("city")),
       nationality: nullableText(formData.get("nationality")),
+      currentAddress: nullableText(formData.get("currentAddress")),
+      emergencyContactName: nullableText(formData.get("emergencyContactName")),
+      emergencyContactEmail: nullableText(formData.get("emergencyContactEmail")),
+      emergencyContactPhone: nullableText(formData.get("emergencyContactPhone")),
+      emergencyContactAddress: nullableText(formData.get("emergencyContactAddress")),
       currentEducationLevel: nullableText(formData.get("currentEducationLevel")),
       targetCourse: nullableText(formData.get("targetCourse")),
       preferredIntake: nullableText(formData.get("preferredIntake")),
@@ -1913,6 +1965,11 @@ async function saveStudentProfileAction(formData: FormData) {
       phone: nullableText(formData.get("phone")),
       city: nullableText(formData.get("city")),
       nationality: nullableText(formData.get("nationality")),
+      currentAddress: nullableText(formData.get("currentAddress")),
+      emergencyContactName: nullableText(formData.get("emergencyContactName")),
+      emergencyContactEmail: nullableText(formData.get("emergencyContactEmail")),
+      emergencyContactPhone: nullableText(formData.get("emergencyContactPhone")),
+      emergencyContactAddress: nullableText(formData.get("emergencyContactAddress")),
       currentEducationLevel: nullableText(formData.get("currentEducationLevel")),
       targetCourse: nullableText(formData.get("targetCourse")),
       preferredIntake: nullableText(formData.get("preferredIntake")),

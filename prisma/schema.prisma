@@ -248,7 +248,12 @@ model StudentProfile {
   dateOfBirth           DateTime?
   nationality           String?
   city                  String?
+  currentAddress        String?  @db.Text
   phone                 String?
+  emergencyContactName  String?
+  emergencyContactEmail String?
+  emergencyContactPhone String?
+  emergencyContactAddress String? @db.Text
   currentEducationLevel String?
   targetCourse          String?
   preferredIntake       String?
