@@ -1,0 +1,163 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+2 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+3 0 obj
+<< /Length 3255 >>
+stream
+BT /F2 24 Tf 54 760 Td (L&B Global CRM Security Review) Tj ET
+BT /F1 10 Tf 54 728 Td (Prepared for developer handoff | Production security review | May 11, 2026) Tj ET
+BT /F2 17 Tf 54 683 Td (Executive Summary) Tj ET
+BT /F1 10.5 Tf 54 659 Td (This review focused on practical production security for the L&B Global CRM:) Tj ET
+BT /F1 10.5 Tf 54 645.5 Td (authentication, authorization, student document handling, public forms, exports,) Tj ET
+BT /F1 10.5 Tf 54 632 Td (deployment configuration, and common web security controls.) Tj ET
+BT /F1 10.5 Tf 54 610.5 Td (The application has a solid baseline: role-based access checks are present across) Tj ET
+BT /F1 10.5 Tf 54 597 Td (dashboard routes, Prisma is used for database access, sensitive environment files are) Tj ET
+BT /F1 10.5 Tf 54 583.5 Td (ignored by git, and private Vercel Blob support is implemented for student documents.) Tj ET
+BT /F1 10.5 Tf 54 570 Td (The main remaining work is hardening: dependency upgrades, security headers, rate) Tj ET
+BT /F1 10.5 Tf 54 556.5 Td (limiting, tighter record-level authorization, and export/document protections.) Tj ET
+BT /F2 17 Tf 54 519 Td (Priority Findings) Tj ET
+BT /F2 13 Tf 54 485 Td (1. Upgrade Vulnerable Dependencies - Critical) Tj ET
+BT /F1 10.5 Tf 54 465 Td (npm audit --omit=dev reported high severity advisories affecting Next.js and related) Tj ET
+BT /F1 10.5 Tf 54 451.5 Td (dependencies. The Next.js advisories include Server Actions CSRF bypass and multiple) Tj ET
+BT /F1 10.5 Tf 54 438 Td (denial-of-service issues. Current dependency observed: next@16.1.6. Audit suggested) Tj ET
+BT /F1 10.5 Tf 54 424.5 Td (moving to a patched release such as next@16.2.6.) Tj ET
+BT /F1 10.5 Tf 54 403 Td (Recommendation: upgrade Next.js and Prisma-related packages, run npm audit again, then) Tj ET
+BT /F1 10.5 Tf 54 389.5 Td (run typecheck, build, and smoke tests before deployment.) Tj ET
+BT /F2 13 Tf 54 358 Td (2. Add Production Security Headers - High) Tj ET
+BT /F1 10.5 Tf 54 338 Td (next.config.ts currently configures image domains only. The CRM should add security) Tj ET
+BT /F1 10.5 Tf 54 324.5 Td (headers for all routes.) Tj ET
+BT /F1 10.5 Tf 64 303 Td (? Strict-Transport-Security) Tj ET
+BT /F1 10.5 Tf 64 289 Td (? Content-Security-Policy including frame-ancestors) Tj ET
+BT /F1 10.5 Tf 64 275 Td (? X-Content-Type-Options: nosniff) Tj ET
+BT /F1 10.5 Tf 64 261 Td (? Referrer-Policy) Tj ET
+BT /F1 10.5 Tf 64 247 Td (? Permissions-Policy) Tj ET
+BT /F1 10.5 Tf 64 233 Td (? X-Frame-Options if not using frame-ancestors) Tj ET
+BT /F1 10.5 Tf 54 211 Td (Affected file: src/next.config.ts or root next.config.ts depending on project) Tj ET
+BT /F1 10.5 Tf 54 197.5 Td (structure. In this repo, next.config.ts is at the project root.) Tj ET
+BT /F2 13 Tf 54 166 Td (3. Add Rate Limiting - High) Tj ET
+BT /F1 10.5 Tf 54 146 Td (No rate limiting was visible on login, password reset, the public application form, or) Tj ET
+BT /F1 10.5 Tf 54 132.5 Td (chat APIs. These are common abuse targets for credential stuffing, spam, and) Tj ET
+BT /F1 10.5 Tf 54 119 Td (database/email queue exhaustion.) Tj ET
+BT /F1 10.5 Tf 64 97.5 Td (? Login: limit by IP and email.) Tj ET
+BT /F1 10.5 Tf 64 83.5 Td (? Forgot password: limit by IP and email.) Tj ET
+endstream
+endobj
+4 0 obj
+<< /Length 3595 >>
+stream
+BT /F1 10.5 Tf 64 760 Td (? Apply form: limit by IP and optionally by email/phone.) Tj ET
+BT /F1 10.5 Tf 64 746 Td (? Chat message APIs: limit by user/session.) Tj ET
+BT /F1 10.5 Tf 54 724 Td (Recommended implementation: Vercel KV or Upstash Redis with small helper) Tj ET
+BT /F1 10.5 Tf 54 710.5 Td (middleware/server-action guards.) Tj ET
+BT /F2 13 Tf 54 679 Td (4. Cron Route Should Fail Closed - High) Tj ET
+BT /F1 10.5 Tf 54 659 Td (The reminder cron route checks the Authorization header only if CRON_SECRET exists. If) Tj ET
+BT /F1 10.5 Tf 54 645.5 Td (CRON_SECRET is missing in production, the route becomes callable by anyone.) Tj ET
+BT /F1 10.5 Tf 54 624 Td (Affected file: src/app/api/cron/reminders/route.ts. Recommendation: if CRON_SECRET is) Tj ET
+BT /F1 10.5 Tf 54 610.5 Td (missing, return 500 or 401 and do not process the job.) Tj ET
+BT /F2 13 Tf 54 579 Td (5. Tighten Record-Level Access for Contracts and Invoices - High) Tj ET
+BT /F1 10.5 Tf 54 559 Td (Contract and invoice preview pages allow any ADMIN, SUB_ADMIN, or INTERNAL_STAFF to) Tj ET
+BT /F1 10.5 Tf 54 545.5 Td (access records by ID. For CRM data, role-level access is not enough. Internal staff) Tj ET
+BT /F1 10.5 Tf 54 532 Td (should only access assigned students. Sub-admins should follow their) Tj ET
+BT /F1 10.5 Tf 54 518.5 Td (assigned/unassigned queue rules.) Tj ET
+BT /F1 10.5 Tf 54 497 Td (Affected files: src/app/dashboard/contracts/[contractId]/preview/page.tsx and) Tj ET
+BT /F1 10.5 Tf 54 483.5 Td (src/app/dashboard/invoices/[invoiceId]/preview/page.tsx.) Tj ET
+BT /F1 10.5 Tf 54 462 Td (Recommendation: add a shared canAccessStudentProfile\(user, studentProfileId\) helper) Tj ET
+BT /F1 10.5 Tf 54 448.5 Td (and use it before viewing, editing, sending, marking paid, or deleting records.) Tj ET
+BT /F2 13 Tf 54 417 Td (6. Protect CSV Exports Against Formula Injection - Medium) Tj ET
+BT /F1 10.5 Tf 54 397 Td (CSV values are quoted, but spreadsheet apps can still execute cells beginning with =,) Tj ET
+BT /F1 10.5 Tf 54 383.5 Td (+, -, or @. Student-provided values such as name, city, course, notes, or source) Tj ET
+BT /F1 10.5 Tf 54 370 Td (fields can become formulas when opened in Excel or Google Sheets.) Tj ET
+BT /F1 10.5 Tf 54 348.5 Td (Affected files include src/app/api/submissions/export/route.ts,) Tj ET
+BT /F1 10.5 Tf 54 335 Td (src/app/api/sub-admin/report/route.ts, and src/app/api/internal-staff/report/route.ts.) Tj ET
+BT /F1 10.5 Tf 54 313.5 Td (Recommendation: update csvCell to prefix risky values with an apostrophe before) Tj ET
+BT /F1 10.5 Tf 54 300 Td (escaping.) Tj ET
+BT /F2 13 Tf 54 268.5 Td (7. Keep Student Documents Out of Public Storage - Medium) Tj ET
+BT /F1 10.5 Tf 54 248.5 Td (Production should use private Vercel Blob for student documents. The fallback storage) Tj ET
+BT /F1 10.5 Tf 54 235 Td (path writes to public/student-docs for local development. Those files are ignored by) Tj ET
+BT /F1 10.5 Tf 54 221.5 Td (git, which is good, but production should fail closed if Blob is not configured.) Tj ET
+BT /F1 10.5 Tf 54 200 Td (Affected file: src/lib/storage.ts. Recommendation: keep BLOB_READ_WRITE_TOKEN and) Tj ET
+BT /F1 10.5 Tf 54 186.5 Td (BLOB_STORE_ACCESS=private in Vercel, and avoid public fallback outside local) Tj ET
+BT /F1 10.5 Tf 54 173 Td (development.) Tj ET
+BT /F2 17 Tf 54 135.5 Td (Recommended CRM Security Features) Tj ET
+BT /F1 10.5 Tf 64 111.5 Td (? Require MFA for ADMIN, SUB_ADMIN, and INTERNAL_STAFF accounts.) Tj ET
+BT /F1 10.5 Tf 64 97.5 Td (? Use a stronger staff password policy: 12+ characters and common-password blocking.) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Length 3228 >>
+stream
+BT /F1 10.5 Tf 64 760 Td (? Log sensitive actions: document access/download, contract/invoice send/delete,) Tj ET
+BT /F1 10.5 Tf 74 746 Td (  password resets, staff changes.) Tj ET
+BT /F1 10.5 Tf 64 732 Td (? Add account lockout or progressive delay after repeated login failures.) Tj ET
+BT /F1 10.5 Tf 64 718 Td (? Review all staff permissions quarterly.) Tj ET
+BT /F1 10.5 Tf 64 704 Td (? Preserve Google Workspace SPF, DKIM, and DMARC records after DNS migration.) Tj ET
+BT /F1 10.5 Tf 64 690 Td (? Use private Blob storage for documents and authenticated app routes for file) Tj ET
+BT /F1 10.5 Tf 74 676 Td (  access.) Tj ET
+BT /F1 10.5 Tf 64 662 Td (? Back up the database and test restore procedures.) Tj ET
+BT /F1 10.5 Tf 64 648 Td (? Create a staff offboarding checklist to disable accounts immediately.) Tj ET
+BT /F2 17 Tf 54 610 Td (Suggested Fix Order) Tj ET
+BT /F1 10.5 Tf 64 586 Td (1. Upgrade Next.js and vulnerable dependencies.) Tj ET
+BT /F1 10.5 Tf 64 572 Td (2. Add security headers in next.config.ts.) Tj ET
+BT /F1 10.5 Tf 64 558 Td (3. Make the cron endpoint fail closed when CRON_SECRET is missing.) Tj ET
+BT /F1 10.5 Tf 64 544 Td (4. Add rate limiting to login, reset password, apply form, and chat endpoints.) Tj ET
+BT /F1 10.5 Tf 64 530 Td (5. Add shared record-level authorization for student-linked contracts and invoices.) Tj ET
+BT /F1 10.5 Tf 64 516 Td (6. Harden CSV exports against formula injection.) Tj ET
+BT /F1 10.5 Tf 64 502 Td (7. Enforce MFA and stronger password policy for staff.) Tj ET
+BT /F1 10.5 Tf 64 488 Td (8. Confirm SPF, DKIM, and DMARC records are present for lbglobal.com.au.) Tj ET
+BT /F2 17 Tf 54 450 Td (Validation Checklist for Developers) Tj ET
+BT /F1 10.5 Tf 64 426 Td (? npm audit --omit=dev returns no high severity production issues or has documented) Tj ET
+BT /F1 10.5 Tf 74 412 Td (  exceptions.) Tj ET
+BT /F1 10.5 Tf 64 398 Td (? npm run typecheck passes.) Tj ET
+BT /F1 10.5 Tf 64 384 Td (? npm run build passes.) Tj ET
+BT /F1 10.5 Tf 64 370 Td (? Unauthenticated users cannot access dashboard, API, document, report, invoice, or) Tj ET
+BT /F1 10.5 Tf 74 356 Td (  contract routes.) Tj ET
+BT /F1 10.5 Tf 64 342 Td (? Internal staff cannot access records for unassigned students.) Tj ET
+BT /F1 10.5 Tf 64 328 Td (? CSV exports open safely in Excel/Sheets without formula execution.) Tj ET
+BT /F1 10.5 Tf 64 314 Td (? Student document URLs require authentication when Blob store is private.) Tj ET
+BT /F1 10.5 Tf 64 300 Td (? Cron route rejects missing or incorrect Authorization header.) Tj ET
+BT /F1 10.5 Tf 64 286 Td (? Security headers are visible in production response headers.) Tj ET
+BT /F2 17 Tf 54 248 Td (Overall Assessment) Tj ET
+BT /F1 10.5 Tf 54 224 Td (The CRM is close to a reasonable production baseline, but it should not be treated as) Tj ET
+BT /F1 10.5 Tf 54 210.5 Td (fully hardened until the dependency, rate limiting, headers, cron, and record-level) Tj ET
+BT /F1 10.5 Tf 54 197 Td (authorization issues are addressed. The strongest immediate wins are upgrading) Tj ET
+BT /F1 10.5 Tf 54 183.5 Td (Next.js, adding headers, and closing the authorization gaps around student-linked) Tj ET
+BT /F1 10.5 Tf 54 170 Td (financial/contract records.) Tj ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 9 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 3 0 R >>
+endobj
+7 0 obj
+<< /Type /Page /Parent 9 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 4 0 R >>
+endobj
+8 0 obj
+<< /Type /Page /Parent 9 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 5 0 R >>
+endobj
+9 0 obj
+<< /Type /Pages /Kids [6 0 R 7 0 R 8 0 R] /Count 3 >>
+endobj
+10 0 obj
+<< /Type /Catalog /Pages 9 0 R >>
+endobj
+xref
+0 11
+0000000000 65535 f 
+0000000009 00000 n 
+0000000079 00000 n 
+0000000154 00000 n 
+0000003460 00000 n 
+0000007106 00000 n 
+0000010385 00000 n 
+0000010521 00000 n 
+0000010657 00000 n 
+0000010793 00000 n 
+0000010862 00000 n 
+trailer
+<< /Size 11 /Root 10 0 R >>
+startxref
+10912
+%%EOF

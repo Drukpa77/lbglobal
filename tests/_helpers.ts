@@ -28,18 +28,21 @@ const accounts: Record<
 // redirect lands on the role's expected dashboard path.
 export async function loginAs(page: Page, role: RoleAccount) {
   const { email, password, dashboardPath } = accounts[role];
+  const loginTimeout = process.env.CI ? 25_000 : 15_000;
   await page.goto("/login");
+  await page.getByLabel("Email").waitFor({ state: "visible" });
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL(dashboardPath, { timeout: 15_000 });
+  await page.waitForURL(dashboardPath, { timeout: loginTimeout });
 }
 
-// Switch tabs on the dashboard tab bar by visible label. Falls back to the
-// pushed query string so the test still works if the bar swaps to client-side
-// navigation.
+// Switch tabs on the dashboard tab bar by visible label. Tab links include a
+// numeric badge in the DOM, so the accessible name is e.g. "Students 12", not
+// "Students"; match on a prefix of the accessible name instead of exact text.
 export async function openDashboardTab(page: Page, label: string) {
-  const link = page.getByRole("link", { name: label, exact: true });
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const link = page.getByRole("link", { name: new RegExp(`^${escaped}`) });
   await expect(link).toBeVisible();
   await link.click();
   await page.waitForLoadState("networkidle");

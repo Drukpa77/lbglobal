@@ -110,13 +110,6 @@ export default async function LoginPage(props: { searchParams: SearchParams }) {
                 </Link>
               </p>
             </div>
-
-            <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
-              <p className="font-semibold">Seed users</p>
-              <p className="mt-1">Admin: admin@lbglobal.test / AdminPass123!</p>
-              <p>Sub Admin: agent@lbglobal.test / AgentPass123!</p>
-              <p>Internal Staff: staff@lbglobal.test / StaffPass123!</p>
-            </div>
           </section>
         </div>
       </div>

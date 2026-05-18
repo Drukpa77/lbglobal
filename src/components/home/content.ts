@@ -1,16 +1,15 @@
 export const homeNavLinks = [
-  { href: "#proof", label: "Results" },
-  { href: "#process", label: "How It Works" },
   { href: "#services", label: "Services" },
   { href: "#about", label: "About" },
   { href: "#destinations", label: "Destinations" },
+  { href: "#testimonials", label: "Testimonials" },
   { href: "#contact", label: "Contact" },
 ] as const;
 
 export const heroData = {
   eyebrow: "Admissions + Visa Execution",
-  title: "From Inquiry to Visa,",
-  titleHighlight: "With a Clear Plan and Real Support",
+  title: "Making Your Study Abroad",
+  titleHighlight: "Journey a Success Story",
   subtitle:
     "We help students choose the right course, prepare stronger applications, and move through visa steps with confidence and practical timelines.",
   primaryCta: { href: "/apply", label: "Book Free Assessment" },
@@ -18,9 +17,10 @@ export const heroData = {
 };
 
 export const trustStats = [
-  { label: "Student Cases Managed", value: "1000+" },
-  { label: "Offer + Visa Workflow", value: "Structured" },
-  { label: "Response Window", value: "1-2 Business Days" },
+  { label: "Students Guided", value: "1,000+" },
+  { label: "Visa Success Rate", value: "95%+" },
+  { label: "Country Offices", value: "2" },
+  { label: "Response Window", value: "1–2 Days" },
 ] as const;
 
 export const featureBullets = [
@@ -62,29 +62,75 @@ export const processSteps = [
 
 export const services = [
   {
-    title: "Course & Country Strategy",
-    description: "Mapped options by profile, goals, budget, and visa probability.",
+    title: "Student Admission",
+    description:
+      "Full guidance from course selection and institution matching to offer letter receipt.",
   },
   {
-    title: "Documentation & SOP",
-    description: "Structured SOP, recommendations, and complete file quality checks.",
+    title: "Visa Application",
+    description:
+      "End-to-end student visa support with documentation, compliance, and timeline planning.",
   },
   {
-    title: "Visa & Pre-departure",
-    description: "Interview simulation, compliance prep, and travel readiness support.",
+    title: "Health Insurance",
+    description:
+      "OSHC and health cover setup for international students studying abroad.",
+  },
+  {
+    title: "PTE / IELTS Preparation",
+    description:
+      "Structured language test preparation with experienced coaches and practice resources.",
+  },
+  {
+    title: "Student Accommodation",
+    description:
+      "Guidance on finding safe, affordable, and convenient housing near your institution.",
+  },
+  {
+    title: "Skills Assessment",
+    description:
+      "Professional qualification assessments and recognition for further study pathways.",
   },
 ] as const;
 
 export const destinations = [
   {
     country: "Australia",
+    flag: "🇦🇺",
     description:
-      "Globally recognized qualifications, lifestyle benefits, and strong outcomes.",
+      "Globally recognised qualifications, post-study work rights, and strong graduate outcomes.",
+    highlights: ["Top-ranked universities", "Post-study work visa", "Multicultural society"],
   },
   {
     country: "Canada",
+    flag: "🇨🇦",
     description:
-      "High quality education ecosystem with excellent student support pathways.",
+      "High quality education ecosystem with excellent student support and permanent residency pathways.",
+    highlights: ["World-class institutions", "PR pathway options", "Safe and inclusive"],
+  },
+] as const;
+
+export const testimonials = [
+  {
+    name: "Tenzin D.",
+    location: "Bhutan → Australia",
+    quote:
+      "L&B Global made my study abroad journey completely stress-free. From course selection to visa approval, they handled everything with incredible care and professionalism.",
+    rating: 5,
+  },
+  {
+    name: "Karma W.",
+    location: "Bhutan → Canada",
+    quote:
+      "The team was always available to answer my questions. My student visa was approved without issues thanks to their thorough preparation and support.",
+    rating: 5,
+  },
+  {
+    name: "Sonam P.",
+    location: "Bhutan → Australia",
+    quote:
+      "Professional, honest, and genuinely supportive. I would not have gotten into my first-choice university without their guidance. Highly recommend L&B Global.",
+    rating: 5,
   },
 ] as const;
 
@@ -103,3 +149,10 @@ export const offices = [
   },
 ] as const;
 
+export const accreditations = [
+  "QEAC Certified",
+  "PIER Registered",
+  "Student Visa Specialists",
+  "Partner Institutions",
+  "Licensed Consultants",
+] as const;
