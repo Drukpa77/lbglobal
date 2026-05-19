@@ -1,6 +1,8 @@
 import Image from "next/image";
 import Link from "next/link";
 
+import { WHATSAPP_MOBILE_DISPLAY, WHATSAPP_URL } from "@/lib/contact";
+
 const studentServices = [
   "Student Admission",
   "Visa Application",
@@ -50,7 +52,7 @@ export function FooterSection() {
               Offices in Thimphu, Bhutan and Perth, Australia.
             </p>
             <a
-              href="https://wa.me/97577781399"
+              href={WHATSAPP_URL}
               target="_blank"
               rel="noopener noreferrer"
               className="mt-5 inline-flex items-center gap-2 rounded bg-[#25D366] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#20bd5a]"
@@ -118,7 +120,14 @@ export function FooterSection() {
             {/* Contact mini */}
             <div className="mt-6 space-y-1.5 border-t border-white/10 pt-5">
               <p className="text-xs text-blue-300">+975 7778 1399</p>
-              <p className="text-xs text-blue-300">+61 451 106 077</p>
+              <a
+                href={WHATSAPP_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block text-xs text-blue-300 hover:text-white"
+              >
+                {WHATSAPP_MOBILE_DISPLAY} (WhatsApp)
+              </a>
               <a
                 href="mailto:student@lbglobal.com"
                 className="block text-xs text-rose-400 hover:text-rose-300"

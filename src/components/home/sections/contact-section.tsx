@@ -1,6 +1,8 @@
 import { Mail, MapPin, Phone } from "lucide-react";
 
+import { ContactForm } from "@/components/home/contact-form";
 import { offices } from "@/components/home/content";
+import { WHATSAPP_URL } from "@/lib/contact";
 import { SectionReveal } from "@/components/home/section-reveal";
 
 export function ContactSection() {
@@ -22,61 +24,12 @@ export function ContactSection() {
         </SectionReveal>
 
         <div className="mt-12 grid gap-8 lg:grid-cols-3">
-          {/* Contact form */}
           <div className="lg:col-span-2">
-          <SectionReveal>
-            <form className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
-              <h3 className="mb-5 text-lg font-bold text-blue-900">Send Us a Message</h3>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="mb-1.5 block text-xs font-semibold text-slate-700">
-                    Your Name
-                  </label>
-                  <input
-                  className="w-full rounded border border-slate-300 px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-                  placeholder="e.g. Tenzin Dorji"
-                />
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-xs font-semibold text-slate-700">
-                    Email Address
-                  </label>
-                  <input
-                    type="email"
-                    className="w-full rounded border border-slate-300 px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-                    placeholder="you@email.com"
-                  />
-                </div>
-              </div>
-              <div className="mt-4">
-                <label className="mb-1.5 block text-xs font-semibold text-slate-700">
-                  Subject
-                </label>
-                <input
-                  className="w-full rounded border border-slate-300 px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-                  placeholder="e.g. Student visa inquiry"
-                />
-              </div>
-              <div className="mt-4">
-                <label className="mb-1.5 block text-xs font-semibold text-slate-700">
-                  Message
-                </label>
-                <textarea
-                  className="min-h-32 w-full rounded border border-slate-300 px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-                  placeholder="Tell us about your goals and current situation..."
-                />
-              </div>
-              <button
-                type="button"
-                className="mt-6 rounded bg-gradient-to-r from-rose-500 to-blue-600 px-8 py-3 text-sm font-semibold text-white shadow-sm transition hover:brightness-110"
-              >
-                Send Message
-              </button>
-            </form>
-          </SectionReveal>
+            <SectionReveal>
+              <ContactForm />
+            </SectionReveal>
           </div>
 
-          {/* Office cards */}
           <div className="space-y-4">
             {offices.map((office, index) => (
               <SectionReveal key={office.title} delay={index * 0.07}>
@@ -107,10 +60,9 @@ export function ContactSection() {
               </SectionReveal>
             ))}
 
-            {/* WhatsApp CTA */}
             <SectionReveal delay={0.14}>
               <a
-                href="https://wa.me/97577781399"
+                href={WHATSAPP_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex w-full items-center justify-center gap-2 rounded bg-[#25D366] py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#20bd5a]"

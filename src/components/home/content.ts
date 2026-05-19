@@ -144,7 +144,7 @@ export const offices = [
   {
     title: "Australia Office",
     address: "Perth, WA, Australia",
-    phone: "+61 451 106 077",
+    phone: "0424 919 833",
     email: "student@lbglobal.com",
   },
 ] as const;
