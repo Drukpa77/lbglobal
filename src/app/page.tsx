@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { HomePage } from "@/components/home/home-page";
 import type { HomePostItem } from "@/components/home/types";
+import { JsonLd } from "@/components/json-ld";
 import { prisma } from "@/lib/prisma";
 
 const siteName = "L&B Global";
@@ -88,10 +89,7 @@ export default async function Home() {
   return (
     <>
       <HomePage posts={posts} />
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(webSiteSchema) }}
-      />
+      <JsonLd data={webSiteSchema} />
     </>
   );
 }

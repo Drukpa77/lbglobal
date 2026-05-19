@@ -76,6 +76,14 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     includeUnassignedForSubAdmin: true,
   });
 
+  // Gate queries by tab — only fetch what the active tab actually needs
+  const isOverviewTab = tab === "overview";
+  const isStudentsTab = tab === "students";
+  const isTeamTab = tab === "team";
+  const needsSubmissions = isOverviewTab || isStudentsTab;
+  const needsTeamData = isOverviewTab || isTeamTab;
+  const needsApprovalData = isOverviewTab || isStudentsTab;
+
   const today = new Date();
   const trendWindowStart = new Date(today);
   trendWindowStart.setDate(trendWindowStart.getDate() - 56);
@@ -98,8 +106,8 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     newInquiriesLast24hCount,
   ] =
     await Promise.all([
-      getRemindersForUser(session.user.role as "ADMIN" | "SUB_ADMIN", session.user.id),
-      prisma.questionnaireSubmission.findMany({
+      isOverviewTab ? getRemindersForUser(session.user.role as "ADMIN" | "SUB_ADMIN", session.user.id) : Promise.resolve([]),
+      needsSubmissions ? prisma.questionnaireSubmission.findMany({
         where: scopedWhere,
         include: {
           student: {
@@ -124,8 +132,9 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
         },
         orderBy: { submittedAt: "desc" },
         take: 50,
-      }),
-      prisma.questionnaireSubmission.findMany({
+      }) : Promise.resolve([]),
+      // trendSubmissions (500 rows) only needed for the overview trend chart
+      isOverviewTab ? prisma.questionnaireSubmission.findMany({
         where: {
           ...scopedWhere,
           submittedAt: { gte: trendWindowStart },
@@ -137,24 +146,25 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
         },
         orderBy: { submittedAt: "asc" },
         take: 500,
-      }),
-    prisma.questionnaireSubmission.count({
+      }) : Promise.resolve([]),
+    isOverviewTab ? prisma.questionnaireSubmission.count({
       where: {
         ...scopedWhere,
         status: {
           in: ["SUBMITTED", "UNDER_REVIEW", "DOCS_REQUESTED"],
         },
       },
-    }),
-    prisma.questionnaireSubmission.count({
+    }) : Promise.resolve(0),
+    isOverviewTab ? prisma.questionnaireSubmission.count({
       where: {
         ...scopedWhere,
         status: {
           in: ["OFFER_RECEIVED", "VISA_GRANTED", "ENROLLED"],
         },
       },
-    }),
-    prisma.homePost.findMany({
+    }) : Promise.resolve(0),
+    // homePosts only needed for team tab
+    isTeamTab ? prisma.homePost.findMany({
       where:
         session.user.role === "ADMIN"
           ? undefined
@@ -164,8 +174,8 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
       include: { author: { select: { name: true, email: true } } },
       orderBy: { createdAt: "desc" },
       take: 8,
-    }),
-    prisma.staffTeamMembership.findMany({
+    }) : Promise.resolve([]),
+    needsTeamData ? prisma.staffTeamMembership.findMany({
       where:
         session.user.role === "ADMIN"
           ? undefined
@@ -178,8 +188,8 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
         },
       },
       orderBy: { createdAt: "desc" },
-    }),
-    prisma.studentAssignment.findMany({
+    }) : Promise.resolve([]),
+    isTeamTab ? prisma.studentAssignment.findMany({
       where:
         session.user.role === "ADMIN"
           ? { isActive: true }
@@ -193,8 +203,8 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
       },
       orderBy: { createdAt: "desc" },
       take: 8,
-    }),
-      prisma.task.count({
+    }) : Promise.resolve([]),
+      isOverviewTab ? prisma.task.count({
         where:
           session.user.role === "ADMIN"
             ? { status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] } }
@@ -202,13 +212,14 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                 assignerId: session.user.id,
                 status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] },
               },
-      }),
+      }) : Promise.resolve(0),
       prisma.user.findMany({
         where: { role: "INTERNAL_STAFF" },
         select: { id: true, name: true, email: true },
         orderBy: { name: "asc" },
       }),
-      prisma.studentProfile.groupBy({
+      // stagePipelineCounts only shown in overview
+      isOverviewTab ? prisma.studentProfile.groupBy({
         by: ["caseStage"],
         where:
           session.user.role === "ADMIN"
@@ -226,8 +237,8 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                 },
               },
         _count: { _all: true },
-      }),
-      prisma.questionnaireSubmission.findMany({
+      }) : Promise.resolve([]),
+      isOverviewTab ? prisma.questionnaireSubmission.findMany({
         where: {
           assignedToId: null,
           submittedAt: { gte: sevenDaysAgo },
@@ -241,13 +252,13 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
         },
         orderBy: { submittedAt: "desc" },
         take: 8,
-      }),
-      prisma.questionnaireSubmission.count({
+      }) : Promise.resolve([]),
+      isOverviewTab ? prisma.questionnaireSubmission.count({
         where: {
           assignedToId: null,
           submittedAt: { gte: oneDayAgo },
         },
-      }),
+      }) : Promise.resolve(0),
     ]);
 
   const stageCountMap = new Map<string, number>(
@@ -274,49 +285,50 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     draftInvoiceProfiles,
     pendingDocumentProfiles,
   ] = await Promise.all([
-    prisma.contract.count({
+    needsApprovalData ? prisma.contract.count({
       where: { studentProfileId: { in: studentProfileIds }, status: "DRAFT" },
-    }),
-    prisma.invoice.count({
+    }) : Promise.resolve(0),
+    needsApprovalData ? prisma.invoice.count({
       where: { studentProfileId: { in: studentProfileIds }, status: "DRAFT" },
-    }),
-    prisma.studentDocument.count({
+    }) : Promise.resolve(0),
+    needsApprovalData ? prisma.studentDocument.count({
       where: {
         verificationStatus: "PENDING",
         studentProfileId: { in: studentProfileIds },
       },
-    }),
-    prisma.task.groupBy({
+    }) : Promise.resolve(0),
+    // teamTaskLoad + teamCaseLoad only needed for team tab workload display
+    isTeamTab ? prisma.task.groupBy({
       by: ["assigneeId"],
       where: {
         assigneeId: { in: teamStaffIds },
         status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] },
       },
       _count: { _all: true },
-    }),
-    prisma.studentAssignment.groupBy({
+    }) : Promise.resolve([]),
+    isTeamTab ? prisma.studentAssignment.groupBy({
       by: ["assignedToId"],
       where: {
         isActive: true,
         assignedToId: { in: teamStaffIds },
       },
       _count: { _all: true },
-    }),
-    prisma.contract.findMany({
+    }) : Promise.resolve([]),
+    needsApprovalData ? prisma.contract.findMany({
       where: { studentProfileId: { in: studentProfileIds }, status: "DRAFT" },
       select: { studentProfileId: true },
-    }),
-    prisma.invoice.findMany({
+    }) : Promise.resolve([]),
+    needsApprovalData ? prisma.invoice.findMany({
       where: { studentProfileId: { in: studentProfileIds }, status: "DRAFT" },
       select: { studentProfileId: true },
-    }),
-    prisma.studentDocument.findMany({
+    }) : Promise.resolve([]),
+    needsApprovalData ? prisma.studentDocument.findMany({
       where: {
         verificationStatus: "PENDING",
         studentProfileId: { in: studentProfileIds },
       },
       select: { studentProfileId: true },
-    }),
+    }) : Promise.resolve([]),
   ]);
 
   const visaExpiringSoon = submissions.filter((item) => {
@@ -1116,8 +1128,22 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
       )}
 
       {/* ── CONTRIBUTIONS TAB ──────────────────────────────────── */}
-      {tab === "contributions" && <SubAdminContributionsTabPanel />}
+      {tab === "contributions" && (
+        <Suspense fallback={<ContributionsTabSkeleton />}>
+          <SubAdminContributionsTabPanel />
+        </Suspense>
+      )}
     </section>
+  );
+}
+
+function ContributionsTabSkeleton() {
+  return (
+    <div className="space-y-4">
+      {[...Array(3)].map((_, i) => (
+        <div key={i} className="h-40 animate-pulse rounded-lg border bg-gray-100" />
+      ))}
+    </div>
   );
 }
 

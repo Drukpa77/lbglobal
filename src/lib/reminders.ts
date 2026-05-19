@@ -1,3 +1,5 @@
+import { cache } from "react";
+
 import type { Role } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
@@ -39,7 +41,7 @@ function daysUntil(date: Date, from: Date): number {
   return Math.round((d.getTime() - f.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-export async function getRemindersForUser(
+export const getRemindersForUser = cache(async function getRemindersForUser(
   role: Role,
   userId: string,
 ): Promise<Reminder[]> {
@@ -372,4 +374,4 @@ export async function getRemindersForUser(
 
   reminders.sort((a, b) => a.date.getTime() - b.date.getTime());
   return reminders.slice(0, 20);
-}
+});
