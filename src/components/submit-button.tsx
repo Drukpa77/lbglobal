@@ -1,6 +1,9 @@
 "use client";
 
+import { useEffect } from "react";
 import { useFormStatus } from "react-dom";
+
+import { useGlobalLoadingOptional } from "@/components/loading/global-loading-provider";
 
 type SubmitButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   children: React.ReactNode;
@@ -15,6 +18,11 @@ export function SubmitButton({
   ...props
 }: SubmitButtonProps) {
   const { pending } = useFormStatus();
+  const globalLoading = useGlobalLoadingOptional();
+
+  useEffect(() => {
+    globalLoading?.setFormPending(pending);
+  }, [pending, globalLoading]);
 
   return (
     <button

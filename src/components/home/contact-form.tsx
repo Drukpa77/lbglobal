@@ -2,10 +2,13 @@
 
 import { useState } from "react";
 
+import { useGlobalLoading } from "@/components/loading/global-loading-provider";
+
 const inputClass =
   "w-full rounded border border-slate-300 px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400";
 
 export function ContactForm() {
+  const { withLoading } = useGlobalLoading();
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -26,31 +29,36 @@ export function ContactForm() {
     };
 
     try {
-      const response = await fetch("/api/contact", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+      await withLoading(async () => {
+        const response = await fetch("/api/contact", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        const data = (await response.json()) as { error?: string; ok?: boolean };
+
+        if (!response.ok) {
+          throw new Error(data.error ?? "Something went wrong. Please try again.");
+        }
+
+        form.reset();
       });
-
-      const data = (await response.json()) as { error?: string; ok?: boolean };
-
-      if (!response.ok) {
-        setStatus("error");
-        setErrorMessage(data.error ?? "Something went wrong. Please try again.");
-        return;
-      }
-
       setStatus("success");
-      form.reset();
-    } catch {
+    } catch (error) {
       setStatus("error");
-      setErrorMessage("Network error. Please check your connection and try again.");
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Network error. Please check your connection and try again.",
+      );
     }
   }
 
   return (
     <form
       onSubmit={handleSubmit}
+      data-skip-global-loading="true"
       className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm md:p-8"
     >
       <h3 className="mb-5 text-lg font-bold text-blue-900">Send Us a Message</h3>
