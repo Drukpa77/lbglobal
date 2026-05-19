@@ -40,6 +40,7 @@ import { deleteStoredFile, studentDocumentUploadErrorParam, uploadBufferToStorag
 import { renderTemplate } from "@/lib/template-renderer";
 import { MAX_STUDENT_DOCUMENT_UPLOAD_BYTES } from "@/lib/upload-limits";
 import { createWorkflowNotification } from "@/lib/workflow-notifications";
+import { getUpcomingIntakeOptions, mergeIntakeOptions } from "@/lib/intake-options";
 import { formatVisaStatus, formatYearsLeft, visaStatuses } from "@/lib/student-tracking";
 import {
   allCaseStages,
@@ -645,12 +646,21 @@ export default async function StudentProfileManagementPage(props: { params: Para
             />
           </Field>
           <Field label="Preferred Intake">
-            <input
-              type="text"
+            <select
               name="preferredIntake"
               defaultValue={student.studentProfile?.preferredIntake ?? ""}
               className="mt-1.5 w-full rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-            />
+            >
+              <option value="">Select intake...</option>
+              {mergeIntakeOptions(
+                getUpcomingIntakeOptions(),
+                student.studentProfile?.preferredIntake,
+              ).map((intake) => (
+                <option key={intake} value={intake}>
+                  {intake}
+                </option>
+              ))}
+            </select>
           </Field>
           <Field label="English Test Score">
             <input

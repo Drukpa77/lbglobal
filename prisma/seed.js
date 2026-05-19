@@ -3,6 +3,28 @@ const { PrismaClient, Role } = require("@prisma/client");
 const { hash } = require("bcryptjs");
 
 const prisma = new PrismaClient();
+
+function getUpcomingIntakeOptions(slotCount = 8) {
+  const periods = [
+    { month: 1, label: "Feb" },
+    { month: 6, label: "Jul" },
+    { month: 10, label: "Nov" },
+  ];
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const options = [];
+
+  for (let y = year; y <= year + 5 && options.length < slotCount; y++) {
+    for (const period of periods) {
+      if (y === year && period.month < month) continue;
+      options.push(`${period.label} ${y}`);
+      if (options.length >= slotCount) return options;
+    }
+  }
+
+  return options;
+}
 const prioritizedCountries = [
   "Bhutan",
   "Afghanistan",
@@ -302,7 +324,7 @@ async function main() {
       label: "Preferred intake",
       type: "select",
       required: true,
-      options: ["Feb 2026", "Jul 2026", "Nov 2026", "Feb 2027"],
+      options: getUpcomingIntakeOptions(),
     },
     {
       id: "englishTestScore",
