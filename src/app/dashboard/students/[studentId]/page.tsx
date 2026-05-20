@@ -2015,18 +2015,48 @@ async function deleteStudentAction(formData: FormData) {
   "use server";
 
   const session = await auth();
-  if (!session?.user || (session.user.role !== "ADMIN" && session.user.role !== "SUB_ADMIN")) {
-    redirect("/login");
+  if (!session?.user) redirect("/login");
+
+  const role = session.user.role;
+  if (role !== "ADMIN" && role !== "SUB_ADMIN" && role !== "INTERNAL_STAFF") {
+    redirect("/dashboard");
   }
 
   const studentId = String(formData.get("studentId") ?? "");
   if (!studentId) redirect("/dashboard");
+
+  if (role === "SUB_ADMIN") {
+    const assigned = await prisma.questionnaireSubmission.findFirst({
+      where: {
+        studentId,
+        OR: [{ assignedToId: session.user.id }, { assignedToId: null }],
+      },
+      select: { id: true },
+    });
+    if (!assigned) redirect("/dashboard/sub-admin");
+  }
+
+  if (role === "INTERNAL_STAFF") {
+    const assigned = await prisma.studentAssignment.findFirst({
+      where: {
+        assignedToId: session.user.id,
+        isActive: true,
+        studentProfile: { userId: studentId },
+      },
+      select: { id: true },
+    });
+    if (!assigned) redirect("/dashboard/internal-staff");
+  }
+
   await prisma.user.deleteMany({
     where: { id: studentId, role: "USER" },
   });
   revalidatePath("/dashboard/admin");
   revalidatePath("/dashboard/sub-admin");
-  redirect(session.user.role === "ADMIN" ? "/dashboard/admin" : "/dashboard/sub-admin");
+  revalidatePath("/dashboard/internal-staff");
+  if (role === "ADMIN") redirect("/dashboard/admin");
+  if (role === "SUB_ADMIN") redirect("/dashboard/sub-admin");
+  redirect("/dashboard/internal-staff");
 }
 
 async function assignStudentDelegationAction(formData: FormData) {

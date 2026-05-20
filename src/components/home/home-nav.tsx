@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowRight, Mail, Menu, Phone, X } from "lucide-react";
+import { ArrowRight, Menu, Phone, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -21,31 +21,6 @@ export function HomeNav() {
 
   return (
     <>
-      {/* ── Top utility bar ─────────────────────────────────── */}
-      <div className="hidden bg-blue-950 py-2 sm:block">
-        <div className="home-fluid-shell flex w-full items-center justify-between gap-4">
-          <p className="text-xs text-blue-300/80">
-            Premium overseas education &amp; visa support — Bhutan &amp; Australia
-          </p>
-          <div className="flex items-center gap-6">
-            <a
-              href="tel:+97577781399"
-              className="flex items-center gap-1.5 text-xs text-blue-300/80 transition hover:text-white"
-            >
-              <Phone className="h-3 w-3" />
-              +975 7778 1399
-            </a>
-            <a
-              href="mailto:student@lbglobal.com"
-              className="flex items-center gap-1.5 text-xs text-blue-300/80 transition hover:text-white"
-            >
-              <Mail className="h-3 w-3" />
-              student@lbglobal.com
-            </a>
-          </div>
-        </div>
-      </div>
-
       {/* ── Main nav ────────────────────────────────────────── */}
       <motion.header
         className={`sticky top-0 z-40 border-b transition-all duration-300 ${
