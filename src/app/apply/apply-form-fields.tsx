@@ -1,3 +1,4 @@
+import { getUpcomingIntakeOptions } from "@/lib/intake-options";
 import type { QuestionnaireQuestion } from "@/lib/questionnaire";
 
 const inputClass =
@@ -47,7 +48,11 @@ export function ApplyFormFields({
 
     if (q.type === "select") {
       const options =
-        q.id === "country" ? prioritizedCountries : (q.options ?? []);
+        q.id === "country"
+          ? prioritizedCountries
+          : q.id === "preferredIntake"
+            ? getUpcomingIntakeOptions()
+            : (q.options ?? []);
 
       return (
         <label key={q.id} className="block text-sm font-medium text-slate-700">

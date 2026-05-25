@@ -40,6 +40,7 @@ import { deleteStoredFile, studentDocumentUploadErrorParam, uploadBufferToStorag
 import { renderTemplate } from "@/lib/template-renderer";
 import { MAX_STUDENT_DOCUMENT_UPLOAD_BYTES } from "@/lib/upload-limits";
 import { createWorkflowNotification } from "@/lib/workflow-notifications";
+import { getUpcomingIntakeOptions, mergeIntakeOptions } from "@/lib/intake-options";
 import { formatVisaStatus, formatYearsLeft, visaStatuses } from "@/lib/student-tracking";
 import {
   allCaseStages,
@@ -148,22 +149,21 @@ export default async function StudentProfileManagementPage(props: { params: Para
     }
   }
 
-  const student = await prisma.user.findFirst({
-    where: { id: studentId, role: "USER" },
-    include: {
-      studentProfile: true,
-    },
-  });
+  const [student, latestSubmission] = await Promise.all([
+    prisma.user.findFirst({
+      where: { id: studentId, role: "USER" },
+      include: { studentProfile: true },
+    }),
+    prisma.questionnaireSubmission.findFirst({
+      where: { studentId },
+      include: { template: true, assignedSubAdmin: true },
+      orderBy: { submittedAt: "desc" },
+    }),
+  ]);
 
   if (!student) {
     redirect("/dashboard");
   }
-
-  const latestSubmission = await prisma.questionnaireSubmission.findFirst({
-    where: { studentId },
-    include: { template: true, assignedSubAdmin: true },
-    orderBy: { submittedAt: "desc" },
-  });
 
   const tabRaw = String(searchParams.tab ?? "overview");
   const activeTab:
@@ -188,69 +188,17 @@ export default async function StudentProfileManagementPage(props: { params: Para
   const needsAuditData = activeTab === "audit";
   const needsContributionData = activeTab === "contributions";
 
-  const contributionData =
-    needsContributionData && student.studentProfile
-      ? await getContributions({ studentProfileId })
-      : null;
-
-  const internalStaffUsers =
-    needsProfileData || needsFinancialData
-      ? await prisma.user.findMany({
-          where: { role: "INTERNAL_STAFF" },
-          select: { id: true, name: true, email: true },
-          orderBy: { createdAt: "asc" },
-        })
-      : [];
-
-  const delegationTeamUsers = needsProfileData
-    ? await prisma.user.findMany({
-        where: { role: { in: ["INTERNAL_STAFF", "SUB_ADMIN"] } },
-        select: { id: true, name: true, email: true, role: true },
-        orderBy: [{ role: "asc" }, { name: "asc" }],
-      })
-    : [];
-
-  const currentAssignments = needsProfileData
-    ? await prisma.studentAssignment.findMany({
-        where: { studentProfileId, isActive: true },
-        include: {
-          assignedTo: { select: { id: true, name: true, email: true, role: true } },
-          assignedBy: { select: { id: true, name: true, email: true } },
-        },
-        orderBy: { createdAt: "desc" },
-      })
-    : [];
-
-  const internalStaffAssignedForTasks =
-    needsTasksData &&
-    session.user.role === "INTERNAL_STAFF" &&
-    studentProfileId !== "__none__"
-      ? await prisma.studentAssignment.findFirst({
-          where: {
-            studentProfileId,
-            isActive: true,
-            assignedToId: session.user.id,
-          },
-          select: { id: true },
-        })
-      : null;
-
-  const canCreateTasks =
-    session.user.role === "ADMIN" ||
-    session.user.role === "SUB_ADMIN" ||
-    Boolean(internalStaffAssignedForTasks);
-
-  const tasks = needsTasksData
-    ? await prisma.task.findMany({
-        where: { studentProfileId },
-        include: { assignee: { select: { id: true, name: true, email: true } } },
-        orderBy: [{ status: "asc" }, { createdAt: "desc" }],
-        take: 30,
-      })
-    : [];
-
-  const allDocuments = needsTasksData
-    ? await prisma.studentDocument.findMany({
+  // Fire allDocuments before the main Promise.all so both run in parallel.
+  // We keep it separate because TypeScript can't infer the Prisma include type
+  // through a conditional ternary inside Promise.all.
+  type StudentDocumentWithRelations = Prisma.StudentDocumentGetPayload<{
+    include: {
+      uploadedBy: { select: { id: true; name: true; email: true } };
+      returnedBy: { select: { id: true; name: true; email: true } };
+    };
+  }>;
+  const allDocumentsPromise = needsTasksData
+    ? prisma.studentDocument.findMany({
         where: { studentProfileId },
         include: {
           uploadedBy: { select: { id: true, name: true, email: true } },
@@ -258,7 +206,120 @@ export default async function StudentProfileManagementPage(props: { params: Para
         },
         orderBy: { createdAt: "desc" },
       })
-    : [];
+    : Promise.resolve([] as StudentDocumentWithRelations[]);
+
+  // Fetch all tab-specific data in parallel — independent queries run concurrently
+  const [
+    contributionData,
+    internalStaffUsers,
+    delegationTeamUsers,
+    currentAssignments,
+    internalStaffAssignedForTasks,
+    tasks,
+    allDocuments,
+    templates,
+    contracts,
+    invoices,
+    conversation,
+    recentMessages,
+    activityLogs,
+  ] = await Promise.all([
+    needsContributionData && student.studentProfile
+      ? getContributions({ studentProfileId })
+      : Promise.resolve(null),
+    (needsProfileData || needsFinancialData)
+      ? prisma.user.findMany({
+          where: { role: "INTERNAL_STAFF" },
+          select: { id: true, name: true, email: true },
+          orderBy: { createdAt: "asc" },
+        })
+      : Promise.resolve([]),
+    needsProfileData
+      ? prisma.user.findMany({
+          where: { role: { in: ["INTERNAL_STAFF", "SUB_ADMIN"] } },
+          select: { id: true, name: true, email: true, role: true },
+          orderBy: [{ role: "asc" }, { name: "asc" }],
+        })
+      : Promise.resolve([]),
+    needsProfileData
+      ? prisma.studentAssignment.findMany({
+          where: { studentProfileId, isActive: true },
+          include: {
+            assignedTo: { select: { id: true, name: true, email: true, role: true } },
+            assignedBy: { select: { id: true, name: true, email: true } },
+          },
+          orderBy: { createdAt: "desc" },
+        })
+      : Promise.resolve([]),
+    needsTasksData && session.user.role === "INTERNAL_STAFF" && studentProfileId !== "__none__"
+      ? prisma.studentAssignment.findFirst({
+          where: { studentProfileId, isActive: true, assignedToId: session.user.id },
+          select: { id: true },
+        })
+      : Promise.resolve(null),
+    needsTasksData
+      ? prisma.task.findMany({
+          where: { studentProfileId },
+          include: { assignee: { select: { id: true, name: true, email: true } } },
+          orderBy: [{ status: "asc" }, { createdAt: "desc" }],
+          take: 30,
+        })
+      : Promise.resolve([]),
+    allDocumentsPromise,
+    needsFinancialData
+      ? prisma.emailTemplate.findMany({
+          where: { isActive: true },
+          orderBy: [{ type: "asc" }, { createdAt: "desc" }],
+          take: 50,
+        })
+      : Promise.resolve([]),
+    needsFinancialData
+      ? prisma.contract.findMany({
+          where: { studentProfileId },
+          include: { createdBy: { select: { id: true, name: true, email: true } } },
+          orderBy: { createdAt: "desc" },
+          take: 20,
+        })
+      : Promise.resolve([]),
+    needsFinancialData
+      ? prisma.invoice.findMany({
+          where: { studentProfileId },
+          include: {
+            lineItems: true,
+            createdBy: { select: { id: true, name: true, email: true } },
+          },
+          orderBy: { createdAt: "desc" },
+          take: 20,
+        })
+      : Promise.resolve([]),
+    needsOverviewData
+      ? prisma.conversation.findFirst({
+          where: { studentProfileId, type: "STUDENT_THREAD" },
+          select: { id: true, title: true },
+        })
+      : Promise.resolve(null),
+    needsOverviewData
+      ? prisma.message.findMany({
+          where: { conversation: { studentProfileId, type: "STUDENT_THREAD" } },
+          include: { sender: { select: { id: true, name: true, email: true } } },
+          orderBy: { createdAt: "desc" },
+          take: 15,
+        })
+      : Promise.resolve([]),
+    needsAuditData
+      ? prisma.activityLog.findMany({
+          where: { targetStudentProfileId: studentProfileId },
+          include: { actor: { select: { id: true, name: true, email: true } } },
+          orderBy: { createdAt: "desc" },
+          take: 50,
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const canCreateTasks =
+    session.user.role === "ADMIN" ||
+    session.user.role === "SUB_ADMIN" ||
+    Boolean(internalStaffAssignedForTasks);
 
   const documentsById = new Map(allDocuments.map((doc) => [doc.id, doc]));
   const supersededDocumentIds = new Set(
@@ -296,69 +357,6 @@ export default async function StudentProfileManagementPage(props: { params: Para
         })),
       };
     });
-
-  const templates = needsFinancialData
-    ? await prisma.emailTemplate.findMany({
-        where: { isActive: true },
-        orderBy: [{ type: "asc" }, { createdAt: "desc" }],
-        take: 50,
-      })
-    : [];
-
-  const contracts = needsFinancialData
-    ? await prisma.contract.findMany({
-        where: { studentProfileId },
-        include: { createdBy: { select: { id: true, name: true, email: true } } },
-        orderBy: { createdAt: "desc" },
-        take: 20,
-      })
-    : [];
-
-  const invoices = needsFinancialData
-    ? await prisma.invoice.findMany({
-        where: { studentProfileId },
-        include: {
-          lineItems: true,
-          createdBy: { select: { id: true, name: true, email: true } },
-        },
-        orderBy: { createdAt: "desc" },
-        take: 20,
-      })
-    : [];
-
-  const conversation = needsOverviewData
-    ? await prisma.conversation.findFirst({
-        where: { studentProfileId, type: "STUDENT_THREAD" },
-        select: { id: true, title: true },
-      })
-    : null;
-
-  const recentMessages = needsOverviewData
-    ? await prisma.message.findMany({
-        where: {
-          conversation: {
-            studentProfileId,
-            type: "STUDENT_THREAD",
-          },
-        },
-        include: {
-          sender: { select: { id: true, name: true, email: true } },
-        },
-        orderBy: { createdAt: "desc" },
-        take: 15,
-      })
-    : [];
-
-  const activityLogs = needsAuditData
-    ? await prisma.activityLog.findMany({
-        where: { targetStudentProfileId: studentProfileId },
-        include: {
-          actor: { select: { id: true, name: true, email: true } },
-        },
-        orderBy: { createdAt: "desc" },
-        take: 50,
-      })
-    : [];
 
   const submissionAnswers = needsProfileData ? getAnswerEntries(latestSubmission?.answers) : [];
   const backLink =
@@ -648,12 +646,21 @@ export default async function StudentProfileManagementPage(props: { params: Para
             />
           </Field>
           <Field label="Preferred Intake">
-            <input
-              type="text"
+            <select
               name="preferredIntake"
               defaultValue={student.studentProfile?.preferredIntake ?? ""}
               className="mt-1.5 w-full rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-            />
+            >
+              <option value="">Select intake...</option>
+              {mergeIntakeOptions(
+                getUpcomingIntakeOptions(),
+                student.studentProfile?.preferredIntake,
+              ).map((intake) => (
+                <option key={intake} value={intake}>
+                  {intake}
+                </option>
+              ))}
+            </select>
           </Field>
           <Field label="English Test Score">
             <input
@@ -2008,18 +2015,48 @@ async function deleteStudentAction(formData: FormData) {
   "use server";
 
   const session = await auth();
-  if (!session?.user || (session.user.role !== "ADMIN" && session.user.role !== "SUB_ADMIN")) {
-    redirect("/login");
+  if (!session?.user) redirect("/login");
+
+  const role = session.user.role;
+  if (role !== "ADMIN" && role !== "SUB_ADMIN" && role !== "INTERNAL_STAFF") {
+    redirect("/dashboard");
   }
 
   const studentId = String(formData.get("studentId") ?? "");
   if (!studentId) redirect("/dashboard");
+
+  if (role === "SUB_ADMIN") {
+    const assigned = await prisma.questionnaireSubmission.findFirst({
+      where: {
+        studentId,
+        OR: [{ assignedToId: session.user.id }, { assignedToId: null }],
+      },
+      select: { id: true },
+    });
+    if (!assigned) redirect("/dashboard/sub-admin");
+  }
+
+  if (role === "INTERNAL_STAFF") {
+    const assigned = await prisma.studentAssignment.findFirst({
+      where: {
+        assignedToId: session.user.id,
+        isActive: true,
+        studentProfile: { userId: studentId },
+      },
+      select: { id: true },
+    });
+    if (!assigned) redirect("/dashboard/internal-staff");
+  }
+
   await prisma.user.deleteMany({
     where: { id: studentId, role: "USER" },
   });
   revalidatePath("/dashboard/admin");
   revalidatePath("/dashboard/sub-admin");
-  redirect(session.user.role === "ADMIN" ? "/dashboard/admin" : "/dashboard/sub-admin");
+  revalidatePath("/dashboard/internal-staff");
+  if (role === "ADMIN") redirect("/dashboard/admin");
+  if (role === "SUB_ADMIN") redirect("/dashboard/sub-admin");
+  redirect("/dashboard/internal-staff");
 }
 
 async function assignStudentDelegationAction(formData: FormData) {

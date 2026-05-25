@@ -69,6 +69,16 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
     course,
   });
 
+  // Gate queries by tab to avoid loading data that isn't needed
+  const isOverviewTab = tab === "overview";
+  const isStudentsTab = tab === "students";
+  const isAnalyticsTab = tab === "analytics";
+  const isStaffTab = tab === "staff";
+  const needsFilteredSubmissions = isOverviewTab || isStudentsTab || isAnalyticsTab;
+  const needsInternalStaff = isOverviewTab || isStudentsTab || isStaffTab;
+  const needsSubAdmins = isOverviewTab || isStudentsTab || isStaffTab;
+  const needsRecentAssignments = isOverviewTab || isStaffTab;
+
   const nowForFreshInquiries = new Date();
   const oneDayAgoForFreshInquiries = new Date(
     nowForFreshInquiries.getTime() - 24 * 60 * 60 * 1000,
@@ -93,35 +103,35 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
     newInquiries,
     newInquiriesLast24hCount,
   ] = await Promise.all([
-    getRemindersForUser("ADMIN", session.user.id),
+    isOverviewTab ? getRemindersForUser("ADMIN", session.user.id) : Promise.resolve([]),
     prisma.user.count({ where: { role: "USER" } }),
-    prisma.questionnaireSubmission.count(),
-    prisma.user.count({ where: { role: "SUB_ADMIN" } }),
-    prisma.questionnaireSubmission.count({
+    isOverviewTab ? prisma.questionnaireSubmission.count() : Promise.resolve(0),
+    isOverviewTab ? prisma.user.count({ where: { role: "SUB_ADMIN" } }) : Promise.resolve(0),
+    isOverviewTab ? prisma.questionnaireSubmission.count({
       where: { status: { in: ["OFFER_RECEIVED", "VISA_GRANTED", "ENROLLED"] } },
-    }),
-    prisma.questionnaireSubmission.groupBy({
+    }) : Promise.resolve(0),
+    isAnalyticsTab ? prisma.questionnaireSubmission.groupBy({
       by: ["sourceCountry"],
       where: { sourceCountry: { not: null } },
       _count: { _all: true },
       orderBy: { _count: { sourceCountry: "desc" } },
       take: 5,
-    }),
-    prisma.questionnaireSubmission.groupBy({
+    }) : Promise.resolve([]),
+    isAnalyticsTab ? prisma.questionnaireSubmission.groupBy({
       by: ["intendedCourse"],
       where: { intendedCourse: { not: null } },
       _count: { _all: true },
       orderBy: { _count: { intendedCourse: "desc" } },
       take: 5,
-    }),
-    prisma.questionnaireSubmission.groupBy({
+    }) : Promise.resolve([]),
+    isAnalyticsTab ? prisma.questionnaireSubmission.groupBy({
       by: ["intendedIntake"],
       where: { intendedIntake: { not: null } },
       _count: { _all: true },
       orderBy: { _count: { intendedIntake: "desc" } },
       take: 5,
-    }),
-    prisma.questionnaireSubmission.findMany({
+    }) : Promise.resolve([]),
+    isStudentsTab ? prisma.questionnaireSubmission.findMany({
       include: {
         student: {
           include: {
@@ -132,8 +142,8 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
       },
       orderBy: { submittedAt: "desc" },
       take: 8,
-    }),
-    prisma.questionnaireSubmission.findMany({
+    }) : Promise.resolve([]),
+    needsFilteredSubmissions ? prisma.questionnaireSubmission.findMany({
       where: filteredWhere,
       include: {
         student: {
@@ -154,39 +164,39 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
       },
       orderBy: { submittedAt: "desc" },
       take: 50,
-    }),
-    prisma.user.findMany({
+    }) : Promise.resolve([]),
+    isStaffTab ? prisma.user.findMany({
       where: { role: "ADMIN" },
       select: { id: true, name: true, email: true, jobTitle: true },
       orderBy: { createdAt: "asc" },
-    }),
-    prisma.user.findMany({
+    }) : Promise.resolve([]),
+    needsSubAdmins ? prisma.user.findMany({
       where: { role: "SUB_ADMIN" },
       select: { id: true, name: true, email: true, jobTitle: true },
       orderBy: { createdAt: "asc" },
-    }),
-    prisma.questionnaireSubmission.groupBy({
+    }) : Promise.resolve([]),
+    isAnalyticsTab ? prisma.questionnaireSubmission.groupBy({
       by: ["status"],
       _count: { _all: true },
-    }),
-    prisma.homePost.findMany({
+    }) : Promise.resolve([]),
+    isStaffTab ? prisma.homePost.findMany({
       include: { author: { select: { name: true, email: true } } },
       orderBy: { createdAt: "desc" },
       take: 8,
-    }),
-    prisma.user.findMany({
+    }) : Promise.resolve([]),
+    needsInternalStaff ? prisma.user.findMany({
       where: { role: "INTERNAL_STAFF" },
       select: { id: true, name: true, email: true, jobTitle: true },
       orderBy: { createdAt: "asc" },
-    }),
-    prisma.staffTeamMembership.findMany({
+    }) : Promise.resolve([]),
+    isStaffTab ? prisma.staffTeamMembership.findMany({
       include: {
         manager: { select: { id: true, name: true, email: true } },
         internalStaff: { select: { id: true, name: true, email: true } },
       },
       orderBy: { createdAt: "desc" },
-    }),
-    prisma.studentAssignment.findMany({
+    }) : Promise.resolve([]),
+    needsRecentAssignments ? prisma.studentAssignment.findMany({
       where: { isActive: true },
       include: {
         studentProfile: {
@@ -196,15 +206,15 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
       },
       orderBy: { createdAt: "desc" },
       take: 8,
-    }),
-    prisma.task.count({
+    }) : Promise.resolve([]),
+    isOverviewTab ? prisma.task.count({
       where: { status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] } },
-    }),
-    prisma.studentProfile.groupBy({
+    }) : Promise.resolve(0),
+    isOverviewTab ? prisma.studentProfile.groupBy({
       by: ["caseStage"],
       _count: { _all: true },
-    }),
-    prisma.questionnaireSubmission.findMany({
+    }) : Promise.resolve([]),
+    isOverviewTab ? prisma.questionnaireSubmission.findMany({
       where: {
         assignedToId: null,
         submittedAt: { gte: sevenDaysAgoForFreshInquiries },
@@ -218,13 +228,13 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
       },
       orderBy: { submittedAt: "desc" },
       take: 8,
-    }),
-    prisma.questionnaireSubmission.count({
+    }) : Promise.resolve([]),
+    isOverviewTab ? prisma.questionnaireSubmission.count({
       where: {
         assignedToId: null,
         submittedAt: { gte: oneDayAgoForFreshInquiries },
       },
-    }),
+    }) : Promise.resolve(0),
   ]);
 
   const stageCountMap = new Map<string, number>(
@@ -240,15 +250,15 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
     .map((item) => item.student.studentProfile?.id)
     .filter((id): id is string => Boolean(id));
   const [draftContractsCount, draftInvoicesCount, pendingDocumentsCount] = await Promise.all([
-    prisma.contract.count({
+    needsFilteredSubmissions ? prisma.contract.count({
       where: { studentProfileId: { in: filteredStudentProfileIds }, status: "DRAFT" },
-    }),
-    prisma.invoice.count({
+    }) : Promise.resolve(0),
+    needsFilteredSubmissions ? prisma.invoice.count({
       where: { studentProfileId: { in: filteredStudentProfileIds }, status: "DRAFT" },
-    }),
-    prisma.studentDocument.count({
+    }) : Promise.resolve(0),
+    needsFilteredSubmissions ? prisma.studentDocument.count({
       where: { studentProfileId: { in: filteredStudentProfileIds }, verificationStatus: "PENDING" },
-    }),
+    }) : Promise.resolve(0),
   ]);
 
   const offerRate =
@@ -1219,8 +1229,22 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
       )}
 
       {/* ── CONTRIBUTIONS TAB ──────────────────────────────────── */}
-      {tab === "contributions" && <ContributionsTabPanel />}
+      {tab === "contributions" && (
+        <Suspense fallback={<ContributionsTabSkeleton />}>
+          <ContributionsTabPanel />
+        </Suspense>
+      )}
     </section>
+  );
+}
+
+function ContributionsTabSkeleton() {
+  return (
+    <div className="space-y-4">
+      {[...Array(3)].map((_, i) => (
+        <div key={i} className="h-40 animate-pulse rounded-lg border bg-gray-100" />
+      ))}
+    </div>
   );
 }
 

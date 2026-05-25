@@ -13,11 +13,11 @@ export function SectionHeading({
   return (
     <header className="mx-auto max-w-3xl text-center">
       {eyebrow ? (
-        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-600">
+        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-rose-500">
           {eyebrow}
         </p>
       ) : null}
-      <h2 className="mt-2 text-[clamp(1.5rem,3.2vw,2.4rem)] font-bold tracking-tight text-slate-900">
+      <h2 className="mt-2 text-[clamp(1.5rem,3.2vw,2.4rem)] font-bold tracking-tight text-blue-900">
         {title}
       </h2>
       {subtitle ? (
@@ -31,7 +31,7 @@ export function SectionHeading({
 
 export function SurfaceCard({ children }: { children: ReactNode }) {
   return (
-    <article className="rounded-3xl border border-slate-200/80 bg-white/90 p-5 shadow-[0_10px_30px_rgba(15,23,42,0.07)] backdrop-blur-sm transition duration-300 hover:-translate-y-1 hover:shadow-[0_18px_36px_rgba(15,23,42,0.1)]">
+    <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-md">
       {children}
     </article>
   );
@@ -49,7 +49,7 @@ export function PrimaryButton({
   return (
     <Link
       href={href}
-      className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-rose-500 to-blue-500 px-6 py-3 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(59,130,246,0.22)] transition hover:brightness-105"
+      className="inline-flex items-center gap-2 rounded bg-gradient-to-r from-rose-500 to-blue-600 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:brightness-110"
     >
       {label}
       {icon}
@@ -67,10 +67,9 @@ export function SecondaryButton({
   return (
     <Link
       href={href}
-      className="inline-flex items-center rounded-2xl border border-slate-300 bg-white px-6 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+      className="inline-flex items-center rounded border border-blue-900 px-6 py-3 text-sm font-semibold text-blue-900 transition hover:bg-blue-900 hover:text-white"
     >
       {label}
     </Link>
   );
 }
-

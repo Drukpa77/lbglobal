@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { DocumentVerificationStatus, TaskStatus } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 
 import { auth } from "@/auth";
 import { ContributionLeaderboard } from "@/components/contribution-leaderboard";
@@ -52,8 +53,11 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
   const today = new Date();
   const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
 
+  // Gate queries by tab — overview-only data shouldn't block queue/tasks/students views
+  const isOverviewTab = tab === "overview";
+
   const [reminders, assignments, stagePipelineCounts, tasks, conversations, followUps, pendingDocuments] = await Promise.all([
-    getRemindersForUser(session.user.role as "ADMIN" | "INTERNAL_STAFF", session.user.id),
+    isOverviewTab ? getRemindersForUser(session.user.role as "ADMIN" | "INTERNAL_STAFF", session.user.id) : Promise.resolve([]),
     prisma.studentAssignment.findMany({
       where: isAdmin ? { isActive: true } : { isActive: true, assignedToId: session.user.id },
       include: {
@@ -86,14 +90,14 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
       orderBy: { createdAt: "desc" },
       take: 50,
     }),
-    // Pipeline counts across the entire visible scope (not just first 50 cases)
-    prisma.studentProfile.groupBy({
+    // Pipeline counts only needed for the overview tab case stage funnel
+    isOverviewTab ? prisma.studentProfile.groupBy({
       by: ["caseStage"],
       where: isAdmin
         ? undefined
         : { assignments: { some: { assignedToId: session.user.id, isActive: true } } },
       _count: { _all: true },
-    }),
+    }) : Promise.resolve([]),
     prisma.task.findMany({
       where: isAdmin ? undefined : { assigneeId: session.user.id },
       include: {
@@ -102,12 +106,13 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
       orderBy: [{ dueDate: "asc" }, { status: "asc" }, { createdAt: "desc" }],
       take: 100,
     }),
-    prisma.conversation.findMany({
+    // conversations only rendered in the overview tab
+    isOverviewTab ? prisma.conversation.findMany({
       where: isAdmin ? { type: "STUDENT_THREAD" } : { participants: { some: { userId: session.user.id } } },
       select: { id: true, title: true, updatedAt: true },
       orderBy: { updatedAt: "desc" },
       take: 20,
-    }),
+    }) : Promise.resolve([]),
     prisma.studentProfile.findMany({
       where: isAdmin
         ? { nextFollowUpDate: { not: null } }
@@ -827,8 +832,22 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
       )}
 
       {/* ── CONTRIBUTIONS TAB ──────────────────────────────────── */}
-      {tab === "contributions" && <InternalStaffContributionsTabPanel />}
+      {tab === "contributions" && (
+        <Suspense fallback={<ContributionsTabSkeleton />}>
+          <InternalStaffContributionsTabPanel />
+        </Suspense>
+      )}
     </section>
+  );
+}
+
+function ContributionsTabSkeleton() {
+  return (
+    <div className="space-y-4">
+      {[...Array(3)].map((_, i) => (
+        <div key={i} className="h-40 animate-pulse rounded-lg border bg-gray-100" />
+      ))}
+    </div>
   );
 }
 

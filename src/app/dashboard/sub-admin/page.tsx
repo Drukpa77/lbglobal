@@ -11,7 +11,9 @@ import { DelegationSuccessToast } from "@/components/delegation-success-toast";
 import { NewInquiriesCard } from "@/components/new-inquiries-card";
 import { RemindersWidget } from "@/components/reminders-widget";
 import { getContributions } from "@/lib/contributions";
+import { queueDevEmail } from "@/lib/email-outbox";
 import { prisma } from "@/lib/prisma";
+import { createWorkflowNotification } from "@/lib/workflow-notifications";
 import { redirectWithDashboardNotice, redirectWithDelegationNotice } from "@/lib/redirect-after-delegation";
 import { getRemindersForUser } from "@/lib/reminders";
 import { getDashboardPath } from "@/lib/roles";
@@ -34,6 +36,8 @@ type SearchParams = Promise<{
   queue?: string;
   stage?: string;
   tab?: string;
+  manualError?: string;
+  manualSuccess?: string;
 }>;
 
 export default async function SubAdminDashboardPage(props: { searchParams: SearchParams }) {
@@ -65,6 +69,15 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   const stageRaw = (searchParams.stage ?? "") as CaseStage | "";
   const stageFilter: CaseStage | "" =
     stageRaw && (allCaseStages as string[]).includes(stageRaw) ? stageRaw : "";
+  const manualStudentError =
+    searchParams.manualError === "duplicate"
+      ? "A student or staff account already exists with that email."
+      : searchParams.manualError === "validation"
+        ? "Please complete all required fields with valid details."
+        : searchParams.manualError === "template"
+          ? "No active questionnaire template is available for agent intake."
+          : null;
+  const manualStudentSuccess = searchParams.manualSuccess === "1";
 
   const scopedWhere = buildSubmissionWhere({
     role: session.user.role,
@@ -75,6 +88,14 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     course,
     includeUnassignedForSubAdmin: true,
   });
+
+  // Gate queries by tab — only fetch what the active tab actually needs
+  const isOverviewTab = tab === "overview";
+  const isStudentsTab = tab === "students";
+  const isTeamTab = tab === "team";
+  const needsSubmissions = isOverviewTab || isStudentsTab;
+  const needsTeamData = isOverviewTab || isTeamTab;
+  const needsApprovalData = isOverviewTab || isStudentsTab;
 
   const today = new Date();
   const trendWindowStart = new Date(today);
@@ -98,8 +119,8 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     newInquiriesLast24hCount,
   ] =
     await Promise.all([
-      getRemindersForUser(session.user.role as "ADMIN" | "SUB_ADMIN", session.user.id),
-      prisma.questionnaireSubmission.findMany({
+      isOverviewTab ? getRemindersForUser(session.user.role as "ADMIN" | "SUB_ADMIN", session.user.id) : Promise.resolve([]),
+      needsSubmissions ? prisma.questionnaireSubmission.findMany({
         where: scopedWhere,
         include: {
           student: {
@@ -124,8 +145,9 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
         },
         orderBy: { submittedAt: "desc" },
         take: 50,
-      }),
-      prisma.questionnaireSubmission.findMany({
+      }) : Promise.resolve([]),
+      // trendSubmissions (500 rows) only needed for the overview trend chart
+      isOverviewTab ? prisma.questionnaireSubmission.findMany({
         where: {
           ...scopedWhere,
           submittedAt: { gte: trendWindowStart },
@@ -137,24 +159,25 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
         },
         orderBy: { submittedAt: "asc" },
         take: 500,
-      }),
-    prisma.questionnaireSubmission.count({
+      }) : Promise.resolve([]),
+    isOverviewTab ? prisma.questionnaireSubmission.count({
       where: {
         ...scopedWhere,
         status: {
           in: ["SUBMITTED", "UNDER_REVIEW", "DOCS_REQUESTED"],
         },
       },
-    }),
-    prisma.questionnaireSubmission.count({
+    }) : Promise.resolve(0),
+    isOverviewTab ? prisma.questionnaireSubmission.count({
       where: {
         ...scopedWhere,
         status: {
           in: ["OFFER_RECEIVED", "VISA_GRANTED", "ENROLLED"],
         },
       },
-    }),
-    prisma.homePost.findMany({
+    }) : Promise.resolve(0),
+    // homePosts only needed for team tab
+    isTeamTab ? prisma.homePost.findMany({
       where:
         session.user.role === "ADMIN"
           ? undefined
@@ -164,8 +187,8 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
       include: { author: { select: { name: true, email: true } } },
       orderBy: { createdAt: "desc" },
       take: 8,
-    }),
-    prisma.staffTeamMembership.findMany({
+    }) : Promise.resolve([]),
+    needsTeamData ? prisma.staffTeamMembership.findMany({
       where:
         session.user.role === "ADMIN"
           ? undefined
@@ -178,8 +201,8 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
         },
       },
       orderBy: { createdAt: "desc" },
-    }),
-    prisma.studentAssignment.findMany({
+    }) : Promise.resolve([]),
+    isTeamTab ? prisma.studentAssignment.findMany({
       where:
         session.user.role === "ADMIN"
           ? { isActive: true }
@@ -193,8 +216,8 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
       },
       orderBy: { createdAt: "desc" },
       take: 8,
-    }),
-      prisma.task.count({
+    }) : Promise.resolve([]),
+      isOverviewTab ? prisma.task.count({
         where:
           session.user.role === "ADMIN"
             ? { status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] } }
@@ -202,13 +225,14 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                 assignerId: session.user.id,
                 status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] },
               },
-      }),
+      }) : Promise.resolve(0),
       prisma.user.findMany({
         where: { role: "INTERNAL_STAFF" },
         select: { id: true, name: true, email: true },
         orderBy: { name: "asc" },
       }),
-      prisma.studentProfile.groupBy({
+      // stagePipelineCounts only shown in overview
+      isOverviewTab ? prisma.studentProfile.groupBy({
         by: ["caseStage"],
         where:
           session.user.role === "ADMIN"
@@ -226,8 +250,8 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                 },
               },
         _count: { _all: true },
-      }),
-      prisma.questionnaireSubmission.findMany({
+      }) : Promise.resolve([]),
+      isOverviewTab ? prisma.questionnaireSubmission.findMany({
         where: {
           assignedToId: null,
           submittedAt: { gte: sevenDaysAgo },
@@ -241,13 +265,13 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
         },
         orderBy: { submittedAt: "desc" },
         take: 8,
-      }),
-      prisma.questionnaireSubmission.count({
+      }) : Promise.resolve([]),
+      isOverviewTab ? prisma.questionnaireSubmission.count({
         where: {
           assignedToId: null,
           submittedAt: { gte: oneDayAgo },
         },
-      }),
+      }) : Promise.resolve(0),
     ]);
 
   const stageCountMap = new Map<string, number>(
@@ -274,49 +298,50 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     draftInvoiceProfiles,
     pendingDocumentProfiles,
   ] = await Promise.all([
-    prisma.contract.count({
+    needsApprovalData ? prisma.contract.count({
       where: { studentProfileId: { in: studentProfileIds }, status: "DRAFT" },
-    }),
-    prisma.invoice.count({
+    }) : Promise.resolve(0),
+    needsApprovalData ? prisma.invoice.count({
       where: { studentProfileId: { in: studentProfileIds }, status: "DRAFT" },
-    }),
-    prisma.studentDocument.count({
+    }) : Promise.resolve(0),
+    needsApprovalData ? prisma.studentDocument.count({
       where: {
         verificationStatus: "PENDING",
         studentProfileId: { in: studentProfileIds },
       },
-    }),
-    prisma.task.groupBy({
+    }) : Promise.resolve(0),
+    // teamTaskLoad + teamCaseLoad only needed for team tab workload display
+    isTeamTab ? prisma.task.groupBy({
       by: ["assigneeId"],
       where: {
         assigneeId: { in: teamStaffIds },
         status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] },
       },
       _count: { _all: true },
-    }),
-    prisma.studentAssignment.groupBy({
+    }) : Promise.resolve([]),
+    isTeamTab ? prisma.studentAssignment.groupBy({
       by: ["assignedToId"],
       where: {
         isActive: true,
         assignedToId: { in: teamStaffIds },
       },
       _count: { _all: true },
-    }),
-    prisma.contract.findMany({
+    }) : Promise.resolve([]),
+    needsApprovalData ? prisma.contract.findMany({
       where: { studentProfileId: { in: studentProfileIds }, status: "DRAFT" },
       select: { studentProfileId: true },
-    }),
-    prisma.invoice.findMany({
+    }) : Promise.resolve([]),
+    needsApprovalData ? prisma.invoice.findMany({
       where: { studentProfileId: { in: studentProfileIds }, status: "DRAFT" },
       select: { studentProfileId: true },
-    }),
-    prisma.studentDocument.findMany({
+    }) : Promise.resolve([]),
+    needsApprovalData ? prisma.studentDocument.findMany({
       where: {
         verificationStatus: "PENDING",
         studentProfileId: { in: studentProfileIds },
       },
       select: { studentProfileId: true },
-    }),
+    }) : Promise.resolve([]),
   ]);
 
   const visaExpiringSoon = submissions.filter((item) => {
@@ -643,6 +668,91 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
       {/* ── STUDENTS TAB ───────────────────────────────────────── */}
       {tab === "students" && (
         <div className="space-y-6">
+          {session.user.role === "SUB_ADMIN" ? (
+            <section className="rounded-lg border bg-white p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-sm font-semibold">Add Student</h2>
+                  <p className="mt-1 text-xs text-gray-600">
+                    Create a student record and assign the case to yourself.
+                  </p>
+                </div>
+                {manualStudentSuccess ? (
+                  <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                    Student added
+                  </span>
+                ) : null}
+              </div>
+              {manualStudentError ? (
+                <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  {manualStudentError}
+                </p>
+              ) : null}
+              <form action={createManualStudentAction} className="mt-4 grid gap-3 md:grid-cols-2">
+                <label className="text-xs font-medium text-gray-700">
+                  Name
+                  <input
+                    name="name"
+                    required
+                    minLength={2}
+                    maxLength={100}
+                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="text-xs font-medium text-gray-700">
+                  Email
+                  <input
+                    name="email"
+                    type="email"
+                    required
+                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="text-xs font-medium text-gray-700">
+                  Phone
+                  <input name="phone" required className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
+                </label>
+                <label className="text-xs font-medium text-gray-700">
+                  Country
+                  <input name="country" required className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
+                </label>
+                <label className="text-xs font-medium text-gray-700">
+                  City
+                  <input name="city" required className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
+                </label>
+                <label className="text-xs font-medium text-gray-700">
+                  Course
+                  <input name="course" required className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
+                </label>
+                <label className="text-xs font-medium text-gray-700">
+                  Intake
+                  <input name="intake" required className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
+                </label>
+                <label className="text-xs font-medium text-gray-700">
+                  Current education
+                  <input
+                    name="currentEducation"
+                    required
+                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="text-xs font-medium text-gray-700 md:col-span-2">
+                  Notes
+                  <textarea
+                    name="notes"
+                    rows={3}
+                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  />
+                </label>
+                <div className="md:col-span-2">
+                  <button type="submit" className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white">
+                    Add and assign to me
+                  </button>
+                </div>
+              </form>
+            </section>
+          ) : null}
+
           <div className="grid gap-4 md:grid-cols-5">
             <StatCard title="Assigned Students" value={String(assignedStudents)} />
             <StatCard title="Pending Reviews" value={String(pendingReviews)} />
@@ -1116,8 +1226,22 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
       )}
 
       {/* ── CONTRIBUTIONS TAB ──────────────────────────────────── */}
-      {tab === "contributions" && <SubAdminContributionsTabPanel />}
+      {tab === "contributions" && (
+        <Suspense fallback={<ContributionsTabSkeleton />}>
+          <SubAdminContributionsTabPanel />
+        </Suspense>
+      )}
     </section>
+  );
+}
+
+function ContributionsTabSkeleton() {
+  return (
+    <div className="space-y-4">
+      {[...Array(3)].map((_, i) => (
+        <div key={i} className="h-40 animate-pulse rounded-lg border bg-gray-100" />
+      ))}
+    </div>
   );
 }
 
@@ -1706,5 +1830,201 @@ async function escalateSubmissionAction(formData: FormData) {
   revalidatePath("/dashboard/internal-staff");
   revalidatePath(`/dashboard/students/${submission.studentId}`);
   redirect("/dashboard/sub-admin");
+}
+
+async function createManualStudentAction(formData: FormData) {
+  "use server";
+
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+  if (session.user.role !== "SUB_ADMIN") redirect("/dashboard/sub-admin?tab=students");
+
+  const name = String(formData.get("name") ?? "").trim();
+  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const phone = String(formData.get("phone") ?? "").trim();
+  const country = String(formData.get("country") ?? "").trim();
+  const city = String(formData.get("city") ?? "").trim();
+  const course = String(formData.get("course") ?? "").trim();
+  const intake = String(formData.get("intake") ?? "").trim();
+  const currentEducation = String(formData.get("currentEducation") ?? "").trim();
+  const notes = String(formData.get("notes") ?? "").trim();
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (
+    name.length < 2 ||
+    name.length > 100 ||
+    !emailRegex.test(email) ||
+    !phone ||
+    !country ||
+    !city ||
+    !course ||
+    !intake ||
+    !currentEducation
+  ) {
+    redirect("/dashboard/sub-admin?tab=students&manualError=validation");
+  }
+
+  const [existingUser, template] = await Promise.all([
+    prisma.user.findUnique({ where: { email }, select: { id: true } }),
+    prisma.questionnaireTemplate.findFirst({
+      where: { isActive: true },
+      orderBy: { updatedAt: "desc" },
+      select: { id: true },
+    }),
+  ]);
+
+  if (existingUser) redirect("/dashboard/sub-admin?tab=students&manualError=duplicate");
+  if (!template) redirect("/dashboard/sub-admin?tab=students&manualError=template");
+
+  const answers = {
+    fullName: name,
+    email,
+    phone,
+    country,
+    city,
+    currentEducationLevel: currentEducation,
+    targetCourse: course,
+    preferredIntake: intake,
+    additionalNote: notes,
+    source: "Agent",
+  };
+
+  const created = await prisma.$transaction(async (tx) => {
+    const studentUser = await tx.user.create({
+      data: {
+        name,
+        email,
+        role: "USER",
+      },
+      select: { id: true, email: true, name: true },
+    });
+
+    const studentProfile = await tx.studentProfile.create({
+      data: {
+        userId: studentUser.id,
+        phone,
+        city,
+        nationality: country,
+        currentEducationLevel: currentEducation,
+        targetCourse: course,
+        preferredIntake: intake,
+        followUpNotes: notes || null,
+      },
+      select: { id: true },
+    });
+
+    const submission = await tx.questionnaireSubmission.create({
+      data: {
+        studentId: studentUser.id,
+        templateId: template.id,
+        assignedToId: session.user.id,
+        sourceCity: city,
+        sourceCountry: country,
+        intendedCourse: course,
+        intendedIntake: intake,
+        answers,
+      },
+      select: { id: true },
+    });
+
+    await tx.activityLog.create({
+      data: {
+        actorId: session.user.id,
+        targetUserId: studentUser.id,
+        targetStudentProfileId: studentProfile.id,
+        entityType: "STUDENT",
+        entityId: studentUser.id,
+        action: "Created student through agent intake",
+        metadata: {
+          source: "sub_admin",
+          submissionId: submission.id,
+          assignedToId: session.user.id,
+        },
+      },
+    });
+
+    return {
+      studentUserId: studentUser.id,
+      studentProfileId: studentProfile.id,
+      submissionId: submission.id,
+      studentEmail: studentUser.email,
+      studentName: studentUser.name ?? studentUser.email,
+    };
+  });
+
+  const creatorLabel = session.user.name ?? session.user.email ?? "Agent";
+  const admins = await prisma.user.findMany({
+    where: { role: "ADMIN" },
+    select: { id: true, email: true },
+  });
+
+  await Promise.all(
+    admins.map((recipient) =>
+      createWorkflowNotification({
+        recipientId: recipient.id,
+        actorId: session.user.id,
+        studentProfileId: created.studentProfileId,
+        type: "NEW_STUDENT_APPLICATION",
+        title: "Student added by agent",
+        message: `${created.studentName} was added by ${creatorLabel}.`,
+        note: notes || null,
+        link: `/dashboard/sub-admin?tab=students#submission-${created.submissionId}`,
+        actionRequired: false,
+        metadata: {
+          source: "sub_admin",
+          submissionId: created.submissionId,
+          subAdminId: session.user.id,
+        },
+      }),
+    ),
+  );
+
+  await Promise.all([
+    queueDevEmail({
+      createdById: session.user.id,
+      toEmail: created.studentEmail,
+      subject: "Your student profile has been created - L&B Global",
+      htmlBody: `
+        <p>Dear ${escapeHtml(created.studentName)},</p>
+        <p>Your student profile has been created by ${escapeHtml(creatorLabel)} at L&amp;B Global.</p>
+        <p>Our team will contact you with the next steps for your course and visa process.</p>
+        <p>Best regards,<br />L&amp;B Global</p>
+      `,
+      templateKey: "sub-admin-student-created",
+    }),
+    ...admins.map((recipient) =>
+      queueDevEmail({
+        createdById: session.user.id,
+        toEmail: recipient.email,
+        subject: `Student added by agent: ${created.studentName}`,
+        htmlBody: `
+          <p>${escapeHtml(creatorLabel)} added a new student through agent intake.</p>
+          <ul>
+            <li><strong>Name:</strong> ${escapeHtml(created.studentName)}</li>
+            <li><strong>Email:</strong> ${escapeHtml(created.studentEmail)}</li>
+            <li><strong>Course:</strong> ${escapeHtml(course)}</li>
+            <li><strong>Intake:</strong> ${escapeHtml(intake)}</li>
+          </ul>
+          <p>The case has been assigned to ${escapeHtml(creatorLabel)}.</p>
+        `,
+        templateKey: "sub-admin-student-created-notice",
+      }),
+    ),
+  ]);
+
+  revalidatePath("/dashboard/sub-admin");
+  revalidatePath("/dashboard/admin");
+  revalidatePath("/dashboard/internal-staff");
+  revalidatePath(`/dashboard/students/${created.studentUserId}`);
+  redirect("/dashboard/sub-admin?tab=students&manualSuccess=1");
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
