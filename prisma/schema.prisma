@@ -473,11 +473,30 @@ model Invoice {
   recipientEmail   String
   currency         String        @default("AUD")
   subtotal         Float         @default(0)
+  discountAmount   Float         @default(0)
+  taxRate          Float         @default(0)
   taxAmount        Float         @default(0)
+  shippingAmount   Float         @default(0)
   totalAmount      Float         @default(0)
   dueDate          DateTime?
+  paymentTerms     String?
+  remarks          String?       @db.Text
+  companyName      String?
+  companyAddress   String?       @db.Text
+  companyContact   String?       @db.Text
+  companyLogoUrl   String?
+  billToName       String?
+  billToCompany    String?
+  billToAddress    String?       @db.Text
+  billToPhone      String?
+  billToEmail      String?
+  shipToName       String?
+  shipToCompany    String?
+  shipToAddress    String?       @db.Text
+  shipToPhone      String?
+  shipToEmail      String?
   status           InvoiceStatus @default(DRAFT)
-  htmlSnapshot     String
+  htmlSnapshot     String        @db.Text
   sentAt           DateTime?
   paidAt           DateTime?
   createdAt        DateTime      @default(now())
@@ -486,6 +505,21 @@ model Invoice {
   template         EmailTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   createdBy        User           @relation("InvoiceCreator", fields: [createdById], references: [id], onDelete: Cascade)
   lineItems        InvoiceLineItem[]
+}
+
+model CompanySettings {
+  id              String   @id @default(cuid())
+  singleton       Boolean  @unique @default(true)
+  companyName     String   @default("L&B Global")
+  addressLine     String?  @db.Text
+  contactDetails  String?  @db.Text
+  logoUrl         String?
+  defaultCurrency String   @default("AUD")
+  paymentTerms    String?
+  paymentRemarks  String?  @db.Text
+  invoicePrefix   String   @default("INV-")
+  updatedAt       DateTime @updatedAt
+  createdAt       DateTime @default(now())
 }
 
 model InvoiceLineItem {

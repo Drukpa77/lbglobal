@@ -33,8 +33,8 @@ import { AuditTab } from "@/app/dashboard/students/[studentId]/tabs/audit-tab";
 import { TasksDocumentsTab } from "@/app/dashboard/students/[studentId]/tabs/tasks-documents-tab";
 import { auth } from "@/auth";
 import { blobOpensThroughAuthenticatedApi } from "@/lib/blob-access";
+import { getCompanySettings } from "@/lib/company-settings";
 import { getContributions } from "@/lib/contributions";
-import { calculateInvoiceTotals, normalizeInvoiceItems } from "@/lib/invoice-calculator";
 import { prisma } from "@/lib/prisma";
 import { deleteStoredFile, studentDocumentUploadErrorParam, uploadBufferToStorage } from "@/lib/storage";
 import { renderTemplate } from "@/lib/template-renderer";
@@ -1488,78 +1488,19 @@ export default async function StudentProfileManagementPage(props: { params: Para
             </button>
           </form>
 
-          <form action={createInvoicePreviewAction} className="space-y-4 rounded-xl border border-slate-200 bg-slate-50/80 p-5">
+          <form action={createInvoiceDraftAction} className="space-y-4 rounded-xl border border-slate-200 bg-slate-50/80 p-5">
             <input type="hidden" name="studentId" value={studentId} />
             <div>
-              <p className="font-semibold text-slate-900">Generate Invoice Preview</p>
+              <p className="font-semibold text-slate-900">Create Invoice</p>
               <p className="mt-1 text-sm text-slate-600">
-                Fill in amount details and open preview to confirm the final email.
+                Opens the invoice builder with live preview, multi-line items, totals, and PDF download.
               </p>
-            </div>
-            <label className="block">
-              <span className="text-sm font-medium text-slate-700">Template</span>
-              <select
-                name="templateId"
-                required
-                className="mt-1.5 w-full rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-              >
-              <option value="">Select invoice template</option>
-              {templates
-                .filter((template) => template.type === "INVOICE" || template.type === "GENERAL")
-                .map((template) => (
-                  <option key={template.id} value={template.id}>
-                    {template.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
-              <span className="text-sm font-medium text-slate-700">Service / Item Description</span>
-              <input
-                name="lineItemDescription"
-                placeholder="e.g., University application support package"
-                className="mt-1.5 w-full rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-              />
-            </label>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <label className="block">
-                <span className="text-sm font-medium text-slate-700">Quantity</span>
-                <input
-                  name="quantity"
-                  type="number"
-                  min={1}
-                  defaultValue={1}
-                  className="mt-1.5 w-full rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-                />
-              </label>
-              <label className="block">
-                <span className="text-sm font-medium text-slate-700">Unit Price (AUD)</span>
-                <input
-                  name="unitPrice"
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  defaultValue={0}
-                  className="mt-1.5 w-full rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-                />
-              </label>
-              <label className="block">
-                <span className="text-sm font-medium text-slate-700">Tax Rate (%)</span>
-                <input
-                  name="taxRate"
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  defaultValue={10}
-                  className="mt-1.5 w-full rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-                />
-              </label>
             </div>
             <button
               type="submit"
               className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
             >
-              Generate Preview
+              Open Invoice Builder
             </button>
           </form>
         </div>
@@ -3022,7 +2963,7 @@ async function createContractPreviewAction(formData: FormData) {
   redirect(`/dashboard/contracts/${contract.id}/preview`);
 }
 
-async function createInvoicePreviewAction(formData: FormData) {
+async function createInvoiceDraftAction(formData: FormData) {
   "use server";
   const session = await auth();
   if (
@@ -3034,8 +2975,7 @@ async function createInvoicePreviewAction(formData: FormData) {
     redirect("/login");
   }
   const studentId = String(formData.get("studentId") ?? "");
-  const templateId = String(formData.get("templateId") ?? "");
-  if (!studentId || !templateId) redirect(studentFinancialsUrl(studentId));
+  if (!studentId) redirect("/dashboard");
 
   if (session.user.role === "SUB_ADMIN") {
     const assigned = await prisma.questionnaireSubmission.findFirst({
@@ -3060,60 +3000,56 @@ async function createInvoicePreviewAction(formData: FormData) {
     if (!assigned) redirect(studentFinancialsUrl(studentId));
   }
 
-  const description = String(formData.get("lineItemDescription") ?? "").trim() || "Consultancy Service";
-  const quantity = Number(formData.get("quantity") ?? 1);
-  const unitPrice = Number(formData.get("unitPrice") ?? 0);
-  const taxRate = Number(formData.get("taxRate") ?? 0);
-
-  const [student, template] = await Promise.all([
+  const [student, settings] = await Promise.all([
     prisma.user.findUnique({
       where: { id: studentId },
       include: { studentProfile: true },
     }),
-    prisma.emailTemplate.findUnique({ where: { id: templateId } }),
+    getCompanySettings(),
   ]);
-  if (!student || !student.studentProfile || !template) redirect(studentFinancialsUrl(studentId));
+  if (!student || !student.studentProfile) redirect(studentFinancialsUrl(studentId));
 
-  const normalizedItems = normalizeInvoiceItems([{ description, quantity, unitPrice }]);
-  const totals = calculateInvoiceTotals(normalizedItems, taxRate);
-  const invoiceNumber = `INV-${Date.now()}`;
+  const invoiceNumber = `${settings.invoicePrefix}${Date.now()}`;
   const dueDate = new Date(Date.now() + 1000 * 60 * 60 * 24 * 14);
-
-  const variables = {
-    studentName: student.name ?? student.email,
-    email: student.email,
-    invoiceNumber,
-    currency: "AUD",
-    totalAmount: totals.totalAmount.toFixed(2),
-    dueDate: dueDate.toLocaleDateString(),
-    senderName: session.user.name ?? session.user.email ?? "L&B Global",
-  };
-  const subject = renderTemplate(template.subject, variables);
-  const htmlSnapshot = renderTemplate(template.htmlBody, variables);
+  const studentName = student.name ?? student.email;
 
   const invoice = await prisma.invoice.create({
     data: {
       studentProfileId: student.studentProfile.id,
-      templateId: template.id,
       createdById: session.user.id,
       invoiceNumber,
-      title: `${template.name} - ${student.name ?? student.email}`,
-      subject,
+      title: `Invoice - ${studentName}`,
+      subject: `Invoice ${invoiceNumber} from ${settings.companyName}`,
       recipientEmail: student.email,
-      currency: "AUD",
-      subtotal: totals.subtotal,
-      taxAmount: totals.taxAmount,
-      totalAmount: totals.totalAmount,
+      currency: settings.defaultCurrency,
+      subtotal: 0,
+      discountAmount: 0,
+      taxRate: 0,
+      taxAmount: 0,
+      shippingAmount: 0,
+      totalAmount: 0,
       dueDate,
+      paymentTerms: settings.paymentTerms,
+      remarks: settings.paymentRemarks,
       status: "DRAFT",
-      htmlSnapshot,
+      htmlSnapshot: "",
+      companyName: settings.companyName,
+      companyAddress: settings.addressLine,
+      companyContact: settings.contactDetails,
+      companyLogoUrl: settings.logoUrl,
+      billToName: studentName,
+      billToAddress: student.studentProfile.currentAddress,
+      billToPhone: student.studentProfile.phone,
+      billToEmail: student.email,
       lineItems: {
-        create: normalizedItems.map((item) => ({
-          description: item.description,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          amount: item.amount,
-        })),
+        create: [
+          {
+            description: "Service",
+            quantity: 1,
+            unitPrice: 0,
+            amount: 0,
+          },
+        ],
       },
     },
   });
@@ -3123,7 +3059,7 @@ async function createInvoicePreviewAction(formData: FormData) {
       targetStudentProfileId: student.studentProfile.id,
       entityType: "INVOICE",
       entityId: invoice.id,
-      action: "Generated invoice preview",
+      action: "Created invoice draft",
     },
   });
   redirect(`/dashboard/invoices/${invoice.id}/preview`);
