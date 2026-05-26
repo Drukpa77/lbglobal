@@ -41,10 +41,14 @@ export default async function InvoiceBuilderPage(props: { params: Params }) {
   const profile = invoice.studentProfile;
   const studentReturnUrl = `/dashboard/students/${student.id}?tab=financials`;
 
+  const now = new Date();
+  const todayLabel = `${String(now.getUTCDate()).padStart(2, "0")}/${String(now.getUTCMonth() + 1).padStart(2, "0")}/${now.getUTCFullYear()}`;
+
   const initial: InvoiceBuilderInitial = {
     invoiceId: invoice.id,
     invoiceNumber: invoice.invoiceNumber,
     status: invoice.status,
+    todayLabel,
     subject: invoice.subject,
     currency: invoice.currency,
     dueDate: invoice.dueDate ? invoice.dueDate.toISOString().slice(0, 10) : null,

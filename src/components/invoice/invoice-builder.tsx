@@ -41,6 +41,7 @@ export type InvoiceBuilderInitial = {
   };
   lineItems: LineItem[];
   studentReturnUrl: string;
+  todayLabel: string;
 };
 
 export function InvoiceBuilder({ initial }: { initial: InvoiceBuilderInitial }) {
@@ -82,7 +83,6 @@ export function InvoiceBuilder({ initial }: { initial: InvoiceBuilderInitial }) 
   ]);
 
   const formattedCurrency = currency || initial.currency || "AUD";
-  const todayIso = useMemo(() => new Date().toLocaleDateString(), []);
 
   function updateLineItem(index: number, patch: Partial<LineItem>) {
     setLineItems((items) =>
@@ -102,13 +102,14 @@ export function InvoiceBuilder({ initial }: { initial: InvoiceBuilderInitial }) 
     const node = previewRef.current;
     if (!node) throw new Error("Preview not ready");
     const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
-      import("html2canvas"),
+      import("html2canvas-pro"),
       import("jspdf"),
     ]);
     const canvas = await html2canvas(node, {
       scale: 2,
       backgroundColor: "#ffffff",
       useCORS: true,
+      logging: false,
     });
     const imgData = canvas.toDataURL("image/png");
     const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
@@ -487,7 +488,7 @@ export function InvoiceBuilder({ initial }: { initial: InvoiceBuilderInitial }) 
                 <p className="text-2xl font-bold tracking-wide text-slate-900">INVOICE</p>
                 <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-slate-700">
                   <span className="font-semibold uppercase">Date</span>
-                  <span className="text-right">{todayIso}</span>
+                  <span className="text-right">{initial.todayLabel}</span>
                   <span className="font-semibold uppercase">Invoice No.</span>
                   <span className="text-right">{initial.invoiceNumber}</span>
                   {paymentTerms ? (
@@ -667,7 +668,10 @@ function formatDateNice(value: string) {
   if (!value) return "";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleDateString();
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  const month = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const year = d.getUTCFullYear();
+  return `${day}/${month}/${year}`;
 }
 
 async function blobToBase64(blob: Blob) {
