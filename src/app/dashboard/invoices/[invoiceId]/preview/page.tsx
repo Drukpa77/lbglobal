@@ -41,6 +41,14 @@ export default async function InvoiceBuilderPage(props: { params: Params }) {
   const profile = invoice.studentProfile;
   const studentReturnUrl = `/dashboard/students/${student.id}?tab=financials`;
 
+  const invoiceDateLabel = formatInvoiceDate(invoice.createdAt);
+  const dueDateLabel = invoice.dueDate ? formatInvoiceDate(invoice.dueDate) : "";
+
+  const taxRate = invoice.taxRate || settings.defaultTaxRate;
+  const customerLabel = invoice.title?.startsWith("Invoice - ")
+    ? invoice.title.slice("Invoice - ".length)
+    : invoice.title || (student.name ?? student.email);
+
   const initial: InvoiceBuilderInitial = {
     invoiceId: invoice.id,
     invoiceNumber: invoice.invoiceNumber,
@@ -48,15 +56,23 @@ export default async function InvoiceBuilderPage(props: { params: Params }) {
     subject: invoice.subject,
     currency: invoice.currency,
     dueDate: invoice.dueDate ? invoice.dueDate.toISOString().slice(0, 10) : null,
+    invoiceDateLabel,
+    dueDateLabel,
     paymentTerms: invoice.paymentTerms ?? settings.paymentTerms,
     remarks: invoice.remarks ?? settings.paymentRemarks,
+    customerLabel,
     discountAmount: invoice.discountAmount,
-    taxRate: invoice.taxRate,
+    taxRate,
+    taxLabel: settings.defaultTaxLabel,
     shippingAmount: invoice.shippingAmount,
     companyName: invoice.companyName ?? settings.companyName,
+    legalName: settings.legalName,
+    abn: settings.abn,
     companyAddress: invoice.companyAddress ?? settings.addressLine,
     companyContact: invoice.companyContact ?? settings.contactDetails,
     companyLogoUrl: invoice.companyLogoUrl ?? settings.logoUrl,
+    bankDetails: settings.bankDetails,
+    invoiceFooter: settings.invoiceFooter,
     billTo: {
       name: invoice.billToName ?? student.name ?? "",
       company: invoice.billToCompany ?? "",
@@ -77,8 +93,9 @@ export default async function InvoiceBuilderPage(props: { params: Params }) {
             description: item.description,
             quantity: item.quantity,
             unitPrice: item.unitPrice,
+            taxable: item.taxable,
           }))
-        : [{ description: "", quantity: 1, unitPrice: 0 }],
+        : [{ description: "", quantity: 1, unitPrice: 0, taxable: true }],
     studentReturnUrl,
   };
 
@@ -135,6 +152,14 @@ export default async function InvoiceBuilderPage(props: { params: Params }) {
       </div>
     </section>
   );
+}
+
+function formatInvoiceDate(value: Date) {
+  const day = value.getUTCDate();
+  const monthIndex = value.getUTCMonth();
+  const year = value.getUTCFullYear();
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${day} ${months[monthIndex]} ${year}`;
 }
 
 function invoiceStatusTone(status: string) {
