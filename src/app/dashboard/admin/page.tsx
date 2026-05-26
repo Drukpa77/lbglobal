@@ -871,6 +871,9 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
             <Link href="/dashboard/admin/templates" className="rounded-md border px-3 py-2 text-sm">
               Manage email templates
             </Link>
+            <Link href="/dashboard/admin/settings" className="rounded-md border px-3 py-2 text-sm">
+              Company / Invoice settings
+            </Link>
             <Link href="/dashboard/communication" className="rounded-md border px-3 py-2 text-sm">
               Internal communication
             </Link>
