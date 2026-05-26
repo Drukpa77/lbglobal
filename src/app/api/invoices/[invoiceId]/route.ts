@@ -20,20 +20,25 @@ const updateSchema = z.object({
   dueDate: z.string().nullable().optional(),
   paymentTerms: z.string().nullable().optional(),
   remarks: z.string().nullable().optional(),
+  customerLabel: z.string().nullable().optional(),
   discountAmount: z.number().nonnegative(),
   taxRate: z.number().nonnegative(),
   shippingAmount: z.number().nonnegative(),
   companyName: z.string().trim().min(1).max(200),
+  legalName: z.string().nullable().optional(),
+  abn: z.string().nullable().optional(),
   companyAddress: z.string().nullable().optional(),
   companyContact: z.string().nullable().optional(),
+  bankDetails: z.string().nullable().optional(),
   billTo: partySchema,
-  shipTo: partySchema,
+  shipTo: partySchema.nullable().optional(),
   lineItems: z
     .array(
       z.object({
-        description: z.string().trim().min(1).max(500),
+        description: z.string().trim().min(1).max(2000),
         quantity: z.number().nonnegative(),
         unitPrice: z.number().nonnegative(),
+        taxable: z.boolean(),
       }),
     )
     .min(1),
@@ -105,6 +110,7 @@ export async function PATCH(request: Request, { params }: { params: Params }) {
       where: { id: invoiceId },
       data: {
         subject: parsed.data.subject,
+        title: parsed.data.customerLabel ?? parsed.data.subject,
         currency: parsed.data.currency.toUpperCase(),
         dueDate: dueDate && !Number.isNaN(dueDate.getTime()) ? dueDate : null,
         paymentTerms: parsed.data.paymentTerms ?? null,
@@ -117,7 +123,9 @@ export async function PATCH(request: Request, { params }: { params: Params }) {
         totalAmount: totals.balanceDue,
         companyName: parsed.data.companyName,
         companyAddress: parsed.data.companyAddress ?? null,
-        companyContact: parsed.data.companyContact ?? null,
+        companyContact: [parsed.data.companyContact, parsed.data.bankDetails]
+          .filter((line) => line && line.trim().length > 0)
+          .join("\n\n") || null,
         billToName: parsed.data.billTo?.name ?? null,
         billToCompany: parsed.data.billTo?.company ?? null,
         billToAddress: parsed.data.billTo?.address ?? null,
@@ -132,9 +140,10 @@ export async function PATCH(request: Request, { params }: { params: Params }) {
         lineItems: {
           create: parsed.data.lineItems.map((item) => ({
             description: item.description,
-            quantity: Math.trunc(item.quantity),
+            quantity: round2(item.quantity),
             unitPrice: round2(item.unitPrice),
             amount: round2(item.quantity * item.unitPrice),
+            taxable: item.taxable,
           })),
         },
       },
@@ -160,7 +169,7 @@ export async function PATCH(request: Request, { params }: { params: Params }) {
 }
 
 function calculateTotals(
-  items: Array<{ quantity: number; unitPrice: number }>,
+  items: Array<{ quantity: number; unitPrice: number; taxable: boolean }>,
   discount: number,
   taxRate: number,
   shipping: number,
@@ -168,9 +177,15 @@ function calculateTotals(
   const subtotal = round2(
     items.reduce((sum, item) => sum + (item.quantity || 0) * (item.unitPrice || 0), 0),
   );
+  const taxableSubtotal = round2(
+    items.reduce(
+      (sum, item) => (item.taxable ? sum + (item.quantity || 0) * (item.unitPrice || 0) : sum),
+      0,
+    ),
+  );
   const discountAmount = round2(Math.max(0, discount || 0));
   const subtotalAfterDiscount = round2(Math.max(0, subtotal - discountAmount));
-  const taxAmount = round2(subtotalAfterDiscount * (Math.max(0, taxRate || 0) / 100));
+  const taxAmount = round2(taxableSubtotal * (Math.max(0, taxRate || 0) / 100));
   const shippingAmount = round2(Math.max(0, shipping || 0));
   const balanceDue = round2(subtotalAfterDiscount + taxAmount + shippingAmount);
   return { subtotal, discount: discountAmount, subtotalAfterDiscount, taxAmount, shipping: shippingAmount, balanceDue };
