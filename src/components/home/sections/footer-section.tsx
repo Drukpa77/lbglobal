@@ -28,9 +28,28 @@ const quickLinks = [
 
 export function FooterSection() {
   return (
-    <footer className="bg-blue-950 text-white">
+    <footer className="relative overflow-hidden bg-blue-950 text-white">
+      <Image
+        src="/footer-bg.jpg"
+        alt=""
+        fill
+        aria-hidden="true"
+        sizes="100vw"
+        className="object-cover object-center opacity-30"
+      />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-blue-950/95 via-blue-900/90 to-blue-950/95" />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-blue-950/65 via-transparent to-blue-950/90" />
+      <div
+        className="pointer-events-none absolute inset-0 opacity-[0.04]"
+        style={{
+          backgroundImage:
+            "linear-gradient(rgba(255,255,255,0.55) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.55) 1px, transparent 1px)",
+          backgroundSize: "56px 56px",
+        }}
+      />
+
       {/* Main footer grid */}
-      <div className="home-fluid-shell w-full py-14">
+      <div className="home-fluid-shell relative z-10 w-full py-14">
         <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-4">
           {/* Brand column */}
           <div className="sm:col-span-2 lg:col-span-1">
@@ -140,7 +159,7 @@ export function FooterSection() {
       </div>
 
       {/* Bottom bar */}
-      <div className="border-t border-white/10">
+      <div className="relative z-10 border-t border-white/10">
         <div className="home-fluid-shell flex w-full flex-wrap items-center justify-between gap-3 py-5">
           <p className="text-xs text-blue-300/70">
             &copy; {new Date().getFullYear()} L&amp;B Global. All rights reserved.

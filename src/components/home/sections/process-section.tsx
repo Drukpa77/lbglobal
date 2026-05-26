@@ -9,10 +9,7 @@ export function ProcessSection() {
       <div className="home-fluid-shell w-full">
         <SectionReveal>
           <div className="text-center">
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-rose-500">
-              Simple Process
-            </p>
-            <h2 className="mt-2 text-[clamp(1.6rem,3.2vw,2.4rem)] font-bold tracking-tight text-blue-900">
+            <h2 className="text-[clamp(1.6rem,3.2vw,2.4rem)] font-bold tracking-tight text-blue-900">
               How It Works
             </h2>
             <p className="mx-auto mt-3 max-w-2xl text-[clamp(0.95rem,1.4vw,1.05rem)] leading-7 text-slate-600">

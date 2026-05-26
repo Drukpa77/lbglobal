@@ -314,8 +314,8 @@ model HomePost {
   id                  String            @id @default(cuid())
   title               String
   slug                String?           @unique
-  content             String
-  contentHtml         String            @default("")
+  content             String            @db.Text
+  contentHtml         String            @default("") @db.LongText
   mediaType           HomePostMediaType @default(NONE)
   mediaUrl            String?
   featuredThumbnail   String?
@@ -323,8 +323,8 @@ model HomePost {
   isPublished         Boolean           @default(false)
   publishDate         DateTime?
   metaTitle           String?
-  metaDescription     String?
-  metaKeywords        String?
+  metaDescription     String?           @db.Text
+  metaKeywords        String?           @db.Text
   focusKeyword        String?
   ogImage             String?
   authorId            String

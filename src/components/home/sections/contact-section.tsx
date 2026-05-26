@@ -31,7 +31,9 @@ export function ContactSection() {
           </div>
 
           <div className="space-y-4">
-            {offices.map((office, index) => (
+            {offices
+              .filter((office) => office.title !== "Bhutan Office")
+              .map((office, index) => (
               <SectionReveal key={office.title} delay={index * 0.07}>
                 <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                   <div className="mb-3 h-1 w-10 rounded-full bg-gradient-to-r from-rose-500 to-blue-600" />

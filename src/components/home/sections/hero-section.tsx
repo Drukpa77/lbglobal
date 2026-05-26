@@ -1,16 +1,28 @@
 "use client";
 
-import { motion } from "framer-motion";
-import { ArrowRight, CheckCircle2 } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import { ArrowRight } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
+import { useEffect, useState } from "react";
 
-import { heroData, trustStats } from "@/components/home/content";
+import { heroData } from "@/components/home/content";
+
+const SPIN_WORDS = ["confidence", "clarity", "speed", "expert support"];
 
 export function HeroSection() {
+  const [spinIndex, setSpinIndex] = useState(0);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setSpinIndex((current) => (current + 1) % SPIN_WORDS.length);
+    }, 2200);
+    return () => window.clearInterval(timer);
+  }, []);
+
   return (
     <section
-      className="relative overflow-hidden bg-blue-900"
+      className="relative -mt-16 overflow-hidden bg-blue-900"
       aria-labelledby="home-hero-heading"
     >
       {/* Background photo — fills the section, rendered below all overlays */}
@@ -40,30 +52,34 @@ export function HeroSection() {
         }}
       />
 
-      <div className="home-fluid-shell relative z-10 w-full py-20 lg:py-28">
+      <div className="home-fluid-shell relative z-10 w-full pt-36 pb-20 lg:pt-44 lg:pb-28">
         <div className="grid gap-10 lg:grid-cols-12 lg:items-center">
-          {/* Left: headline & CTAs */}
+          {/* Left: supporting copy + primary CTA */}
           <motion.div
-            className="lg:col-span-7"
+            className="lg:col-span-5"
             initial={{ opacity: 0, y: 24 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.75, ease: [0.22, 1, 0.36, 1] }}
           >
-            <span className="inline-block rounded bg-rose-500/20 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-rose-400">
-              {heroData.eyebrow}
-            </span>
-
-            <h1
-              id="home-hero-heading"
-              className="mt-5 text-[clamp(2.2rem,5.5vw,4rem)] font-bold leading-tight tracking-tight text-white"
-            >
-              {heroData.title}
-              <br />
-              <span className="text-rose-400">{heroData.titleHighlight}</span>
-            </h1>
-
-            <p className="mt-6 max-w-xl text-[clamp(1rem,1.4vw,1.1rem)] leading-relaxed text-blue-100/90">
-              {heroData.subtitle}
+            <p className="max-w-xl text-[clamp(1rem,1.4vw,1.1rem)] leading-relaxed text-blue-100/90">
+              We help students choose the right course, prepare stronger applications, and
+              move through visa steps with{" "}
+              <span className="relative inline-flex h-[1.4em] min-w-[14ch] align-middle">
+                <AnimatePresence mode="wait">
+                  <motion.span
+                    id="spin"
+                    key={SPIN_WORDS[spinIndex]}
+                    className="absolute left-0 top-0 font-semibold text-rose-300"
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    transition={{ duration: 0.35, ease: "easeOut" }}
+                  >
+                    {SPIN_WORDS[spinIndex]}
+                  </motion.span>
+                </AnimatePresence>
+              </span>
+              .
             </p>
 
             <div className="mt-9 flex flex-wrap gap-3">
@@ -74,61 +90,24 @@ export function HeroSection() {
                 {heroData.primaryCta.label}
                 <ArrowRight className="h-4 w-4" />
               </Link>
-              <Link
-                href={heroData.secondaryCta.href}
-                className="inline-flex items-center rounded border border-white/30 px-7 py-3.5 text-sm font-semibold text-white transition hover:border-white/60 hover:bg-white/10"
-              >
-                {heroData.secondaryCta.label}
-              </Link>
-            </div>
-
-            {/* Quick trust points */}
-            <div className="mt-10 flex flex-wrap gap-3">
-              {[
-                "Free Initial Assessment",
-                "Dedicated Counselor",
-                "End-to-End Visa Support",
-              ].map((point) => (
-                <span
-                  key={point}
-                  className="flex items-center gap-1.5 text-sm text-blue-100"
-                >
-                  <CheckCircle2 className="h-4 w-4 shrink-0 text-rose-400" />
-                  {point}
-                </span>
-              ))}
             </div>
           </motion.div>
 
-          {/* Right: stats card */}
+          {/* Right: main headline */}
           <motion.div
-            className="lg:col-span-5"
-            initial={{ opacity: 0, y: 28 }}
+            className="lg:col-span-7 lg:text-right"
+            initial={{ opacity: 0, y: 24 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.78, ease: [0.22, 1, 0.36, 1], delay: 0.1 }}
+            transition={{ duration: 0.75, ease: [0.22, 1, 0.36, 1], delay: 0.08 }}
           >
-            <div className="rounded-xl border border-white/10 bg-white/5 p-6 backdrop-blur-sm">
-              <p className="mb-5 text-xs font-semibold uppercase tracking-[0.2em] text-rose-400">
-                Why Choose L&amp;B Global
-              </p>
-              <div className="grid grid-cols-2 gap-4">
-                {trustStats.map((stat) => (
-                  <div
-                    key={stat.label}
-                    className="rounded-lg border border-white/10 bg-white/5 p-4"
-                  >
-                    <p className="text-2xl font-bold text-white">{stat.value}</p>
-                    <p className="mt-1 text-xs text-blue-200">{stat.label}</p>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-5 border-t border-white/10 pt-5">
-                <p className="text-sm text-blue-100/80">
-                  Helping students from Bhutan and beyond achieve their international
-                  education goals with clear plans and real results.
-                </p>
-              </div>
-            </div>
+            <h1
+              id="home-hero-heading"
+              className="text-[clamp(2.2rem,5.5vw,4rem)] font-bold leading-tight tracking-tight text-white"
+            >
+              {heroData.title}
+              <br />
+              <span className="text-rose-400">{heroData.titleHighlight}</span>
+            </h1>
           </motion.div>
         </div>
       </div>

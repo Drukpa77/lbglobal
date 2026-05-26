@@ -13,6 +13,11 @@ const nextConfig: NextConfig = {
         hostname: "krisahn.com.au",
         pathname: "/**",
       },
+      {
+        protocol: "https",
+        hostname: "images.unsplash.com",
+        pathname: "/**",
+      },
     ],
   },
 };

@@ -19,6 +19,8 @@ export function HomeNav() {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
+  const overHero = !scrolled;
+
   return (
     <>
       {/* ── Main nav ────────────────────────────────────────── */}
@@ -26,7 +28,7 @@ export function HomeNav() {
         className={`sticky top-0 z-40 border-b transition-all duration-300 ${
           scrolled
             ? "border-slate-200/80 bg-white/95 shadow-[0_4px_20px_rgba(0,0,0,0.07)] backdrop-blur-xl"
-            : "border-transparent bg-white/90 backdrop-blur-md"
+            : "border-transparent bg-transparent"
         }`}
         animate={{ paddingTop: scrolled ? 6 : 10, paddingBottom: scrolled ? 6 : 10 }}
         transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
@@ -41,17 +43,24 @@ export function HomeNav() {
                 alt="L&B Global logo"
                 width={44}
                 height={44}
-                className="h-10 w-10 rounded-xl border border-slate-200 bg-white p-1 object-contain shadow-sm"
+                className="h-10 w-10 rounded-xl border border-white/40 bg-white p-1 object-contain shadow-sm"
                 priority
               />
-              {/* Live dot */}
               <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-rose-500" />
             </div>
             <div>
-              <p className="text-[9px] font-bold uppercase tracking-[0.22em] text-rose-500">
+              <p
+                className={`text-[9px] font-bold uppercase tracking-[0.22em] transition-colors duration-300 ${
+                  overHero ? "text-rose-300" : "text-rose-500"
+                }`}
+              >
                 Overseas Education &amp; Visa
               </p>
-              <p className="text-[1.05rem] font-extrabold tracking-tight text-blue-900">
+              <p
+                className={`text-[1.05rem] font-extrabold tracking-tight transition-colors duration-300 ${
+                  overHero ? "text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.35)]" : "text-blue-900"
+                }`}
+              >
                 L&amp;B Global
               </p>
             </div>
@@ -60,22 +69,38 @@ export function HomeNav() {
           {/* Desktop pill nav */}
           <nav
             aria-label="Main navigation"
-            className="hidden items-center gap-0.5 rounded-full border border-slate-200 bg-slate-50/80 px-1.5 py-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_2px_8px_rgba(0,0,0,0.05)] backdrop-blur-sm lg:flex"
+            className={`hidden items-center gap-0.5 rounded-full border px-1.5 py-1 backdrop-blur-md transition-all duration-300 lg:flex ${
+              overHero
+                ? "border-white/20 bg-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.15),0_4px_18px_rgba(0,0,0,0.18)]"
+                : "border-slate-200 bg-slate-50/80 shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_2px_8px_rgba(0,0,0,0.05)]"
+            }`}
           >
             {homeNavLinks.map((item) => (
               <a
                 key={item.href}
                 href={item.href}
-                className="rounded-full px-3.5 py-1.5 text-[0.8125rem] font-medium text-slate-600 transition-all duration-200 hover:bg-white hover:text-blue-900 hover:shadow-sm"
+                className={`rounded-full px-3.5 py-1.5 text-[0.8125rem] font-medium transition-all duration-200 ${
+                  overHero
+                    ? "text-white/90 hover:bg-white/15 hover:text-white"
+                    : "text-slate-600 hover:bg-white hover:text-blue-900 hover:shadow-sm"
+                }`}
               >
                 {item.label}
               </a>
             ))}
-            {/* Divider */}
-            <span className="mx-1.5 h-4 w-px shrink-0 bg-slate-300/70" aria-hidden />
+            <span
+              className={`mx-1.5 h-4 w-px shrink-0 transition-colors duration-300 ${
+                overHero ? "bg-white/30" : "bg-slate-300/70"
+              }`}
+              aria-hidden
+            />
             <Link
               href="/newsletter"
-              className="rounded-full bg-blue-900 px-3.5 py-1.5 text-[0.8125rem] font-semibold text-white transition-all duration-200 hover:bg-blue-800"
+              className={`rounded-full px-3.5 py-1.5 text-[0.8125rem] font-semibold transition-all duration-200 ${
+                overHero
+                  ? "bg-white text-blue-900 hover:bg-blue-50"
+                  : "bg-blue-900 text-white hover:bg-blue-800"
+              }`}
             >
               Newsletter
             </Link>
@@ -85,7 +110,11 @@ export function HomeNav() {
           <div className="flex shrink-0 items-center gap-2">
             <Link
               href="/login"
-              className="hidden rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 sm:inline-flex"
+              className={`hidden rounded-full border px-4 py-2 text-sm font-medium transition sm:inline-flex ${
+                overHero
+                  ? "border-white/40 text-white hover:border-white/70 hover:bg-white/10"
+                  : "border-slate-300 text-slate-700 hover:border-slate-400 hover:bg-slate-50"
+              }`}
             >
               Sign In
             </Link>
@@ -100,7 +129,11 @@ export function HomeNav() {
             <button
               type="button"
               onClick={() => setIsDrawerOpen(true)}
-              className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white p-2 text-slate-600 shadow-sm transition hover:bg-slate-50 lg:hidden"
+              className={`inline-flex items-center justify-center rounded-xl border p-2 shadow-sm transition lg:hidden ${
+                overHero
+                  ? "border-white/30 bg-white/10 text-white hover:bg-white/20 backdrop-blur-md"
+                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+              }`}
               aria-label="Open navigation menu"
             >
               <Menu className="h-4 w-4" />
