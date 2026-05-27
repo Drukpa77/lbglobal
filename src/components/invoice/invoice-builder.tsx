@@ -114,25 +114,26 @@ export function InvoiceBuilder({ initial }: { initial: InvoiceBuilderInitial }) 
       import("jspdf"),
     ]);
     const canvas = await html2canvas(node, {
-      scale: 2,
+      scale: 1.5,
       backgroundColor: "#ffffff",
       useCORS: true,
       logging: false,
     });
-    const imgData = canvas.toDataURL("image/png");
-    const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+    const imgData = canvas.toDataURL("image/jpeg", 0.92);
+    const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4", compress: true });
     const pageWidth = pdf.internal.pageSize.getWidth();
     const pageHeight = pdf.internal.pageSize.getHeight();
     const imgWidth = pageWidth;
     const imgHeight = (canvas.height * imgWidth) / canvas.width;
+    const overflowTolerance = pageHeight * 0.05;
     let heightLeft = imgHeight;
     let position = 0;
-    pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+    pdf.addImage(imgData, "JPEG", 0, position, imgWidth, imgHeight, undefined, "FAST");
     heightLeft -= pageHeight;
-    while (heightLeft > 0) {
+    while (heightLeft > overflowTolerance) {
       position = heightLeft - imgHeight;
       pdf.addPage();
-      pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+      pdf.addImage(imgData, "JPEG", 0, position, imgWidth, imgHeight, undefined, "FAST");
       heightLeft -= pageHeight;
     }
     return pdf.output("blob");
@@ -457,6 +458,15 @@ export function InvoiceBuilder({ initial }: { initial: InvoiceBuilderInitial }) 
               <div className="flex items-start justify-between gap-6 border-b border-slate-300 pb-4">
                 <div className="flex-1">
                   <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-700">Payment Advice</p>
+                  {initial.companyLogoUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={initial.companyLogoUrl}
+                      alt={companyName}
+                      style={{ maxHeight: 64, marginTop: 12, display: "block" }}
+                      crossOrigin="anonymous"
+                    />
+                  ) : null}
                   <div className="mt-3 text-[11px] leading-snug text-slate-700">
                     <p className="font-semibold">To: {legalName || companyName}</p>
                     {companyAddress ? <p className="mt-1 whitespace-pre-line">{companyAddress}</p> : null}
@@ -464,16 +474,7 @@ export function InvoiceBuilder({ initial }: { initial: InvoiceBuilderInitial }) 
                   </div>
                 </div>
                 <div className="w-[280px]">
-                  {initial.companyLogoUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={initial.companyLogoUrl}
-                      alt={companyName}
-                      style={{ maxHeight: 60, marginLeft: "auto", display: "block" }}
-                      crossOrigin="anonymous"
-                    />
-                  ) : null}
-                  <table className="mt-3 w-full border-collapse text-[11px]">
+                  <table className="w-full border-collapse text-[11px]">
                     <tbody>
                       <AdviceRow label="Customer" value={customerLabel} />
                       <AdviceRow label="Invoice Number" value={initial.invoiceNumber} />

@@ -70,7 +70,7 @@ export default async function InvoiceBuilderPage(props: { params: Params }) {
     abn: settings.abn,
     companyAddress: invoice.companyAddress ?? settings.addressLine,
     companyContact: invoice.companyContact ?? settings.contactDetails,
-    companyLogoUrl: invoice.companyLogoUrl ?? settings.logoUrl,
+    companyLogoUrl: invoice.companyLogoUrl ?? settings.logoUrl ?? "/loogo.png",
     bankDetails: settings.bankDetails,
     invoiceFooter: settings.invoiceFooter,
     billTo: {

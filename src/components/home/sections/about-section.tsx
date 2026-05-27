@@ -59,19 +59,6 @@ export function AboutSection() {
                 ))}
               </ul>
 
-              {/* Stat accents */}
-              <div className="mt-8 grid grid-cols-3 gap-4 border-t border-slate-100 pt-6">
-                {[
-                  { value: "1,000+", label: "Students" },
-                  { value: "2", label: "Offices" },
-                  { value: "95%+", label: "Visa Success" },
-                ].map((s) => (
-                  <div key={s.label} className="text-center">
-                    <p className="text-2xl font-bold text-blue-900">{s.value}</p>
-                    <p className="text-xs text-slate-500">{s.label}</p>
-                  </div>
-                ))}
-              </div>
             </div>
           </SectionReveal>
         </div>

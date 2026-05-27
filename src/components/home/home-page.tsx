@@ -2,7 +2,6 @@ import dynamic from "next/dynamic";
 import type { HomePostItem } from "@/components/home/types";
 import { HomeNav } from "@/components/home/home-nav";
 import { HeroSection } from "@/components/home/sections/hero-section";
-import { ProofSection } from "@/components/home/sections/proof-section";
 import { ServicesSection } from "@/components/home/sections/services-section";
 import { ProcessSection } from "@/components/home/sections/process-section";
 import { AboutSection } from "@/components/home/sections/about-section";
@@ -38,7 +37,6 @@ export function HomePage({ posts }: { posts: HomePostItem[] }) {
     <main className="min-h-screen bg-white text-slate-900">
       <HomeNav />
       <HeroSection />
-      <ProofSection />
       <ServicesSection />
       <ProcessSection />
       <AboutSection />
