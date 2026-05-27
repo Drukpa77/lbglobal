@@ -10,6 +10,7 @@ import { DashboardTabBar } from "@/components/dashboard-tab-bar";
 import { DelegationSuccessToast } from "@/components/delegation-success-toast";
 import { NewInquiriesCard } from "@/components/new-inquiries-card";
 import { RemindersWidget } from "@/components/reminders-widget";
+import { StudentClientIntakeForm } from "@/components/student-client-intake-form";
 import { getContributions } from "@/lib/contributions";
 import { queueDevEmail } from "@/lib/email-outbox";
 import { prisma } from "@/lib/prisma";
@@ -77,7 +78,8 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
         : searchParams.manualError === "template"
           ? "No active questionnaire template is available for agent intake."
           : null;
-  const manualStudentSuccess = searchParams.manualSuccess === "1";
+  const manualStudentSuccess = searchParams.manualSuccess === "student" || searchParams.manualSuccess === "client";
+  const manualStudentSuccessType = searchParams.manualSuccess === "client" ? "client" : "student";
 
   const scopedWhere = buildSubmissionWhere({
     role: session.user.role,
@@ -669,88 +671,13 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
       {tab === "students" && (
         <div className="space-y-6">
           {session.user.role === "SUB_ADMIN" ? (
-            <section className="rounded-lg border bg-white p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h2 className="text-sm font-semibold">Add Student</h2>
-                  <p className="mt-1 text-xs text-gray-600">
-                    Create a student record and assign the case to yourself.
-                  </p>
-                </div>
-                {manualStudentSuccess ? (
-                  <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-                    Student added
-                  </span>
-                ) : null}
-              </div>
-              {manualStudentError ? (
-                <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                  {manualStudentError}
-                </p>
-              ) : null}
-              <form action={createManualStudentAction} className="mt-4 grid gap-3 md:grid-cols-2">
-                <label className="text-xs font-medium text-gray-700">
-                  Name
-                  <input
-                    name="name"
-                    required
-                    minLength={2}
-                    maxLength={100}
-                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                  />
-                </label>
-                <label className="text-xs font-medium text-gray-700">
-                  Email
-                  <input
-                    name="email"
-                    type="email"
-                    required
-                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                  />
-                </label>
-                <label className="text-xs font-medium text-gray-700">
-                  Phone
-                  <input name="phone" required className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
-                </label>
-                <label className="text-xs font-medium text-gray-700">
-                  Country
-                  <input name="country" required className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
-                </label>
-                <label className="text-xs font-medium text-gray-700">
-                  City
-                  <input name="city" required className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
-                </label>
-                <label className="text-xs font-medium text-gray-700">
-                  Course
-                  <input name="course" required className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
-                </label>
-                <label className="text-xs font-medium text-gray-700">
-                  Intake
-                  <input name="intake" required className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
-                </label>
-                <label className="text-xs font-medium text-gray-700">
-                  Current education
-                  <input
-                    name="currentEducation"
-                    required
-                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                  />
-                </label>
-                <label className="text-xs font-medium text-gray-700 md:col-span-2">
-                  Notes
-                  <textarea
-                    name="notes"
-                    rows={3}
-                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                  />
-                </label>
-                <div className="md:col-span-2">
-                  <button type="submit" className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white">
-                    Add and assign to me
-                  </button>
-                </div>
-              </form>
-            </section>
+            <StudentClientIntakeForm
+              action={createManualStudentAction}
+              error={manualStudentError}
+              success={manualStudentSuccess}
+              successType={manualStudentSuccessType}
+              description="Choose whether you are adding a student or client, then assign the case to yourself."
+            />
           ) : null}
 
           <div className="grid gap-4 md:grid-cols-5">
@@ -1839,6 +1766,13 @@ async function createManualStudentAction(formData: FormData) {
   if (!session?.user) redirect("/login");
   if (session.user.role !== "SUB_ADMIN") redirect("/dashboard/sub-admin?tab=students");
 
+  const recordType = formData.get("recordType") === "client" ? "client" : "student";
+  const isClient = recordType === "client";
+  const recordLabel = isClient ? "client" : "student";
+  const recordTitle = isClient ? "Client" : "Student";
+  const sourceLabel = isClient ? "Client Agent" : "Agent";
+  const courseFieldLabel = isClient ? "Service required" : "Course";
+  const intakeFieldLabel = isClient ? "Visa type" : "Intake";
   const name = String(formData.get("name") ?? "").trim();
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const phone = String(formData.get("phone") ?? "").trim();
@@ -1848,6 +1782,15 @@ async function createManualStudentAction(formData: FormData) {
   const intake = String(formData.get("intake") ?? "").trim();
   const currentEducation = String(formData.get("currentEducation") ?? "").trim();
   const notes = String(formData.get("notes") ?? "").trim();
+  const actor = await prisma.user.findFirst({
+    where: {
+      role: "SUB_ADMIN",
+      OR: [{ id: session.user.id }, ...(session.user.email ? [{ email: session.user.email }] : [])],
+    },
+    select: { id: true, email: true, name: true },
+  });
+
+  if (!actor) redirect("/login");
 
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (
@@ -1886,7 +1829,8 @@ async function createManualStudentAction(formData: FormData) {
     targetCourse: course,
     preferredIntake: intake,
     additionalNote: notes,
-    source: "Agent",
+    recordType,
+    source: sourceLabel,
   };
 
   const created = await prisma.$transaction(async (tx) => {
@@ -1917,7 +1861,7 @@ async function createManualStudentAction(formData: FormData) {
       data: {
         studentId: studentUser.id,
         templateId: template.id,
-        assignedToId: session.user.id,
+        assignedToId: actor.id,
         sourceCity: city,
         sourceCountry: country,
         intendedCourse: course,
@@ -1929,16 +1873,17 @@ async function createManualStudentAction(formData: FormData) {
 
     await tx.activityLog.create({
       data: {
-        actorId: session.user.id,
+        actorId: actor.id,
         targetUserId: studentUser.id,
         targetStudentProfileId: studentProfile.id,
         entityType: "STUDENT",
         entityId: studentUser.id,
-        action: "Created student through agent intake",
+        action: `Created ${recordLabel} through agent intake`,
         metadata: {
+          recordType,
           source: "sub_admin",
           submissionId: submission.id,
-          assignedToId: session.user.id,
+          assignedToId: actor.id,
         },
       },
     });
@@ -1952,7 +1897,7 @@ async function createManualStudentAction(formData: FormData) {
     };
   });
 
-  const creatorLabel = session.user.name ?? session.user.email ?? "Agent";
+  const creatorLabel = actor.name ?? actor.email ?? "Agent";
   const admins = await prisma.user.findMany({
     where: { role: "ADMIN" },
     select: { id: true, email: true },
@@ -1962,18 +1907,19 @@ async function createManualStudentAction(formData: FormData) {
     admins.map((recipient) =>
       createWorkflowNotification({
         recipientId: recipient.id,
-        actorId: session.user.id,
+        actorId: actor.id,
         studentProfileId: created.studentProfileId,
         type: "NEW_STUDENT_APPLICATION",
-        title: "Student added by agent",
-        message: `${created.studentName} was added by ${creatorLabel}.`,
+        title: `${recordTitle} added by agent`,
+        message: `${created.studentName} was added as a ${recordLabel} by ${creatorLabel}.`,
         note: notes || null,
         link: `/dashboard/sub-admin?tab=students#submission-${created.submissionId}`,
         actionRequired: false,
         metadata: {
+          recordType,
           source: "sub_admin",
           submissionId: created.submissionId,
-          subAdminId: session.user.id,
+          subAdminId: actor.id,
         },
       }),
     ),
@@ -1981,29 +1927,29 @@ async function createManualStudentAction(formData: FormData) {
 
   await Promise.all([
     queueDevEmail({
-      createdById: session.user.id,
+      createdById: actor.id,
       toEmail: created.studentEmail,
-      subject: "Your student profile has been created - L&B Global",
+      subject: `Your ${recordLabel} profile has been created - L&B Global`,
       htmlBody: `
         <p>Dear ${escapeHtml(created.studentName)},</p>
-        <p>Your student profile has been created by ${escapeHtml(creatorLabel)} at L&amp;B Global.</p>
-        <p>Our team will contact you with the next steps for your course and visa process.</p>
+        <p>Your ${escapeHtml(recordLabel)} profile has been created by ${escapeHtml(creatorLabel)} at L&amp;B Global.</p>
+        <p>Our team will contact you with the next steps for your ${isClient ? "visa service" : "course and visa process"}.</p>
         <p>Best regards,<br />L&amp;B Global</p>
       `,
       templateKey: "sub-admin-student-created",
     }),
     ...admins.map((recipient) =>
       queueDevEmail({
-        createdById: session.user.id,
+        createdById: actor.id,
         toEmail: recipient.email,
-        subject: `Student added by agent: ${created.studentName}`,
+        subject: `${recordTitle} added by agent: ${created.studentName}`,
         htmlBody: `
-          <p>${escapeHtml(creatorLabel)} added a new student through agent intake.</p>
+          <p>${escapeHtml(creatorLabel)} added a new ${escapeHtml(recordLabel)} through agent intake.</p>
           <ul>
             <li><strong>Name:</strong> ${escapeHtml(created.studentName)}</li>
             <li><strong>Email:</strong> ${escapeHtml(created.studentEmail)}</li>
-            <li><strong>Course:</strong> ${escapeHtml(course)}</li>
-            <li><strong>Intake:</strong> ${escapeHtml(intake)}</li>
+            <li><strong>${escapeHtml(courseFieldLabel)}:</strong> ${escapeHtml(course)}</li>
+            <li><strong>${escapeHtml(intakeFieldLabel)}:</strong> ${escapeHtml(intake)}</li>
           </ul>
           <p>The case has been assigned to ${escapeHtml(creatorLabel)}.</p>
         `,
@@ -2016,7 +1962,7 @@ async function createManualStudentAction(formData: FormData) {
   revalidatePath("/dashboard/admin");
   revalidatePath("/dashboard/internal-staff");
   revalidatePath(`/dashboard/students/${created.studentUserId}`);
-  redirect("/dashboard/sub-admin?tab=students&manualSuccess=1");
+  redirect(`/dashboard/sub-admin?tab=students&manualSuccess=${recordType}`);
 }
 
 function escapeHtml(value: string) {
