@@ -13,6 +13,7 @@ type QueueEmailInput = {
   toEmail: string;
   subject: string;
   htmlBody: string;
+  replyTo?: string | null;
   templateKey?: string | null;
   relatedContractId?: string | null;
   relatedInvoiceId?: string | null;
@@ -20,6 +21,7 @@ type QueueEmailInput = {
 };
 
 export async function queueDevEmail(input: QueueEmailInput) {
+  const plannedProvider = getPlannedProvider();
   const queued = await prisma.outboundEmailLog.create({
     data: {
       createdById: input.createdById,
@@ -29,6 +31,7 @@ export async function queueDevEmail(input: QueueEmailInput) {
       templateKey: input.templateKey ?? null,
       relatedContractId: input.relatedContractId ?? null,
       relatedInvoiceId: input.relatedInvoiceId ?? null,
+      provider: plannedProvider,
       status: "QUEUED",
     },
   });
@@ -53,14 +56,22 @@ export async function queueDevEmail(input: QueueEmailInput) {
       status,
       sentAt: status === "SENT" ? new Date() : null,
       errorMessage: result.ok ? null : result.error,
+      provider: result.provider,
       providerMessageId: result.ok ? result.messageId ?? null : null,
     },
   });
 }
 
 type ProviderResult =
-  | { ok: true; messageId?: string }
-  | { ok: false; error: string };
+  | { ok: true; provider: "POSTMARK" | "DEV"; messageId?: string }
+  | { ok: false; provider: "POSTMARK"; error: string };
+
+function getPlannedProvider() {
+  const token = process.env.POSTMARK_SERVER_TOKEN?.trim();
+  const fromEmail = process.env.POSTMARK_FROM_EMAIL?.trim();
+  if (token && fromEmail) return "POSTMARK";
+  return process.env.NODE_ENV === "production" ? "POSTMARK" : "DEV";
+}
 
 async function sendThroughProvider(input: QueueEmailInput): Promise<ProviderResult> {
   const token = process.env.POSTMARK_SERVER_TOKEN?.trim();
@@ -70,6 +81,7 @@ async function sendThroughProvider(input: QueueEmailInput): Promise<ProviderResu
     if (process.env.NODE_ENV === "production") {
       return {
         ok: false,
+        provider: "POSTMARK",
         error:
           "Postmark is not configured. Set POSTMARK_SERVER_TOKEN and POSTMARK_FROM_EMAIL.",
       };
@@ -79,7 +91,7 @@ async function sendThroughProvider(input: QueueEmailInput): Promise<ProviderResu
       subject: input.subject,
       attachments: input.attachments?.length ?? 0,
     });
-    return { ok: true, messageId: `dev-${Date.now()}` };
+    return { ok: true, provider: "DEV", messageId: `dev-${Date.now()}` };
   }
 
   const body: Record<string, unknown> = {
@@ -89,6 +101,10 @@ async function sendThroughProvider(input: QueueEmailInput): Promise<ProviderResu
     HtmlBody: input.htmlBody,
     MessageStream: process.env.POSTMARK_MESSAGE_STREAM?.trim() || "outbound",
   };
+
+  if (input.replyTo?.trim()) {
+    body.ReplyTo = input.replyTo.trim();
+  }
 
   if (input.attachments && input.attachments.length > 0) {
     body.Attachments = input.attachments.map((file) => ({
@@ -111,14 +127,19 @@ async function sendThroughProvider(input: QueueEmailInput): Promise<ProviderResu
     if (!response.ok) {
       const text = await response.text().catch(() => "");
       console.error("[email-outbox] Postmark error:", response.status, text);
-      return { ok: false, error: `Postmark ${response.status}: ${text.slice(0, 240)}` };
+      return {
+        ok: false,
+        provider: "POSTMARK",
+        error: `Postmark ${response.status}: ${text.slice(0, 240)}`,
+      };
     }
     const json = (await response.json()) as { MessageID?: string };
-    return { ok: true, messageId: json.MessageID };
+    return { ok: true, provider: "POSTMARK", messageId: json.MessageID };
   } catch (error) {
     console.error("[email-outbox] Postmark request failed:", error);
     return {
       ok: false,
+      provider: "POSTMARK",
       error: error instanceof Error ? error.message : "Unknown email error.",
     };
   }

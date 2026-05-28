@@ -3,7 +3,12 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-type Student = { id: string; name: string | null; email: string };
+type Student = {
+  id: string;
+  name: string | null;
+  email: string;
+  caseReference: string | null;
+};
 
 export function StudentSearch() {
   const [query, setQuery] = useState("");
@@ -58,7 +63,7 @@ export function StudentSearch() {
     <div ref={containerRef} className="relative">
       <input
         type="search"
-        placeholder="Find student..."
+        placeholder="Find student or case ref..."
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onFocus={() => results.length > 0 && setOpen(true)}
@@ -77,6 +82,9 @@ export function StudentSearch() {
                 className="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
               >
                 <span className="font-medium">{s.name ?? "No name"}</span>
+                {s.caseReference ? (
+                  <span className="ml-2 font-medium text-slate-600">{s.caseReference}</span>
+                ) : null}
                 <span className="ml-2 text-slate-500">{s.email}</span>
               </Link>
             ))

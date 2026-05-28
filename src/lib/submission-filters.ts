@@ -40,6 +40,7 @@ export function buildSubmissionWhere(input: FilterInput): Prisma.QuestionnaireSu
       OR: [
         { student: { name: { contains: search } } },
         { student: { email: { contains: search } } },
+        { student: { studentProfile: { caseReference: { contains: search } } } },
         { sourceCity: { contains: search } },
         { sourceCountry: { contains: search } },
         { intendedCourse: { contains: search } },

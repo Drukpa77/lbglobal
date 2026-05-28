@@ -116,6 +116,12 @@ enum EmailLogStatus {
   FAILED
 }
 
+enum EmailProvider {
+  POSTMARK
+  GOOGLE_WORKSPACE
+  DEV
+}
+
 enum ConversationType {
   DIRECT
   TEAM
@@ -244,6 +250,7 @@ model User {
 
 model StudentProfile {
   id                    String   @id @default(cuid())
+  caseReference         String   @unique
   userId                String   @unique
   dateOfBirth           DateTime?
   nationality           String?
@@ -550,6 +557,7 @@ model OutboundEmailLog {
   relatedContractId String?
   relatedInvoiceId  String?
   status            EmailLogStatus @default(QUEUED)
+  provider          EmailProvider   @default(POSTMARK)
   providerMessageId String?
   errorMessage      String?
   createdAt         DateTime       @default(now())

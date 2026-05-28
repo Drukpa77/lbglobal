@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { prioritizedCountries } from "@/lib/countries";
+import { generateNextCaseReference } from "@/lib/case-reference";
 import { parseTemplateQuestions } from "@/lib/questionnaire";
 import { prisma } from "@/lib/prisma";
 import { queueDevEmail } from "@/lib/email-outbox";
@@ -294,6 +295,7 @@ async function submitQuestionnaireAction(formData: FormData) {
   } else {
     studentProfile = await prisma.studentProfile.create({
       data: {
+        caseReference: await generateNextCaseReference(),
         userId: studentUser.id,
         phone: phone || null,
         city: city || null,

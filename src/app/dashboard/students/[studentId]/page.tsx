@@ -33,6 +33,7 @@ import { AuditTab } from "@/app/dashboard/students/[studentId]/tabs/audit-tab";
 import { TasksDocumentsTab } from "@/app/dashboard/students/[studentId]/tabs/tasks-documents-tab";
 import { auth } from "@/auth";
 import { blobOpensThroughAuthenticatedApi } from "@/lib/blob-access";
+import { generateNextCaseReference } from "@/lib/case-reference";
 import { getCompanySettings } from "@/lib/company-settings";
 import { getContributions } from "@/lib/contributions";
 import { prisma } from "@/lib/prisma";
@@ -390,6 +391,11 @@ export default async function StudentProfileManagementPage(props: { params: Para
           <p className="mt-1 text-base text-slate-600">
             {student.name ?? student.email}
           </p>
+          {profile?.caseReference ? (
+            <p className="mt-1 text-sm font-medium text-slate-500">
+              Case reference: {profile.caseReference}
+            </p>
+          ) : null}
         </div>
         <Link
           href={backLink}
@@ -1882,6 +1888,7 @@ async function saveStudentProfileAction(formData: FormData) {
   const nextFollowUpDate = parseOptionalDate(String(formData.get("nextFollowUpDate") ?? "").trim());
   const visaStatusRaw = String(formData.get("visaStatus") ?? "NOT_STARTED") as VisaStatus;
   const visaStatus = visaStatuses.includes(visaStatusRaw) ? visaStatusRaw : "NOT_STARTED";
+  const caseReference = await generateNextCaseReference();
 
   const profile = await prisma.studentProfile.upsert({
     where: { userId: studentId },
@@ -1908,6 +1915,7 @@ async function saveStudentProfileAction(formData: FormData) {
       followUpNotes: nullableText(formData.get("followUpNotes")),
     },
     create: {
+      caseReference,
       userId: studentId,
       dateOfBirth,
       phone: nullableText(formData.get("phone")),
@@ -4095,7 +4103,10 @@ async function ensureLeadWorkflowAccess(
   }
 
   const createdProfile = await prisma.studentProfile.create({
-    data: { userId: studentId },
+    data: {
+      caseReference: await generateNextCaseReference(),
+      userId: studentId,
+    },
     select: { id: true },
   });
   return { studentProfileId: createdProfile.id };

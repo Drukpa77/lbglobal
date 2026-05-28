@@ -16,7 +16,8 @@
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:seed": "prisma db seed",
-    "db:backfill-posts": "node prisma/backfill-home-posts.js"
+    "db:backfill-posts": "node prisma/backfill-home-posts.js",
+    "db:backfill-case-references": "node prisma/backfill-case-references.js"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.1",
