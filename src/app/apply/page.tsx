@@ -2,7 +2,6 @@ import { Prisma } from "@prisma/client";
 import Link from "next/link";
 import Image from "next/image";
 import { revalidatePath } from "next/cache";
-import { after } from "next/server";
 import { redirect } from "next/navigation";
 
 import { prioritizedCountries } from "@/lib/countries";
@@ -360,40 +359,35 @@ async function submitQuestionnaireAction(formData: FormData) {
     redirect("/apply?error=server");
   }
 
-  // Emails and staff alerts can be slow (Postmark round-trips). Run them after
-  // the response so the applicant is not blocked by provider latency or timeouts.
-  after(async () => {
-    try {
-      await queueDevEmail({
-        createdById: postSubmit.studentUserId,
-        toEmail: postSubmit.email,
-        subject: "Application Received – L&B Global",
-        htmlBody: `
+  try {
+    await queueDevEmail({
+      createdById: postSubmit.studentUserId,
+      toEmail: postSubmit.email,
+      subject: "Application Received – L&B Global",
+      htmlBody: `
       <p>Dear ${postSubmit.fullName},</p>
       <p>Thank you for submitting your application. Our team has received your inquiry and will contact you within 1–2 business days.</p>
       <p>Best regards,<br />L&B Global</p>
     `,
-      });
+    });
 
-      await notifyStaffOfNewApplication({
-        studentProfileId: postSubmit.studentProfileId,
-        studentUserId: postSubmit.studentUserId,
-        studentName: postSubmit.fullName,
-        studentEmail: postSubmit.email,
-        submissionId: postSubmit.submissionId,
-        sourceCity: postSubmit.city || null,
-        sourceCountry: postSubmit.country || null,
-        hearFrom: postSubmit.hearFrom || null,
-      });
+    await notifyStaffOfNewApplication({
+      studentProfileId: postSubmit.studentProfileId,
+      studentUserId: postSubmit.studentUserId,
+      studentName: postSubmit.fullName,
+      studentEmail: postSubmit.email,
+      submissionId: postSubmit.submissionId,
+      sourceCity: postSubmit.city || null,
+      sourceCountry: postSubmit.country || null,
+      hearFrom: postSubmit.hearFrom || null,
+    });
+  } catch (error) {
+    console.error("post-submit side effects failed", error);
+  }
 
-      revalidatePath("/dashboard/sub-admin");
-      revalidatePath("/dashboard/admin");
-      revalidatePath("/");
-    } catch (error) {
-      console.error("post-submit side effects failed", error);
-    }
-  });
-
+  revalidatePath("/dashboard/sub-admin");
+  revalidatePath("/dashboard/admin");
+  revalidatePath("/");
   revalidatePath("/apply");
   redirect("/apply?success=1");
 }
