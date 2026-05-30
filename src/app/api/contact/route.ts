@@ -5,7 +5,7 @@ import {
   buildContactAutoReplyEmail,
   buildContactInquiryEmail,
   getContactInboxEmail,
-  sendTransactionalEmail,
+  sendGoogleWorkspaceEmail,
 } from "@/lib/send-email";
 
 const contactSchema = z.object({
@@ -38,10 +38,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  const inbox = getContactInboxEmail();
-
-  const staffResult = await sendTransactionalEmail({
-    to: inbox,
+  const staffResult = await sendGoogleWorkspaceEmail({
+    to: getContactInboxEmail(),
     subject: `[Website] ${subject}`,
     html: buildContactInquiryEmail({ name, email, subject, message }),
     replyTo: email,
@@ -51,9 +49,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: staffResult.error }, { status: 503 });
   }
 
-  const autoReply = await sendTransactionalEmail({
+  const autoReply = await sendGoogleWorkspaceEmail({
     to: email,
-    subject: "We received your message – L&B Global",
+    subject: "We received your message - L&B Global",
     html: buildContactAutoReplyEmail({ name }),
   });
 

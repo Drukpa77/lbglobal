@@ -42,7 +42,7 @@ export async function queueDevEmail(input: QueueEmailInput) {
       where: { id: queued.id },
       data: {
         status: "FAILED",
-        errorMessage: "Invalid recipient email.",
+        errorMessage: normalizeErrorMessage("Invalid recipient email."),
       },
     });
   }
@@ -55,7 +55,7 @@ export async function queueDevEmail(input: QueueEmailInput) {
     data: {
       status,
       sentAt: status === "SENT" ? new Date() : null,
-      errorMessage: result.ok ? null : result.error,
+      errorMessage: result.ok ? null : normalizeErrorMessage(result.error),
       provider: result.provider,
       providerMessageId: result.ok ? result.messageId ?? null : null,
     },
@@ -65,6 +65,10 @@ export async function queueDevEmail(input: QueueEmailInput) {
 type ProviderResult =
   | { ok: true; provider: "POSTMARK" | "DEV"; messageId?: string }
   | { ok: false; provider: "POSTMARK"; error: string };
+
+function normalizeErrorMessage(message: string) {
+  return message.slice(0, 4000);
+}
 
 function getPlannedProvider() {
   const token = process.env.POSTMARK_SERVER_TOKEN?.trim();
@@ -102,8 +106,9 @@ async function sendThroughProvider(input: QueueEmailInput): Promise<ProviderResu
     MessageStream: process.env.POSTMARK_MESSAGE_STREAM?.trim() || "outbound",
   };
 
-  if (input.replyTo?.trim()) {
-    body.ReplyTo = input.replyTo.trim();
+  const replyTo = input.replyTo?.trim() || process.env.POSTMARK_REPLY_TO_EMAIL?.trim();
+  if (replyTo) {
+    body.ReplyTo = replyTo;
   }
 
   if (input.attachments && input.attachments.length > 0) {

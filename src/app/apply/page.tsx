@@ -8,6 +8,11 @@ import { generateNextCaseReference } from "@/lib/case-reference";
 import { parseTemplateQuestions } from "@/lib/questionnaire";
 import { prisma } from "@/lib/prisma";
 import { queueDevEmail } from "@/lib/email-outbox";
+import {
+  buildApplicationInquiryEmail,
+  getContactInboxEmail,
+  sendGoogleWorkspaceEmail,
+} from "@/lib/send-email";
 import { notifyStaffOfNewApplication } from "@/lib/workflow-notifications";
 import { SubmitButton } from "@/components/submit-button";
 import { ApplyFormFields } from "./apply-form-fields";
@@ -321,6 +326,26 @@ async function submitQuestionnaireAction(formData: FormData) {
     },
     select: { id: true },
   });
+
+  const googleInquiryResult = await sendGoogleWorkspaceEmail({
+    to: getContactInboxEmail(),
+    subject: `New student inquiry: ${fullName}`,
+    html: buildApplicationInquiryEmail({
+      name: fullName,
+      email,
+      phone,
+      city,
+      country,
+      targetCourse,
+      preferredIntake,
+      hearFrom,
+    }),
+    replyTo: email,
+  });
+
+  if (!googleInquiryResult.ok) {
+    console.error("[apply] Google Workspace inquiry notification failed:", googleInquiryResult.error);
+  }
 
   // Queue confirmation email (logs in dev; will send when provider is configured)
   await queueDevEmail({

@@ -1,3 +1,5 @@
+import nodemailer from "nodemailer";
+
 type SendEmailInput = {
   to: string;
   subject: string;
@@ -9,32 +11,51 @@ type SendEmailResult =
   | { ok: true; id?: string; dev?: boolean }
   | { ok: false; error: string };
 
-function getContactFromAddress() {
+export function getContactInboxEmail() {
+  return process.env.CONTACT_INBOX_EMAIL?.trim() || "student@lbglobal.com.au";
+}
+
+function getGoogleWorkspaceFromAddress() {
   return (
-    process.env.CONTACT_FROM_EMAIL?.trim() ||
-    process.env.RESEND_FROM_EMAIL?.trim() ||
-    "L&B Global <onboarding@resend.dev>"
+    process.env.GOOGLE_WORKSPACE_FROM_EMAIL?.trim() ||
+    process.env.GOOGLE_SMTP_USER?.trim() ||
+    "student@lbglobal.com.au"
   );
 }
 
-export function getContactInboxEmail() {
-  return process.env.CONTACT_INBOX_EMAIL?.trim() || "student@lbglobal.com";
+function getGoogleSmtpConfig() {
+  const user = process.env.GOOGLE_SMTP_USER?.trim();
+  const password = process.env.GOOGLE_SMTP_PASSWORD?.trim();
+
+  if (!user || !password) return null;
+
+  const port = Number(process.env.GOOGLE_SMTP_PORT?.trim() || "465");
+  return {
+    host: process.env.GOOGLE_SMTP_HOST?.trim() || "smtp.gmail.com",
+    port,
+    secure: process.env.GOOGLE_SMTP_SECURE?.trim() === "false" ? false : port === 465,
+    auth: {
+      user,
+      pass: password,
+    },
+  };
 }
 
-export async function sendTransactionalEmail(
+export async function sendGoogleWorkspaceEmail(
   input: SendEmailInput,
 ): Promise<SendEmailResult> {
-  const apiKey = process.env.RESEND_API_KEY?.trim();
+  const config = getGoogleSmtpConfig();
 
-  if (!apiKey) {
+  if (!config) {
     if (process.env.NODE_ENV === "production") {
       return {
         ok: false,
-        error: "Email is not configured. Set RESEND_API_KEY on the server.",
+        error:
+          "Google Workspace email is not configured. Set GOOGLE_SMTP_USER and GOOGLE_SMTP_PASSWORD.",
       };
     }
 
-    console.info("[send-email] Dev mode — email not sent:", {
+    console.info("[send-email] Dev mode - Google Workspace email not sent:", {
       to: input.to,
       subject: input.subject,
       replyTo: input.replyTo,
@@ -42,29 +63,24 @@ export async function sendTransactionalEmail(
     return { ok: true, dev: true };
   }
 
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: getContactFromAddress(),
-      to: [input.to],
+  try {
+    const transporter = nodemailer.createTransport(config);
+    const info = await transporter.sendMail({
+      from: getGoogleWorkspaceFromAddress(),
+      to: input.to,
       subject: input.subject,
       html: input.html,
-      reply_to: input.replyTo,
-    }),
-  });
+      replyTo: input.replyTo,
+    });
 
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    console.error("[send-email] Resend error:", response.status, body);
-    return { ok: false, error: "Unable to send email right now. Please try WhatsApp or call us." };
+    return { ok: true, id: info.messageId };
+  } catch (error) {
+    console.error("[send-email] Google Workspace SMTP error:", error);
+    return {
+      ok: false,
+      error: "Unable to send email right now. Please try WhatsApp or call us.",
+    };
   }
-
-  const data = (await response.json()) as { id?: string };
-  return { ok: true, id: data.id };
 }
 
 function escapeHtml(value: string) {
@@ -92,10 +108,40 @@ export function buildContactInquiryEmail(params: {
   `;
 }
 
+export function buildApplicationInquiryEmail(params: {
+  name: string;
+  email: string;
+  phone?: string | null;
+  city?: string | null;
+  country?: string | null;
+  targetCourse?: string | null;
+  preferredIntake?: string | null;
+  hearFrom?: string | null;
+}) {
+  const details = [
+    ["Name", params.name],
+    ["Email", params.email],
+    ["Phone", params.phone],
+    ["Location", [params.city, params.country].filter(Boolean).join(", ")],
+    ["Target course", params.targetCourse],
+    ["Preferred intake", params.preferredIntake],
+    ["Heard from", params.hearFrom],
+  ].filter((entry): entry is [string, string] => Boolean(entry[1]));
+
+  return `
+    <h2>New student inquiry</h2>
+    <ul>
+      ${details
+        .map(([label, value]) => `<li><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}</li>`)
+        .join("")}
+    </ul>
+  `;
+}
+
 export function buildContactAutoReplyEmail(params: { name: string }) {
   return `
     <p>Dear ${escapeHtml(params.name)},</p>
-    <p>Thank you for contacting L&amp;B Global. We have received your message and will reply within 1–2 business days.</p>
+    <p>Thank you for contacting L&amp;B Global. We have received your message and will reply within 1-2 business days.</p>
     <p>Best regards,<br />L&amp;B Global</p>
   `;
 }
