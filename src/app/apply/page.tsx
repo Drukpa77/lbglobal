@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import Link from "next/link";
 import Image from "next/image";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { redirect } from "next/navigation";
 
 import { prioritizedCountries } from "@/lib/countries";
@@ -258,8 +259,11 @@ async function submitQuestionnaireAction(formData: FormData) {
     submissionId: string;
     fullName: string;
     email: string;
+    phone: string;
     city: string;
     country: string;
+    targetCourse: string;
+    preferredIntake: string;
     hearFrom: string;
   };
 
@@ -315,6 +319,7 @@ async function submitQuestionnaireAction(formData: FormData) {
     } else {
       studentProfile = await prisma.studentProfile.create({
         data: {
+          caseReference: await generateNextCaseReference(),
           userId: studentUser.id,
           phone: phone || null,
           city: city || null,
@@ -347,8 +352,11 @@ async function submitQuestionnaireAction(formData: FormData) {
       submissionId: submission.id,
       fullName,
       email,
+      phone,
       city,
       country,
+      targetCourse,
+      preferredIntake,
       hearFrom,
     };
   } catch (error) {
@@ -365,62 +373,58 @@ async function submitQuestionnaireAction(formData: FormData) {
     redirect("/apply?error=server");
   }
 
-  const googleInquiryResult = await sendGoogleWorkspaceEmail({
-    to: getContactInboxEmail(),
-    subject: `New student inquiry: ${fullName}`,
-    html: buildApplicationInquiryEmail({
-      name: fullName,
-      email,
-      phone,
-      city,
-      country,
-      targetCourse,
-      preferredIntake,
-      hearFrom,
-    }),
-    replyTo: email,
-  });
+  after(async () => {
+    try {
+      const googleInquiryResult = await sendGoogleWorkspaceEmail({
+        to: getContactInboxEmail(),
+        subject: `New student inquiry: ${postSubmit.fullName}`,
+        html: buildApplicationInquiryEmail({
+          name: postSubmit.fullName,
+          email: postSubmit.email,
+          phone: postSubmit.phone,
+          city: postSubmit.city,
+          country: postSubmit.country,
+          targetCourse: postSubmit.targetCourse,
+          preferredIntake: postSubmit.preferredIntake,
+          hearFrom: postSubmit.hearFrom,
+        }),
+        replyTo: postSubmit.email,
+      });
 
-  if (!googleInquiryResult.ok) {
-    console.error("[apply] Google Workspace inquiry notification failed:", googleInquiryResult.error);
-  }
+      if (!googleInquiryResult.ok) {
+        console.error("[apply] Google Workspace inquiry notification failed:", googleInquiryResult.error);
+      }
 
-  // Queue confirmation email (logs in dev; will send when provider is configured)
-  await queueDevEmail({
-    createdById: studentUser.id,
-    toEmail: email,
-    subject: "Application Received – L&B Global",
-    htmlBody: `
-      <p>Dear ${fullName},</p>
-  try {
-    await queueDevEmail({
-      createdById: postSubmit.studentUserId,
-      toEmail: postSubmit.email,
-      subject: "Application Received – L&B Global",
-      htmlBody: `
+      await queueDevEmail({
+        createdById: postSubmit.studentUserId,
+        toEmail: postSubmit.email,
+        subject: "Application Received – L&B Global",
+        htmlBody: `
       <p>Dear ${postSubmit.fullName},</p>
       <p>Thank you for submitting your application. Our team has received your inquiry and will contact you within 1–2 business days.</p>
       <p>Best regards,<br />L&B Global</p>
     `,
-    });
+      });
 
-    await notifyStaffOfNewApplication({
-      studentProfileId: postSubmit.studentProfileId,
-      studentUserId: postSubmit.studentUserId,
-      studentName: postSubmit.fullName,
-      studentEmail: postSubmit.email,
-      submissionId: postSubmit.submissionId,
-      sourceCity: postSubmit.city || null,
-      sourceCountry: postSubmit.country || null,
-      hearFrom: postSubmit.hearFrom || null,
-    });
-  } catch (error) {
-    console.error("post-submit side effects failed", error);
-  }
+      await notifyStaffOfNewApplication({
+        studentProfileId: postSubmit.studentProfileId,
+        studentUserId: postSubmit.studentUserId,
+        studentName: postSubmit.fullName,
+        studentEmail: postSubmit.email,
+        submissionId: postSubmit.submissionId,
+        sourceCity: postSubmit.city || null,
+        sourceCountry: postSubmit.country || null,
+        hearFrom: postSubmit.hearFrom || null,
+      });
 
-  revalidatePath("/dashboard/sub-admin");
-  revalidatePath("/dashboard/admin");
-  revalidatePath("/");
+      revalidatePath("/dashboard/sub-admin");
+      revalidatePath("/dashboard/admin");
+      revalidatePath("/");
+    } catch (error) {
+      console.error("post-submit side effects failed", error);
+    }
+  });
+
   revalidatePath("/apply");
   redirect("/apply?success=1");
 }
