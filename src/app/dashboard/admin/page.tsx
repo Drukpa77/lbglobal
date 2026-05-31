@@ -7,16 +7,16 @@ import { Suspense } from "react";
 
 import { auth } from "@/auth";
 import { AdminAnalyticsCharts } from "@/components/admin-analytics-charts";
-import { ContributionLeaderboard } from "@/components/contribution-leaderboard";
+import { CaseReferenceLabel } from "@/components/case-reference-label";
+import { ContributionsTabSection } from "@/components/contributions-tab-panel";
 import { DashboardTabBar } from "@/components/dashboard-tab-bar";
 import { DelegationSuccessToast } from "@/components/delegation-success-toast";
 import { DeleteWithConfirm } from "@/components/delete-with-confirm";
 import { DeleteStaffButton } from "@/components/delete-staff-button";
 import { NewInquiriesCard } from "@/components/new-inquiries-card";
 import { RemindersWidget } from "@/components/reminders-widget";
-import { getContributions } from "@/lib/contributions";
-import { prisma } from "@/lib/prisma";
 import { getRemindersForUser } from "@/lib/reminders";
+import { prisma } from "@/lib/prisma";
 import { redirectWithDelegationNotice } from "@/lib/redirect-after-delegation";
 import { buildSubmissionWhere } from "@/lib/submission-filters";
 import { formatSubmissionStatus } from "@/lib/submission";
@@ -605,7 +605,7 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
                 name="search"
                 defaultValue={search}
                 className="rounded-md border px-3 py-2 text-sm"
-                placeholder="Search student/city/course"
+                placeholder="Search name, case ref, city, course"
               />
               <select name="status" defaultValue={status} className="rounded-md border px-3 py-2 text-sm">
                 <option value="">All statuses</option>
@@ -652,9 +652,14 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
                   <article id={`submission-${submission.id}`} key={submission.id} className="rounded-md border border-gray-200 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <p className="text-sm font-semibold">
-                          {getStudentDisplayName(submission.student, submission.answers)}
-                        </p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-semibold">
+                            {getStudentDisplayName(submission.student, submission.answers)}
+                          </p>
+                          <CaseReferenceLabel
+                            caseReference={submission.student.studentProfile?.caseReference}
+                          />
+                        </div>
                         <p className="text-xs text-gray-600">
                           {submission.sourceCity ?? "Unknown city"},{" "}
                           {submission.sourceCountry ?? "Unknown country"} |{" "}
@@ -752,6 +757,9 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
               <ul className="mt-3 space-y-2 text-sm text-gray-700">
                 {recentSubmissions.map((submission) => (
                   <li key={submission.id} className="flex flex-wrap items-center gap-2">
+                    <CaseReferenceLabel
+                      caseReference={submission.student.studentProfile?.caseReference}
+                    />
                     <span>
                       {getStudentDisplayName(submission.student, submission.answers)} submitted from{" "}
                       {submission.sourceCountry ?? "Unknown"} ({formatSubmissionStatus(submission.status)})
@@ -1232,79 +1240,8 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
       )}
 
       {/* ── CONTRIBUTIONS TAB ──────────────────────────────────── */}
-      {tab === "contributions" && (
-        <Suspense fallback={<ContributionsTabSkeleton />}>
-          <ContributionsTabPanel />
-        </Suspense>
-      )}
+      {tab === "contributions" && <ContributionsTabSection />}
     </section>
-  );
-}
-
-function ContributionsTabSkeleton() {
-  return (
-    <div className="space-y-4">
-      {[...Array(3)].map((_, i) => (
-        <div key={i} className="h-40 animate-pulse rounded-lg border bg-gray-100" />
-      ))}
-    </div>
-  );
-}
-
-async function ContributionsTabPanel() {
-  const cases = await prisma.studentProfile.findMany({
-    include: { user: { select: { id: true, name: true, email: true } } },
-    orderBy: { updatedAt: "desc" },
-    take: 20,
-  });
-
-  return (
-    <div className="space-y-6">
-      <section className="rounded-lg border bg-white p-4">
-        <h2 className="text-sm font-semibold">Case-wise Contributions</h2>
-        <p className="mt-1 text-xs text-gray-600">
-          Contribution is shown separately for each student case.
-        </p>
-      </section>
-      {cases.length === 0 ? (
-        <section className="rounded-lg border bg-white p-4">
-          <p className="text-sm text-gray-600">No student cases available yet.</p>
-        </section>
-      ) : (
-        await Promise.all(
-          cases.map(async (studentProfile) => {
-            const data = await getContributions({ studentProfileId: studentProfile.id });
-            return (
-              <section key={studentProfile.id} className="space-y-3">
-                <div className="rounded-lg border bg-white p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-900">
-                        {studentProfile.user.name ?? studentProfile.user.email}
-                      </p>
-                      <p className="text-xs text-slate-600">
-                        Case contribution breakdown
-                      </p>
-                    </div>
-                    <Link
-                      href={`/dashboard/students/${studentProfile.user.id}?tab=contributions`}
-                      className="rounded-md border px-3 py-1 text-xs text-slate-700"
-                    >
-                      Open profile
-                    </Link>
-                  </div>
-                </div>
-                <ContributionLeaderboard
-                  data={data}
-                  title="Who contributed to this case"
-                  subtitle="Stages 70% · Documents 15% · Tasks 15% for this student only."
-                />
-              </section>
-            );
-          }),
-        )
-      )}
-    </div>
   );
 }
 
@@ -1338,11 +1275,11 @@ function CategoryCard({
   items: Array<{
     studentId: string;
     status: SubmissionStatus;
-    student: {
-      name: string | null;
-      email: string;
-      studentProfile: { visaExpiryDate: Date | null } | null;
-    };
+      student: {
+        name: string | null;
+        email: string;
+        studentProfile: { visaExpiryDate: Date | null; caseReference: string } | null;
+      };
   }>;
   emptyLabel: string;
 }) {
@@ -1359,7 +1296,10 @@ function CategoryCard({
                 href={`/dashboard/students/${item.studentId}`}
                 className="block rounded-md border border-gray-200 px-2 py-1.5 text-xs transition hover:border-rose-300 hover:bg-rose-50/40"
               >
-                <p className="font-semibold">{getStudentDisplayName(item.student)}</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="font-semibold">{getStudentDisplayName(item.student)}</p>
+                  <CaseReferenceLabel caseReference={item.student.studentProfile?.caseReference} />
+                </div>
                 <p className="text-gray-600">
                   {formatSubmissionStatus(item.status)}
                   {item.student.studentProfile?.visaExpiryDate

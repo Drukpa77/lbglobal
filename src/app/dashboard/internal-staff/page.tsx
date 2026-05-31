@@ -5,12 +5,13 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
 import { auth } from "@/auth";
-import { ContributionLeaderboard } from "@/components/contribution-leaderboard";
+import { CaseReferenceLabel } from "@/components/case-reference-label";
+import { ContributionsTabSection } from "@/components/contributions-tab-panel";
 import { DashboardTabBar } from "@/components/dashboard-tab-bar";
 import { RemindersWidget } from "@/components/reminders-widget";
 import { StudentClientIntakeForm } from "@/components/student-client-intake-form";
-import { getContributions } from "@/lib/contributions";
 import { queueDevEmail } from "@/lib/email-outbox";
+import { generateNextCaseReference } from "@/lib/case-reference";
 import { prisma } from "@/lib/prisma";
 import { getRemindersForUser } from "@/lib/reminders";
 import { createWorkflowNotification } from "@/lib/workflow-notifications";
@@ -685,9 +686,13 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
                   <li key={row.assignment.id} className="rounded-md border border-gray-200 p-3">
                     <div className="flex items-start justify-between gap-2">
                       <div>
-                        <p className="text-sm font-medium">
-                          {row.assignment.studentProfile.user.name ?? row.assignment.studentProfile.user.email}
-                        </p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-medium">
+                            {row.assignment.studentProfile.user.name ??
+                              row.assignment.studentProfile.user.email}
+                          </p>
+                          <CaseReferenceLabel caseReference={row.assignment.studentProfile.caseReference} />
+                        </div>
                         <p className="text-xs text-gray-600">
                           Assigned by {row.assignment.assignedBy.name ?? row.assignment.assignedBy.email}
                         </p>
@@ -759,94 +764,8 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
       )}
 
       {/* ── CONTRIBUTIONS TAB ──────────────────────────────────── */}
-      {tab === "contributions" && (
-        <Suspense fallback={<ContributionsTabSkeleton />}>
-          <InternalStaffContributionsTabPanel />
-        </Suspense>
-      )}
+      {tab === "contributions" && <ContributionsTabSection />}
     </section>
-  );
-}
-
-function ContributionsTabSkeleton() {
-  return (
-    <div className="space-y-4">
-      {[...Array(3)].map((_, i) => (
-        <div key={i} className="h-40 animate-pulse rounded-lg border bg-gray-100" />
-      ))}
-    </div>
-  );
-}
-
-async function InternalStaffContributionsTabPanel() {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
-
-  const cases =
-    session.user.role === "ADMIN"
-      ? await prisma.studentProfile.findMany({
-          include: { user: { select: { id: true, name: true, email: true } } },
-          orderBy: { updatedAt: "desc" },
-          take: 20,
-        })
-      : await prisma.studentAssignment.findMany({
-          where: { isActive: true, assignedToId: session.user.id },
-          include: {
-            studentProfile: {
-              include: { user: { select: { id: true, name: true, email: true } } },
-            },
-          },
-          orderBy: { createdAt: "desc" },
-          take: 20,
-        }).then((rows) => rows.map((row) => row.studentProfile));
-
-  return (
-    <div className="space-y-6">
-      <section className="rounded-lg border bg-white p-4">
-        <h2 className="text-sm font-semibold">Case-wise Contributions</h2>
-        <p className="mt-1 text-xs text-gray-600">
-          Contribution is shown separately for each student case.
-        </p>
-      </section>
-      {cases.length === 0 ? (
-        <section className="rounded-lg border bg-white p-4">
-          <p className="text-sm text-gray-600">No student cases available yet.</p>
-        </section>
-      ) : (
-        await Promise.all(
-          cases.map(async (studentProfile) => {
-            const data = await getContributions({ studentProfileId: studentProfile.id });
-            return (
-              <section key={studentProfile.id} className="space-y-3">
-                <div className="rounded-lg border bg-white p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-900">
-                        {studentProfile.user.name ?? studentProfile.user.email}
-                      </p>
-                      <p className="text-xs text-slate-600">
-                        Case contribution breakdown
-                      </p>
-                    </div>
-                    <Link
-                      href={`/dashboard/students/${studentProfile.user.id}?tab=contributions`}
-                      className="rounded-md border px-3 py-1 text-xs text-slate-700"
-                    >
-                      Open profile
-                    </Link>
-                  </div>
-                </div>
-                <ContributionLeaderboard
-                  data={data}
-                  title="Who contributed to this case"
-                  subtitle="Stages 70% · Documents 15% · Tasks 15% for this student only."
-                />
-              </section>
-            );
-          }),
-        )
-      )}
-    </div>
   );
 }
 
@@ -936,6 +855,7 @@ async function createManualStudentAction(formData: FormData) {
 
     const studentProfile = await tx.studentProfile.create({
       data: {
+        caseReference: await generateNextCaseReference(tx),
         userId: studentUser.id,
         phone,
         city,

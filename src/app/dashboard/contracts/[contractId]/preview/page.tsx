@@ -9,9 +9,14 @@ import { queueDevEmail } from "@/lib/email-outbox";
 import { prisma } from "@/lib/prisma";
 
 type Params = Promise<{ contractId: string }>;
+type SearchParams = Promise<{ emailError?: string }>;
 
-export default async function ContractPreviewPage(props: { params: Params }) {
+export default async function ContractPreviewPage(props: {
+  params: Params;
+  searchParams: SearchParams;
+}) {
   const { contractId } = await props.params;
+  const searchParams = await props.searchParams;
   const session = await auth();
   if (!session?.user) redirect("/login");
   if (
@@ -63,6 +68,12 @@ export default async function ContractPreviewPage(props: { params: Params }) {
           Back to student profile
         </Link>
       </div>
+
+      {searchParams.emailError === "send-failed" ? (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          Contract email failed to send. Please check the email settings and try again.
+        </div>
+      ) : null}
 
       <section className="rounded-lg border bg-white p-4">
         <div className="mb-3 rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">
@@ -149,7 +160,7 @@ async function sendContractAction(formData: FormData) {
   });
   if (!contract) redirect("/dashboard");
 
-  await queueDevEmail({
+  const sendResult = await queueDevEmail({
     createdById: session.user.id,
     toEmail: contract.recipientEmail,
     subject: contract.subject,
@@ -157,6 +168,10 @@ async function sendContractAction(formData: FormData) {
     templateKey: contract.template?.key,
     relatedContractId: contract.id,
   });
+
+  if (sendResult.status !== "SENT") {
+    redirect(`/dashboard/contracts/${contract.id}/preview?emailError=send-failed`);
+  }
 
   await prisma.contract.update({
     where: { id: contract.id },

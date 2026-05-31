@@ -1,5 +1,5 @@
 generator client {
-  provider = "prisma-client-js"
+  provider   = "prisma-client-js"
   engineType = "library"
 }
 
@@ -116,6 +116,12 @@ enum EmailLogStatus {
   FAILED
 }
 
+enum EmailProvider {
+  POSTMARK
+  GOOGLE_WORKSPACE
+  DEV
+}
+
 enum ConversationType {
   DIRECT
   TEAM
@@ -199,101 +205,102 @@ enum CaseStatus {
 }
 
 model User {
-  id                      String                   @id @default(cuid())
-  name                    String?
-  jobTitle                String?
-  email                   String                   @unique
-  emailVerified           DateTime?
-  password                String?
-  role                    Role                     @default(USER)
-  createdAt               DateTime                 @default(now())
-  updatedAt               DateTime                 @updatedAt
-  studentProfile          StudentProfile?
-  accounts                Account[]
-  sessions                Session[]
-  submissions             QuestionnaireSubmission[] @relation("StudentSubmissions")
-  assignedReviews         QuestionnaireSubmission[] @relation("AssignedSubAdmin")
-  homePosts               HomePost[]
-  managedTeamLinks        StaffTeamMembership[]    @relation("ManagerMemberships")
-  internalTeamLinks       StaffTeamMembership[]    @relation("StaffMemberships")
-  studentAssignments      StudentAssignment[]      @relation("AssignedStudentOwner")
-  createdStudentAssignments StudentAssignment[]    @relation("StudentAssignmentCreator")
-  assignedTasks           Task[]                   @relation("TaskAssignee")
-  createdTasks            Task[]                   @relation("TaskCreator")
-  uploadedDocuments       StudentDocument[]        @relation("DocumentUploader")
-  createdConversations    Conversation[]           @relation("ConversationCreator")
-  conversationMemberships ConversationParticipant[]
-  messagesSent            Message[]                @relation("MessageSender")
-  messageReadStates       MessageRead[]
-  createdTemplates        EmailTemplate[]          @relation("TemplateCreator")
-  createdContracts        Contract[]               @relation("ContractCreator")
-  createdInvoices         Invoice[]                @relation("InvoiceCreator")
-  emailLogs               OutboundEmailLog[]       @relation("EmailLogCreator")
-  activitiesCreated       ActivityLog[]            @relation("ActivityCreator")
-  activitiesTargeted      ActivityLog[]            @relation("ActivityTargetUser")
-  assignedCases           Case[]                   @relation("AssignedCaseAgent")
-  ownedLeads              Lead[]                   @relation("LeadOwner")
-  submittedQuotes         Quote[]                  @relation("QuoteSubmitter")
-  approvedQuotes          Quote[]                  @relation("QuoteApprover")
-  rejectedQuotes          Quote[]                  @relation("QuoteRejecter")
-  documentVerifications   StudentDocument[]        @relation("DocumentVerifier")
-  documentReturns         StudentDocument[]        @relation("DocumentReturnedBy")
-  workflowNotifications   WorkflowNotification[]   @relation("WorkflowNotificationRecipient")
-  workflowNotificationsSent WorkflowNotification[] @relation("WorkflowNotificationActor")
+  id                        String                    @id @default(cuid())
+  name                      String?
+  jobTitle                  String?
+  email                     String                    @unique
+  emailVerified             DateTime?
+  password                  String?
+  role                      Role                      @default(USER)
+  createdAt                 DateTime                  @default(now())
+  updatedAt                 DateTime                  @updatedAt
+  studentProfile            StudentProfile?
+  accounts                  Account[]
+  sessions                  Session[]
+  submissions               QuestionnaireSubmission[] @relation("StudentSubmissions")
+  assignedReviews           QuestionnaireSubmission[] @relation("AssignedSubAdmin")
+  homePosts                 HomePost[]
+  managedTeamLinks          StaffTeamMembership[]     @relation("ManagerMemberships")
+  internalTeamLinks         StaffTeamMembership[]     @relation("StaffMemberships")
+  studentAssignments        StudentAssignment[]       @relation("AssignedStudentOwner")
+  createdStudentAssignments StudentAssignment[]       @relation("StudentAssignmentCreator")
+  assignedTasks             Task[]                    @relation("TaskAssignee")
+  createdTasks              Task[]                    @relation("TaskCreator")
+  uploadedDocuments         StudentDocument[]         @relation("DocumentUploader")
+  createdConversations      Conversation[]            @relation("ConversationCreator")
+  conversationMemberships   ConversationParticipant[]
+  messagesSent              Message[]                 @relation("MessageSender")
+  messageReadStates         MessageRead[]
+  createdTemplates          EmailTemplate[]           @relation("TemplateCreator")
+  createdContracts          Contract[]                @relation("ContractCreator")
+  createdInvoices           Invoice[]                 @relation("InvoiceCreator")
+  emailLogs                 OutboundEmailLog[]        @relation("EmailLogCreator")
+  activitiesCreated         ActivityLog[]             @relation("ActivityCreator")
+  activitiesTargeted        ActivityLog[]             @relation("ActivityTargetUser")
+  assignedCases             Case[]                    @relation("AssignedCaseAgent")
+  ownedLeads                Lead[]                    @relation("LeadOwner")
+  submittedQuotes           Quote[]                   @relation("QuoteSubmitter")
+  approvedQuotes            Quote[]                   @relation("QuoteApprover")
+  rejectedQuotes            Quote[]                   @relation("QuoteRejecter")
+  documentVerifications     StudentDocument[]         @relation("DocumentVerifier")
+  documentReturns           StudentDocument[]         @relation("DocumentReturnedBy")
+  workflowNotifications     WorkflowNotification[]    @relation("WorkflowNotificationRecipient")
+  workflowNotificationsSent WorkflowNotification[]    @relation("WorkflowNotificationActor")
 }
 
 model StudentProfile {
-  id                    String   @id @default(cuid())
-  userId                String   @unique
-  dateOfBirth           DateTime?
-  nationality           String?
-  city                  String?
-  currentAddress        String?  @db.Text
-  phone                 String?
-  emergencyContactName  String?
-  emergencyContactEmail String?
-  emergencyContactPhone String?
-  emergencyContactAddress String? @db.Text
-  currentEducationLevel String?
-  targetCourse          String?
-  preferredIntake       String?
-  englishTestScore      String?
-  visaStatus            VisaStatus @default(NOT_STARTED)
-  caseStage             CaseStage  @default(CONSULTATION_AND_DOCUMENTATION)
-  caseStageUpdatedAt    DateTime   @default(now())
-  courseStartDate       DateTime?
-  courseEndDate         DateTime?
-  visaExpiryDate        DateTime?
-  lastFollowUpDate      DateTime?
-  nextFollowUpDate      DateTime?
-  followUpNotes         String?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
-  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  documents             StudentDocument[]
-  contracts             Contract[]
-  invoices              Invoice[]
-  tasks                 Task[]
-  conversations         Conversation[] @relation("StudentConversation")
-  assignments           StudentAssignment[]
-  activities            ActivityLog[] @relation("ActivityTargetStudent")
-  workflowNotifications WorkflowNotification[]
-  leads                 Lead[]
+  id                      String                 @id @default(cuid())
+  caseReference           String                 @unique
+  userId                  String                 @unique
+  dateOfBirth             DateTime?
+  nationality             String?
+  city                    String?
+  currentAddress          String?                @db.Text
+  phone                   String?
+  emergencyContactName    String?
+  emergencyContactEmail   String?
+  emergencyContactPhone   String?
+  emergencyContactAddress String?                @db.Text
+  currentEducationLevel   String?
+  targetCourse            String?
+  preferredIntake         String?
+  englishTestScore        String?
+  visaStatus              VisaStatus             @default(NOT_STARTED)
+  caseStage               CaseStage              @default(CONSULTATION_AND_DOCUMENTATION)
+  caseStageUpdatedAt      DateTime               @default(now())
+  courseStartDate         DateTime?
+  courseEndDate           DateTime?
+  visaExpiryDate          DateTime?
+  lastFollowUpDate        DateTime?
+  nextFollowUpDate        DateTime?
+  followUpNotes           String?
+  createdAt               DateTime               @default(now())
+  updatedAt               DateTime               @updatedAt
+  user                    User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documents               StudentDocument[]
+  contracts               Contract[]
+  invoices                Invoice[]
+  tasks                   Task[]
+  conversations           Conversation[]         @relation("StudentConversation")
+  assignments             StudentAssignment[]
+  activities              ActivityLog[]          @relation("ActivityTargetStudent")
+  workflowNotifications   WorkflowNotification[]
+  leads                   Lead[]
 }
 
 model QuestionnaireTemplate {
-  id          String                   @id @default(cuid())
+  id          String                    @id @default(cuid())
   title       String
   description String?
-  isActive    Boolean                  @default(true)
+  isActive    Boolean                   @default(true)
   questions   Json
-  createdAt   DateTime                 @default(now())
-  updatedAt   DateTime                 @updatedAt
+  createdAt   DateTime                  @default(now())
+  updatedAt   DateTime                  @updatedAt
   submissions QuestionnaireSubmission[]
 }
 
 model QuestionnaireSubmission {
-  id               String               @id @default(cuid())
+  id               String                @id @default(cuid())
   studentId        String
   templateId       String
   assignedToId     String?
@@ -302,38 +309,38 @@ model QuestionnaireSubmission {
   intendedCourse   String?
   intendedIntake   String?
   answers          Json
-  status           SubmissionStatus     @default(SUBMITTED)
-  submittedAt      DateTime             @default(now())
-  updatedAt        DateTime             @updatedAt
-  student          User                 @relation("StudentSubmissions", fields: [studentId], references: [id], onDelete: Cascade)
+  status           SubmissionStatus      @default(SUBMITTED)
+  submittedAt      DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  student          User                  @relation("StudentSubmissions", fields: [studentId], references: [id], onDelete: Cascade)
   template         QuestionnaireTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  assignedSubAdmin User?                @relation("AssignedSubAdmin", fields: [assignedToId], references: [id], onDelete: SetNull)
+  assignedSubAdmin User?                 @relation("AssignedSubAdmin", fields: [assignedToId], references: [id], onDelete: SetNull)
 }
 
 model HomePost {
-  id                  String            @id @default(cuid())
-  title               String
-  slug                String?           @unique
-  content             String            @db.Text
-  contentHtml         String            @default("") @db.LongText
-  mediaType           HomePostMediaType @default(NONE)
-  mediaUrl            String?
-  featuredThumbnail   String?
+  id                   String            @id @default(cuid())
+  title                String
+  slug                 String?           @unique
+  content              String            @db.Text
+  contentHtml          String            @default("") @db.LongText
+  mediaType            HomePostMediaType @default(NONE)
+  mediaUrl             String?
+  featuredThumbnail    String?
   featuredThumbnailAlt String?
-  isPublished         Boolean           @default(false)
-  publishDate         DateTime?
-  metaTitle           String?
-  metaDescription     String?           @db.Text
-  metaKeywords        String?           @db.Text
-  focusKeyword        String?
-  ogImage             String?
-  authorId            String
-  authorNameSnapshot  String            @default("Unknown")
-  authorEmailSnapshot String            @default("")
-  createdAt           DateTime          @default(now())
-  updatedAt           DateTime          @updatedAt
-  author              User              @relation(fields: [authorId], references: [id], onDelete: Cascade)
-  galleryMedia        PostMedia[]
+  isPublished          Boolean           @default(false)
+  publishDate          DateTime?
+  metaTitle            String?
+  metaDescription      String?           @db.Text
+  metaKeywords         String?           @db.Text
+  focusKeyword         String?
+  ogImage              String?
+  authorId             String
+  authorNameSnapshot   String            @default("Unknown")
+  authorEmailSnapshot  String            @default("")
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  author               User              @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  galleryMedia         PostMedia[]
 
   @@index([isPublished, publishDate])
 }
@@ -395,52 +402,52 @@ model Task {
 }
 
 model StudentDocument {
-  id                 String                     @id @default(cuid())
-  studentProfileId   String
-  uploadedById       String
-  verifiedById       String?
-  returnedById       String?
-  replacedDocumentId String?
-  category           DocumentCategory           @default(OTHER)
-  title              String
-  originalFileName   String
-  storagePath        String
-  mimeType           String
-  sizeBytes          Int
-  verificationStatus DocumentVerificationStatus @default(PENDING)
-  notes              String?
-  verifiedAt         DateTime?
-  returnedAt         DateTime?
-  returnedNote       String?
-  returnResolvedAt   DateTime?
-  createdAt          DateTime                   @default(now())
-  updatedAt          DateTime                   @updatedAt
-  studentProfile     StudentProfile             @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
-  uploadedBy         User                       @relation("DocumentUploader", fields: [uploadedById], references: [id], onDelete: Cascade)
-  verifiedBy         User?                      @relation("DocumentVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
-  returnedBy         User?                      @relation("DocumentReturnedBy", fields: [returnedById], references: [id], onDelete: SetNull)
-  replacedDocument   StudentDocument?           @relation("DocumentReplacementChain", fields: [replacedDocumentId], references: [id], onDelete: SetNull)
-  replacementDocuments StudentDocument[]        @relation("DocumentReplacementChain")
+  id                    String                     @id @default(cuid())
+  studentProfileId      String
+  uploadedById          String
+  verifiedById          String?
+  returnedById          String?
+  replacedDocumentId    String?
+  category              DocumentCategory           @default(OTHER)
+  title                 String
+  originalFileName      String
+  storagePath           String
+  mimeType              String
+  sizeBytes             Int
+  verificationStatus    DocumentVerificationStatus @default(PENDING)
+  notes                 String?
+  verifiedAt            DateTime?
+  returnedAt            DateTime?
+  returnedNote          String?
+  returnResolvedAt      DateTime?
+  createdAt             DateTime                   @default(now())
+  updatedAt             DateTime                   @updatedAt
+  studentProfile        StudentProfile             @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+  uploadedBy            User                       @relation("DocumentUploader", fields: [uploadedById], references: [id], onDelete: Cascade)
+  verifiedBy            User?                      @relation("DocumentVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
+  returnedBy            User?                      @relation("DocumentReturnedBy", fields: [returnedById], references: [id], onDelete: SetNull)
+  replacedDocument      StudentDocument?           @relation("DocumentReplacementChain", fields: [replacedDocumentId], references: [id], onDelete: SetNull)
+  replacementDocuments  StudentDocument[]          @relation("DocumentReplacementChain")
   workflowNotifications WorkflowNotification[]
 
   @@index([replacedDocumentId])
 }
 
 model EmailTemplate {
-  id          String       @id @default(cuid())
-  key         String       @unique
-  name        String
-  type        TemplateType @default(GENERAL)
-  subject     String
-  htmlBody    String   @db.LongText
+  id           String       @id @default(cuid())
+  key          String       @unique
+  name         String
+  type         TemplateType @default(GENERAL)
+  subject      String
+  htmlBody     String       @db.LongText
   placeholders Json?
-  isActive    Boolean      @default(true)
-  createdById String
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  createdBy   User         @relation("TemplateCreator", fields: [createdById], references: [id], onDelete: Cascade)
-  contracts   Contract[]
-  invoices    Invoice[]
+  isActive     Boolean      @default(true)
+  createdById  String
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  createdBy    User         @relation("TemplateCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  contracts    Contract[]
+  invoices     Invoice[]
 }
 
 model Contract {
@@ -463,47 +470,47 @@ model Contract {
 }
 
 model Invoice {
-  id               String        @id @default(cuid())
+  id               String            @id @default(cuid())
   studentProfileId String
   templateId       String?
   createdById      String
-  invoiceNumber    String        @unique
+  invoiceNumber    String            @unique
   title            String
   subject          String
   recipientEmail   String
-  currency         String        @default("AUD")
-  subtotal         Float         @default(0)
-  discountAmount   Float         @default(0)
-  taxRate          Float         @default(0)
-  taxAmount        Float         @default(0)
-  shippingAmount   Float         @default(0)
-  totalAmount      Float         @default(0)
+  currency         String            @default("AUD")
+  subtotal         Float             @default(0)
+  discountAmount   Float             @default(0)
+  taxRate          Float             @default(0)
+  taxAmount        Float             @default(0)
+  shippingAmount   Float             @default(0)
+  totalAmount      Float             @default(0)
   dueDate          DateTime?
   paymentTerms     String?
-  remarks          String?       @db.Text
+  remarks          String?           @db.Text
   companyName      String?
-  companyAddress   String?       @db.Text
-  companyContact   String?       @db.Text
+  companyAddress   String?           @db.Text
+  companyContact   String?           @db.Text
   companyLogoUrl   String?
   billToName       String?
   billToCompany    String?
-  billToAddress    String?       @db.Text
+  billToAddress    String?           @db.Text
   billToPhone      String?
   billToEmail      String?
   shipToName       String?
   shipToCompany    String?
-  shipToAddress    String?       @db.Text
+  shipToAddress    String?           @db.Text
   shipToPhone      String?
   shipToEmail      String?
-  status           InvoiceStatus @default(DRAFT)
-  htmlSnapshot     String        @db.Text
+  status           InvoiceStatus     @default(DRAFT)
+  htmlSnapshot     String            @db.Text
   sentAt           DateTime?
   paidAt           DateTime?
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
-  studentProfile   StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
-  template         EmailTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
-  createdBy        User           @relation("InvoiceCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  studentProfile   StudentProfile    @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+  template         EmailTemplate?    @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  createdBy        User              @relation("InvoiceCreator", fields: [createdById], references: [id], onDelete: Cascade)
   lineItems        InvoiceLineItem[]
 }
 
@@ -529,44 +536,50 @@ model CompanySettings {
 }
 
 model InvoiceLineItem {
-  id          String  @id @default(cuid())
+  id          String   @id @default(cuid())
   invoiceId   String
-  description String  @db.Text
-  quantity    Float   @default(1)
-  unitPrice   Float   @default(0)
-  amount      Float   @default(0)
-  taxable     Boolean @default(true)
+  description String   @db.Text
+  quantity    Float    @default(1)
+  unitPrice   Float    @default(0)
+  amount      Float    @default(0)
+  taxable     Boolean  @default(true)
   createdAt   DateTime @default(now())
-  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 }
 
 model OutboundEmailLog {
-  id                String         @id @default(cuid())
-  createdById       String
-  toEmail           String
-  subject           String
-  htmlBody          String         @db.LongText
-  templateKey       String?
-  relatedContractId String?
-  relatedInvoiceId  String?
-  status            EmailLogStatus @default(QUEUED)
-  providerMessageId String?
-  errorMessage      String?
-  createdAt         DateTime       @default(now())
-  sentAt            DateTime?
-  createdBy         User           @relation("EmailLogCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  id                  String         @id @default(cuid())
+  createdById         String
+  toEmail             String
+  subject             String
+  htmlBody            String         @db.LongText
+  templateKey         String?
+  relatedContractId   String?
+  relatedInvoiceId    String?
+  status              EmailLogStatus @default(QUEUED)
+  provider            EmailProvider  @default(POSTMARK)
+  providerMessageId   String?
+  errorMessage        String?        @db.Text
+  deliveredAt         DateTime?
+  bouncedAt           DateTime?
+  lastProviderEvent   String?
+  lastProviderEventAt DateTime?
+  providerEventData   Json?
+  createdAt           DateTime       @default(now())
+  sentAt              DateTime?
+  createdBy           User           @relation("EmailLogCreator", fields: [createdById], references: [id], onDelete: Cascade)
 }
 
 model Conversation {
-  id               String           @id @default(cuid())
-  type             ConversationType @default(TEAM)
+  id               String                    @id @default(cuid())
+  type             ConversationType          @default(TEAM)
   title            String?
   studentProfileId String?
   createdById      String
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-  createdBy        User             @relation("ConversationCreator", fields: [createdById], references: [id], onDelete: Cascade)
-  studentProfile   StudentProfile?  @relation("StudentConversation", fields: [studentProfileId], references: [id], onDelete: SetNull)
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+  createdBy        User                      @relation("ConversationCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  studentProfile   StudentProfile?           @relation("StudentConversation", fields: [studentProfileId], references: [id], onDelete: SetNull)
   participants     ConversationParticipant[]
   messages         Message[]
 }
@@ -583,14 +596,14 @@ model ConversationParticipant {
 }
 
 model Message {
-  id             String       @id @default(cuid())
+  id             String        @id @default(cuid())
   conversationId String
   senderId       String
   content        String
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender         User         @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  conversation   Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         User          @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
   reads          MessageRead[]
 }
 
@@ -647,7 +660,7 @@ model WorkflowNotification {
 }
 
 model CrmAccount {
-  id            String        @id @default(cuid())
+  id            String         @id @default(cuid())
   name          String
   accountType   CrmAccountType @default(STUDENT)
   phone         String?
@@ -655,44 +668,44 @@ model CrmAccount {
   website       String?
   source        String?
   tag           String?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
   leads         Lead[]
   opportunities Opportunity[]
   cases         Case[]
 }
 
 model Lead {
-  id               String      @id @default(cuid())
-  name             String
-  phone            String?
-  email            String?
-  source           String?
-  status           LeadStatus  @default(NEW)
-  ownerId          String?
-  assignedAt       DateTime?
-  leadScore        Int         @default(0)
-  qualificationNotes String?
-  qualificationReason String?
+  id                     String         @id @default(cuid())
+  name                   String
+  phone                  String?
+  email                  String?
+  source                 String?
+  status                 LeadStatus     @default(NEW)
+  ownerId                String?
+  assignedAt             DateTime?
+  leadScore              Int            @default(0)
+  qualificationNotes     String?
+  qualificationReason    String?
   disqualificationReason String?
-  nextFollowUpAt   DateTime?
-  lastContactAt    DateTime?
-  firstResponseAt  DateTime?
-  sourceChannel    String?
-  sourceDetail     String?
-  campaignName     String?
-  parentName       String?
-  parentPhone      String?
-  parentEmail      String?
-  convertedAt      DateTime?
-  studentProfileId String
-  accountId        String
-  createdAt        DateTime    @default(now())
-  updatedAt        DateTime    @updatedAt
-  studentProfile   StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
-  account          CrmAccount  @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  owner            User?       @relation("LeadOwner", fields: [ownerId], references: [id], onDelete: SetNull)
-  opportunity      Opportunity?
+  nextFollowUpAt         DateTime?
+  lastContactAt          DateTime?
+  firstResponseAt        DateTime?
+  sourceChannel          String?
+  sourceDetail           String?
+  campaignName           String?
+  parentName             String?
+  parentPhone            String?
+  parentEmail            String?
+  convertedAt            DateTime?
+  studentProfileId       String
+  accountId              String
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+  studentProfile         StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+  account                CrmAccount     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  owner                  User?          @relation("LeadOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  opportunity            Opportunity?
 
   @@index([studentProfileId, createdAt])
   @@index([ownerId, status])
@@ -701,22 +714,22 @@ model Lead {
 }
 
 model Opportunity {
-  id        String           @id @default(cuid())
-  leadId    String           @unique
-  accountId String
-  name      String           @default("Opportunity")
-  amount    Float            @default(0)
-  probability Int            @default(10)
+  id                String                      @id @default(cuid())
+  leadId            String                      @unique
+  accountId         String
+  name              String                      @default("Opportunity")
+  amount            Float                       @default(0)
+  probability       Int                         @default(10)
   expectedCloseDate DateTime?
-  forecastCategory OpportunityForecastCategory @default(PIPELINE)
-  stage     OpportunityStage @default(NEW)
-  closedAt  DateTime?
-  createdAt DateTime         @default(now())
-  updatedAt DateTime         @updatedAt
-  lead      Lead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  account   CrmAccount       @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  quotes    Quote[]
-  case      Case?
+  forecastCategory  OpportunityForecastCategory @default(PIPELINE)
+  stage             OpportunityStage            @default(NEW)
+  closedAt          DateTime?
+  createdAt         DateTime                    @default(now())
+  updatedAt         DateTime                    @updatedAt
+  lead              Lead                        @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  account           CrmAccount                  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  quotes            Quote[]
+  case              Case?
 
   @@index([accountId])
 }
@@ -748,15 +761,15 @@ model Quote {
 }
 
 model Case {
-  id              String     @id @default(cuid())
-  opportunityId   String     @unique
+  id              String      @id @default(cuid())
+  opportunityId   String      @unique
   accountId       String
   title           String
   description     String?
-  status          CaseStatus @default(OPEN)
+  status          CaseStatus  @default(OPEN)
   assignedAgentId String?
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
   opportunity     Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
   account         CrmAccount  @relation(fields: [accountId], references: [id], onDelete: Cascade)
   assignedAgent   User?       @relation("AssignedCaseAgent", fields: [assignedAgentId], references: [id], onDelete: SetNull)

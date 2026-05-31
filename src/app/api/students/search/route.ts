@@ -25,16 +25,30 @@ export async function GET(request: Request) {
       OR: [
         { name: { contains: q } },
         { email: { contains: q } },
+        { studentProfile: { caseReference: { contains: q } } },
       ],
     },
     select: {
       id: true,
       name: true,
       email: true,
+      studentProfile: {
+        select: { caseReference: true },
+      },
     },
     take: 10,
     orderBy: { name: "asc" },
   });
 
-  return NextResponse.json({ students }, { status: 200 });
+  return NextResponse.json(
+    {
+      students: students.map((student) => ({
+        id: student.id,
+        name: student.name,
+        email: student.email,
+        caseReference: student.studentProfile?.caseReference ?? null,
+      })),
+    },
+    { status: 200 },
+  );
 }
