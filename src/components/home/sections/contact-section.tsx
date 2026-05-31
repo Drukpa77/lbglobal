@@ -31,18 +31,20 @@ export function ContactSection() {
           </div>
 
           <div className="space-y-4">
-            {offices
-              .filter((office) => office.title !== "Bhutan Office")
-              .map((office, index) => (
+            {offices.map((office, index) => (
               <SectionReveal key={office.title} delay={index * 0.07}>
                 <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                   <div className="mb-3 h-1 w-10 rounded-full bg-gradient-to-r from-rose-500 to-blue-600" />
                   <h3 className="font-bold text-blue-900">{office.title}</h3>
+                  <p className="mt-2 text-sm leading-relaxed text-slate-600">
+                    {office.details}
+                  </p>
                   <div className="mt-3 space-y-2">
                     <p className="flex items-start gap-2 text-sm text-slate-600">
                       <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" />
                       {office.address}
                     </p>
+                    <p className="text-xs text-slate-500">{office.hours}</p>
                     <a
                       href={`tel:${office.phone.replace(/\s/g, "")}`}
                       className="flex items-center gap-2 text-sm text-slate-600 transition hover:text-blue-900"

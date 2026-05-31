@@ -97,6 +97,7 @@ export const destinations = [
   {
     country: "Australia",
     flag: "🇦🇺",
+    tagline: "Study Destination",
     description:
       "Globally recognised qualifications, post-study work rights, and strong graduate outcomes.",
     highlights: ["Top-ranked universities", "Post-study work visa", "Multicultural society"],
@@ -104,9 +105,22 @@ export const destinations = [
   {
     country: "Canada",
     flag: "🇨🇦",
+    tagline: "Study Destination",
     description:
       "High quality education ecosystem with excellent student support and permanent residency pathways.",
     highlights: ["World-class institutions", "PR pathway options", "Safe and inclusive"],
+  },
+  {
+    country: "India",
+    flag: "🇮🇳",
+    tagline: "Study Destination",
+    description:
+      "On-the-ground counselling and full application support for students across Bhutan planning to study in India.",
+    highlights: [
+      "Free profile & course assessment",
+      "Admission and visa documentation",
+      "PTE / IELTS preparation support",
+    ],
   },
 ] as const;
 
@@ -137,15 +151,22 @@ export const testimonials = [
 export const offices = [
   {
     title: "Bhutan Office",
-    address: "Thimphu, Bhutan",
+    address: "Thimphu, Kingdom of Bhutan",
+    details:
+      "Head office for Bhutanese students — free assessment, course-country counselling, document checks, SOP support, and visa application guidance.",
     phone: "+975 7778 1399",
     email: "student@lbglobal.com",
+    hours: "Mon–Fri, 9:00 AM – 5:00 PM (Bhutan Time)",
   },
   {
     title: "Australia Office",
-    address: "Perth, WA, Australia",
+    address:
+      "Level 5, Unit 32, 25 Walters Dr, Osborne Park, Perth, Western Australia 6017",
+    details:
+      "Perth-based team for enrolment follow-up, provider liaison, and onshore student support in Western Australia.",
     phone: "0424 919 833",
     email: "student@lbglobal.com",
+    hours: "Mon–Fri, 9:00 AM – 5:00 PM (AWST)",
   },
 ] as const;
 

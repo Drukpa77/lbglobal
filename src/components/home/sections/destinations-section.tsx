@@ -23,10 +23,10 @@ export function DestinationsSection() {
           </div>
         </SectionReveal>
 
-        <div className="mt-12 grid gap-6 lg:grid-cols-2">
+        <div className="mt-12 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           {destinations.map((item, index) => (
             <SectionReveal key={item.country} delay={index * 0.08}>
-              <article className="group overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
+              <article className="group h-full overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
                 {/* Top gradient band */}
                 <div className="h-2 w-full bg-gradient-to-r from-rose-500 to-blue-600" />
                 <div className="p-6 md:p-8">
@@ -37,7 +37,7 @@ export function DestinationsSection() {
                     <div>
                       <h3 className="text-xl font-bold text-blue-900">{item.country}</h3>
                       <p className="text-xs font-medium text-rose-500">
-                        Study Destination
+                        {item.tagline}
                       </p>
                     </div>
                   </div>

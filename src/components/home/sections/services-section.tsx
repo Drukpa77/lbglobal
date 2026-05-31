@@ -141,7 +141,7 @@ export function ServicesSection() {
               href="/apply"
               className="inline-flex items-center rounded border-2 border-blue-900 px-8 py-3 text-sm font-semibold text-blue-900 transition hover:bg-blue-900 hover:text-white"
             >
-              View All Services
+              Enquire Now
             </Link>
           </div>
         </SectionReveal>
