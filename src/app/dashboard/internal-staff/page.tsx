@@ -946,6 +946,7 @@ async function createManualStudentAction(formData: FormData) {
         note: notes || null,
         link: `/dashboard/sub-admin?tab=students#submission-${created.submissionId}`,
         actionRequired: true,
+        sendEmail: false,
         metadata: {
           recordType,
           source: "internal_staff",
