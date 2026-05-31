@@ -7,6 +7,7 @@ import {
   getContactInboxEmail,
   sendGoogleWorkspaceEmail,
 } from "@/lib/send-email";
+import { prisma } from "@/lib/prisma";
 
 const contactSchema = z.object({
   name: z.string().trim().min(2).max(100),
@@ -45,7 +46,15 @@ export async function POST(request: Request) {
     replyTo: email,
   });
 
+  if (storedInquiry) {
+    await markStoredInquiry(storedInquiry.id, staffResult);
+  }
+
   if (!staffResult.ok) {
+    if (storedInquiry) {
+      console.warn("[contact] Email failed, but inquiry was stored:", staffResult.error);
+      return NextResponse.json({ ok: true, queued: true });
+    }
     return NextResponse.json({ error: staffResult.error }, { status: 503 });
   }
 
@@ -60,4 +69,59 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json({ ok: true, dev: staffResult.dev === true });
+}
+
+async function storeContactInquiry(input: {
+  inbox: string;
+  subject: string;
+  html: string;
+}) {
+  try {
+    const owner = await prisma.user.findFirst({
+      where: { role: { in: ["ADMIN", "SUB_ADMIN"] } },
+      orderBy: { createdAt: "asc" },
+      select: { id: true },
+    });
+
+    if (!owner) return null;
+
+    return prisma.outboundEmailLog.create({
+      data: {
+        createdById: owner.id,
+        toEmail: input.inbox,
+        subject: input.subject,
+        htmlBody: input.html,
+        templateKey: "website-contact",
+        status: "QUEUED",
+      },
+      select: { id: true },
+    });
+  } catch (error) {
+    console.error("[contact] Failed to store contact inquiry:", error);
+    return null;
+  }
+}
+
+async function markStoredInquiry(
+  id: string,
+  result: Awaited<ReturnType<typeof sendTransactionalEmail>>,
+) {
+  try {
+    await prisma.outboundEmailLog.update({
+      where: { id },
+      data: result.ok
+        ? {
+            status: "SENT",
+            sentAt: new Date(),
+            errorMessage: null,
+            providerMessageId: result.id ?? null,
+          }
+        : {
+            status: "FAILED",
+            errorMessage: result.error,
+          },
+    });
+  } catch (error) {
+    console.error("[contact] Failed to update stored contact inquiry:", error);
+  }
 }

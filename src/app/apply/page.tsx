@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import Link from "next/link";
 import Image from "next/image";
 import { revalidatePath } from "next/cache";
@@ -99,7 +100,9 @@ export default async function ApplyPage(props: { searchParams: SearchParams }) {
         ? "This email is already used by a staff account. Please use a different email to submit your inquiry."
         : searchParams.error === "template"
           ? "Application form is not available. Please try again later."
-          : null;
+          : searchParams.error === "server"
+            ? "We could not save your inquiry right now. Please try again in a moment or email us directly."
+            : null;
 
   const successMessage = searchParams.success
     ? "Thank you! Your application has been submitted. Our team will contact you within 1–2 business days."
@@ -249,83 +252,118 @@ async function submitQuestionnaireAction(formData: FormData) {
   });
   if (!template) redirect("/apply?error=template");
 
-  const studentUser = existingUser
-    ? await prisma.user.update({
-        where: { id: existingUser.id },
-        data: {
-          // Keep applicant record fresh in case they re-submit later.
-          name: fullName,
-        },
-      })
-    : await prisma.user.create({
-        data: {
-          name: fullName,
-          email,
-          role: "USER",
-        },
-      });
+  let postSubmit: {
+    studentUserId: string;
+    studentProfileId: string;
+    submissionId: string;
+    fullName: string;
+    email: string;
+    city: string;
+    country: string;
+    hearFrom: string;
+  };
 
-  const city = answers.city?.trim() ?? answers.addressCity?.trim() ?? "";
-  const country = answers.country?.trim() ?? answers.addressCountry?.trim() ?? "";
-  const phone = answers.phone?.trim() ?? "";
-  const currentEducationLevel = answers.currentEducationLevel?.trim() ?? "";
-  const targetCourse = answers.targetCourse?.trim() ?? "";
-  const preferredIntake = answers.preferredIntake?.trim() ?? "";
-  const englishTestScore = answers.englishTestScore?.trim() ?? "";
+  try {
+    const studentUser = existingUser
+      ? await prisma.user.update({
+          where: { id: existingUser.id },
+          data: {
+            // Keep applicant record fresh in case they re-submit later.
+            name: fullName,
+          },
+        })
+      : await prisma.user.create({
+          data: {
+            name: fullName,
+            email,
+            role: "USER",
+          },
+        });
 
-  let studentProfile: { id: string };
-  if (existingUser?.studentProfile) {
-    // Resubmissions: backfill any profile field the staff hasn't filled in yet,
-    // but never overwrite values an admin may have edited in the dashboard.
-    const existing = existingUser.studentProfile;
-    const profileUpdate: Record<string, string> = {};
-    if (!existing.phone && phone) profileUpdate.phone = phone;
-    if (!existing.city && city) profileUpdate.city = city;
-    if (!existing.nationality && country) profileUpdate.nationality = country;
-    if (!existing.currentEducationLevel && currentEducationLevel)
-      profileUpdate.currentEducationLevel = currentEducationLevel;
-    if (!existing.targetCourse && targetCourse)
-      profileUpdate.targetCourse = targetCourse;
-    if (!existing.preferredIntake && preferredIntake)
-      profileUpdate.preferredIntake = preferredIntake;
-    if (!existing.englishTestScore && englishTestScore)
-      profileUpdate.englishTestScore = englishTestScore;
-    if (Object.keys(profileUpdate).length > 0) {
-      await prisma.studentProfile.update({
-        where: { id: existing.id },
-        data: profileUpdate,
+    const city = answers.city?.trim() ?? answers.addressCity?.trim() ?? "";
+    const country = answers.country?.trim() ?? answers.addressCountry?.trim() ?? "";
+    const phone = answers.phone?.trim() ?? "";
+    const currentEducationLevel = answers.currentEducationLevel?.trim() ?? "";
+    const targetCourse = answers.targetCourse?.trim() ?? "";
+    const preferredIntake = answers.preferredIntake?.trim() ?? "";
+    const englishTestScore = answers.englishTestScore?.trim() ?? "";
+
+    let studentProfile: { id: string };
+    if (existingUser?.studentProfile) {
+      // Resubmissions: backfill any profile field the staff hasn't filled in yet,
+      // but never overwrite values an admin may have edited in the dashboard.
+      const existing = existingUser.studentProfile;
+      const profileUpdate: Record<string, string> = {};
+      if (!existing.phone && phone) profileUpdate.phone = phone;
+      if (!existing.city && city) profileUpdate.city = city;
+      if (!existing.nationality && country) profileUpdate.nationality = country;
+      if (!existing.currentEducationLevel && currentEducationLevel)
+        profileUpdate.currentEducationLevel = currentEducationLevel;
+      if (!existing.targetCourse && targetCourse)
+        profileUpdate.targetCourse = targetCourse;
+      if (!existing.preferredIntake && preferredIntake)
+        profileUpdate.preferredIntake = preferredIntake;
+      if (!existing.englishTestScore && englishTestScore)
+        profileUpdate.englishTestScore = englishTestScore;
+      if (Object.keys(profileUpdate).length > 0) {
+        await prisma.studentProfile.update({
+          where: { id: existing.id },
+          data: profileUpdate,
+        });
+      }
+      studentProfile = { id: existing.id };
+    } else {
+      studentProfile = await prisma.studentProfile.create({
+        data: {
+          userId: studentUser.id,
+          phone: phone || null,
+          city: city || null,
+          nationality: country || null,
+          currentEducationLevel: currentEducationLevel || null,
+          targetCourse: targetCourse || null,
+          preferredIntake: preferredIntake || null,
+          englishTestScore: englishTestScore || null,
+          followUpNotes: null,
+        },
+        select: { id: true },
       });
     }
-    studentProfile = { id: existing.id };
-  } else {
-    studentProfile = await prisma.studentProfile.create({
+
+    const submission = await prisma.questionnaireSubmission.create({
       data: {
-        caseReference: await generateNextCaseReference(),
-        userId: studentUser.id,
-        phone: phone || null,
-        city: city || null,
-        nationality: country || null,
-        currentEducationLevel: currentEducationLevel || null,
-        targetCourse: targetCourse || null,
-        preferredIntake: preferredIntake || null,
-        englishTestScore: englishTestScore || null,
-        followUpNotes: null,
+        studentId: studentUser.id,
+        templateId: template.id,
+        assignedToId: null,
+        sourceCity: city,
+        sourceCountry: country,
+        answers: answers as object,
       },
       select: { id: true },
     });
-  }
 
-  const submission = await prisma.questionnaireSubmission.create({
-    data: {
-      studentId: studentUser.id,
-      templateId: template.id,
-      assignedToId: null,
-      sourceCity: city,
-      sourceCountry: country,
-      answers: answers as object,
-    },
-    select: { id: true },
-  });
+    postSubmit = {
+      studentUserId: studentUser.id,
+      studentProfileId: studentProfile.id,
+      submissionId: submission.id,
+      fullName,
+      email,
+      city,
+      country,
+      hearFrom,
+    };
+  } catch (error) {
+    if (isNextNavigationError(error)) {
+      throw error;
+    }
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      redirect("/apply?error=staff-email");
+    }
+    console.error("submitQuestionnaireAction failed", error);
+    redirect("/apply?error=server");
+  }
 
   const googleInquiryResult = await sendGoogleWorkspaceEmail({
     to: getContactInboxEmail(),
@@ -354,28 +392,43 @@ async function submitQuestionnaireAction(formData: FormData) {
     subject: "Application Received – L&B Global",
     htmlBody: `
       <p>Dear ${fullName},</p>
+  try {
+    await queueDevEmail({
+      createdById: postSubmit.studentUserId,
+      toEmail: postSubmit.email,
+      subject: "Application Received – L&B Global",
+      htmlBody: `
+      <p>Dear ${postSubmit.fullName},</p>
       <p>Thank you for submitting your application. Our team has received your inquiry and will contact you within 1–2 business days.</p>
       <p>Best regards,<br />L&B Global</p>
     `,
-  });
+    });
 
-  // Fan out a bell notification + email to every SUB_ADMIN and ADMIN so the
-  // unassigned application surfaces immediately (failure here must not block
-  // the applicant – the helper logs and swallows errors internally).
-  await notifyStaffOfNewApplication({
-    studentProfileId: studentProfile.id,
-    studentUserId: studentUser.id,
-    studentName: fullName,
-    studentEmail: email,
-    submissionId: submission.id,
-    sourceCity: city || null,
-    sourceCountry: country || null,
-    hearFrom: hearFrom || null,
-  });
+    await notifyStaffOfNewApplication({
+      studentProfileId: postSubmit.studentProfileId,
+      studentUserId: postSubmit.studentUserId,
+      studentName: postSubmit.fullName,
+      studentEmail: postSubmit.email,
+      submissionId: postSubmit.submissionId,
+      sourceCity: postSubmit.city || null,
+      sourceCountry: postSubmit.country || null,
+      hearFrom: postSubmit.hearFrom || null,
+    });
+  } catch (error) {
+    console.error("post-submit side effects failed", error);
+  }
 
-  revalidatePath("/apply");
   revalidatePath("/dashboard/sub-admin");
   revalidatePath("/dashboard/admin");
   revalidatePath("/");
+  revalidatePath("/apply");
   redirect("/apply?success=1");
+}
+
+function isNextNavigationError(error: unknown) {
+  if (typeof error !== "object" || error === null || !("digest" in error)) {
+    return false;
+  }
+  const digest = String((error as { digest?: unknown }).digest ?? "");
+  return digest.startsWith("NEXT_REDIRECT") || digest.startsWith("NEXT_NOT_FOUND");
 }
