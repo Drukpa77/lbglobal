@@ -18,6 +18,7 @@ import { RemindersWidget } from "@/components/reminders-widget";
 import { getRemindersForUser } from "@/lib/reminders";
 import { prisma } from "@/lib/prisma";
 import { redirectWithDelegationNotice } from "@/lib/redirect-after-delegation";
+import { createWorkflowNotification } from "@/lib/workflow-notifications";
 import { buildSubmissionWhere } from "@/lib/submission-filters";
 import { formatSubmissionStatus } from "@/lib/submission";
 import { formatVisaStatus, formatYearsLeft } from "@/lib/student-tracking";
@@ -1439,7 +1440,10 @@ async function delegateStudentFromAdminAction(formData: FormData) {
 
   const studentProfile = await prisma.studentProfile.findUnique({
     where: { userId: studentId },
-    select: { id: true },
+    select: {
+      id: true,
+      user: { select: { name: true, email: true } },
+    },
   });
   if (!studentProfile) redirect("/dashboard/admin");
 
@@ -1465,6 +1469,20 @@ async function delegateStudentFromAdminAction(formData: FormData) {
       action: "Assigned student to internal staff (from admin dashboard)",
       metadata: { internalStaffId: staffMember.id },
     },
+  });
+
+  const actorLabel = session.user.name?.trim() || session.user.email || "An admin";
+  const studentLabel = studentProfile.user.name?.trim() || studentProfile.user.email;
+  await createWorkflowNotification({
+    recipientId: staffMember.id,
+    actorId: session.user.id,
+    studentProfileId: studentProfile.id,
+    type: "STUDENT_DELEGATED",
+    title: "Student delegated to you",
+    message: `${studentLabel} has been assigned to you by ${actorLabel}.`,
+    link: `/dashboard/students/${studentId}`,
+    actionRequired: true,
+    metadata: { delegatedFrom: "admin_dashboard" },
   });
 
   revalidatePath("/dashboard/admin");

@@ -15,10 +15,11 @@ type CreateWorkflowNotificationInput = {
   link: string;
   actionRequired?: boolean;
   metadata?: Prisma.InputJsonValue;
+  sendEmail?: boolean;
 };
 
 export async function createWorkflowNotification(input: CreateWorkflowNotificationInput) {
-  return prisma.workflowNotification.create({
+  const notification = await prisma.workflowNotification.create({
     data: {
       recipientId: input.recipientId,
       actorId: input.actorId ?? null,
@@ -33,6 +34,126 @@ export async function createWorkflowNotification(input: CreateWorkflowNotificati
       metadata: input.metadata,
     },
   });
+
+  if (input.sendEmail !== false) {
+    try {
+      await sendWorkflowNotificationEmail({
+        ...input,
+        notificationId: notification.id,
+        actorId: input.actorId ?? null,
+      });
+    } catch (error) {
+      console.error("sendWorkflowNotificationEmail failed", error);
+    }
+  }
+
+  return notification;
+}
+
+type WorkflowNotificationEmailInput = CreateWorkflowNotificationInput & {
+  notificationId: string;
+  actorId: string | null;
+};
+
+async function sendWorkflowNotificationEmail(input: WorkflowNotificationEmailInput) {
+  const [recipient, actor] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: input.recipientId },
+      select: { email: true, name: true },
+    }),
+    input.actorId
+      ? prisma.user.findUnique({
+          where: { id: input.actorId },
+          select: { email: true, name: true },
+        })
+      : null,
+  ]);
+
+  if (!recipient?.email) return;
+
+  const actorLabel = actor ? actor.name?.trim() || actor.email : null;
+  const subject = workflowEmailSubject(input);
+  const url = absoluteWorkflowLink(input.link);
+  const note = input.note?.trim();
+
+  await queueDevEmail({
+    createdById: input.actorId ?? input.recipientId,
+    toEmail: recipient.email,
+    subject,
+    htmlBody: `
+      <p>${escapeHtml(workflowEmailIntro(input, actorLabel))}</p>
+      <p><strong>${escapeHtml(input.title)}</strong></p>
+      <p>${escapeHtml(input.message)}</p>
+      ${note ? `<p><strong>Note:</strong> ${escapeHtml(note)}</p>` : ""}
+      <p><a href="${escapeHtml(url)}">Open this item in the dashboard</a></p>
+    `,
+    templateKey: `workflow-${input.type.toLowerCase().replace(/_/g, "-")}`,
+  });
+}
+
+function workflowEmailSubject(input: CreateWorkflowNotificationInput) {
+  switch (input.type) {
+    case "NEW_STUDENT_APPLICATION":
+      return input.title || "New student enquiry";
+    case "STUDENT_DELEGATED":
+      return input.title || "Student delegated to you";
+    case "DOCUMENT_RETURNED":
+      return "Document verification returned";
+    case "DOCUMENT_REVERIFIED":
+      return "Returned document re-verified";
+    case "DOCUMENT_RETURN_DISPUTED":
+      return "Document return disputed";
+    case "DOCUMENT_REPLACEMENT_UPLOADED":
+      return "Replacement document uploaded";
+    case "DOCUMENT_RETURN_FOLLOW_UP":
+      return "Returned document still pending";
+    default:
+      return input.title || "Workflow notification";
+  }
+}
+
+function workflowEmailIntro(input: CreateWorkflowNotificationInput, actorLabel: string | null) {
+  switch (input.type) {
+    case "NEW_STUDENT_APPLICATION":
+      return "A new student enquiry needs attention.";
+    case "STUDENT_DELEGATED":
+      return actorLabel
+        ? `${actorLabel} delegated a student case to you.`
+        : "A student case has been delegated to you.";
+    case "DOCUMENT_RETURNED":
+      return actorLabel
+        ? `${actorLabel} returned a document you verified.`
+        : "A document you verified has been returned.";
+    case "DOCUMENT_REVERIFIED":
+      return actorLabel
+        ? `${actorLabel} re-verified a returned document.`
+        : "A returned document has been re-verified.";
+    case "DOCUMENT_RETURN_DISPUTED":
+      return actorLabel
+        ? `${actorLabel} disputed a returned document.`
+        : "A returned document has been disputed.";
+    case "DOCUMENT_REPLACEMENT_UPLOADED":
+      return actorLabel
+        ? `${actorLabel} uploaded a replacement document.`
+        : "A replacement document has been uploaded.";
+    case "DOCUMENT_RETURN_FOLLOW_UP":
+      return "A returned document is still pending action.";
+    default:
+      return "You have a new workflow notification.";
+  }
+}
+
+function absoluteWorkflowLink(link: string) {
+  const baseUrl =
+    process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
+    process.env.NEXTAUTH_URL?.trim() ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+
+  try {
+    return new URL(link, baseUrl).toString();
+  } catch {
+    return link;
+  }
 }
 
 type NotifyStaffOfNewApplicationInput = {

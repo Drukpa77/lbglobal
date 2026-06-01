@@ -1526,7 +1526,10 @@ async function delegateStudentToInternalStaffAction(formData: FormData) {
 
   const studentProfile = await prisma.studentProfile.findUnique({
     where: { userId: studentId },
-    select: { id: true },
+    select: {
+      id: true,
+      user: { select: { name: true, email: true } },
+    },
   });
   if (!studentProfile) redirect(returnToStudentsTab);
 
@@ -1558,6 +1561,20 @@ async function delegateStudentToInternalStaffAction(formData: FormData) {
       action: "Assigned student to internal staff (from sub-admin dashboard)",
       metadata: { internalStaffId: staff.id },
     },
+  });
+
+  const actorLabel = session.user.name?.trim() || session.user.email || "A sub-admin";
+  const studentLabel = studentProfile.user.name?.trim() || studentProfile.user.email;
+  await createWorkflowNotification({
+    recipientId: staff.id,
+    actorId: session.user.id,
+    studentProfileId: studentProfile.id,
+    type: "STUDENT_DELEGATED",
+    title: "Student delegated to you",
+    message: `${studentLabel} has been assigned to you by ${actorLabel}.`,
+    link: `/dashboard/students/${studentId}`,
+    actionRequired: true,
+    metadata: { delegatedFrom: "sub_admin_dashboard" },
   });
 
   revalidatePath("/dashboard/sub-admin");
@@ -1817,6 +1834,7 @@ async function createManualStudentAction(formData: FormData) {
         note: notes || null,
         link: `/dashboard/sub-admin?tab=students#submission-${created.submissionId}`,
         actionRequired: false,
+        sendEmail: false,
         metadata: {
           recordType,
           source: "sub_admin",
