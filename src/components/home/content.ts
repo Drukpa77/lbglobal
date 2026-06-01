@@ -153,7 +153,7 @@ export const offices = [
     title: "Bhutan Office",
     address: "Thimphu, Kingdom of Bhutan",
     details:
-      "Head office for Bhutanese students — free assessment, course-country counselling, document checks, SOP support, and visa application guidance.",
+      "Bhutanese student - free assessment, course-country counselling, document checks, SOP support, and visa application guidance.",
     phone: "+975 7778 1399",
     email: "student@lbglobal.com",
     hours: "Mon–Fri, 9:00 AM – 5:00 PM (Bhutan Time)",
