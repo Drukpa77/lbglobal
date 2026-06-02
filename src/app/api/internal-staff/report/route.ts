@@ -25,7 +25,18 @@ export async function GET(request: Request) {
 
   const tasks = await prisma.task.findMany({
     where: {
-      ...(session.user.role === "ADMIN" ? {} : { assigneeId: session.user.id }),
+      ...(session.user.role === "ADMIN"
+        ? {}
+        : {
+            OR: [
+              { assigneeId: session.user.id },
+              {
+                studentProfile: {
+                  assignments: { some: { assignedToId: session.user.id, isActive: true } },
+                },
+              },
+            ],
+          }),
       ...(filter === "overdue"
         ? { dueDate: { lt: startOfToday }, status: { not: "DONE" } }
         : filter === "today"
@@ -39,6 +50,7 @@ export async function GET(request: Request) {
         },
       },
       assignee: { select: { name: true, email: true } },
+      completedBy: { select: { name: true, email: true } },
     },
     orderBy: [{ dueDate: "asc" }, { createdAt: "desc" }],
     take: 500,
@@ -56,6 +68,8 @@ export async function GET(request: Request) {
       "caseStage",
       "caseStageUpdatedAt",
       "assignee",
+      "completedBy",
+      "completedAt",
       "filter",
       "generatedAt",
     ].join(","),
@@ -71,6 +85,8 @@ export async function GET(request: Request) {
         csvCell(caseStageLabel(task.studentProfile.caseStage)),
         csvCell(task.studentProfile.caseStageUpdatedAt.toISOString()),
         csvCell(task.assignee.name ?? task.assignee.email ?? ""),
+        csvCell(task.completedBy?.name ?? task.completedBy?.email ?? ""),
+        csvCell(task.completedAt ? task.completedAt.toISOString() : ""),
         csvCell(filter),
         csvCell(new Date().toISOString()),
       ].join(","),

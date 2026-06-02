@@ -227,6 +227,7 @@ model User {
   createdStudentAssignments StudentAssignment[]       @relation("StudentAssignmentCreator")
   assignedTasks             Task[]                    @relation("TaskAssignee")
   createdTasks              Task[]                    @relation("TaskCreator")
+  completedTasks            Task[]                    @relation("TaskCompleter")
   uploadedDocuments         StudentDocument[]         @relation("DocumentUploader")
   createdConversations      Conversation[]            @relation("ConversationCreator")
   conversationMemberships   ConversationParticipant[]
@@ -383,6 +384,10 @@ model StudentAssignment {
   studentProfile   StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
   assignedTo       User           @relation("AssignedStudentOwner", fields: [assignedToId], references: [id], onDelete: Cascade)
   assignedBy       User           @relation("StudentAssignmentCreator", fields: [assignedById], references: [id], onDelete: Cascade)
+
+  @@unique([studentProfileId, assignedToId])
+  @@index([assignedToId, isActive])
+  @@index([studentProfileId, isActive])
 }
 
 model Task {
@@ -395,11 +400,16 @@ model Task {
   studentProfileId String
   assigneeId       String
   assignerId       String
+  completedById    String?
+  completedAt      DateTime?
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
   studentProfile   StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
   assignee         User           @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: Cascade)
   assigner         User           @relation("TaskCreator", fields: [assignerId], references: [id], onDelete: Cascade)
+  completedBy      User?          @relation("TaskCompleter", fields: [completedById], references: [id], onDelete: SetNull)
+
+  @@index([completedById])
 }
 
 model StudentDocument {

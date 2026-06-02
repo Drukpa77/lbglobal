@@ -9,6 +9,15 @@ type TaskRow = {
   priority: string;
   status: string;
   dueDate: Date | null;
+  assignee: {
+    name: string | null;
+    email: string;
+  };
+  completedBy: {
+    name: string | null;
+    email: string;
+  } | null;
+  completedAt: Date | null;
 };
 
 type DocumentRow = {
@@ -169,7 +178,7 @@ export function TasksDocumentsTab({
   return (
     <>
       <section id="tasks" className="scroll-mt-24 rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-900">My Tasks</h2>
+        <h2 className="text-lg font-semibold text-slate-900">Case Tasks</h2>
         {canCreateTasks ? (
           <form action={createTaskAction} className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <input type="hidden" name="studentId" value={studentId} />
@@ -254,6 +263,16 @@ export function TasksDocumentsTab({
                         </p>
                         <p className="mt-1 text-xs text-slate-600">
                           Due: {task.dueDate ? task.dueDate.toLocaleDateString() : "No due date"}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-600">
+                          Owner: {task.assignee.name ?? task.assignee.email}
+                          {task.completedBy ? (
+                            <>
+                              {" "}
+                              | Completed by {task.completedBy.name ?? task.completedBy.email}
+                              {task.completedAt ? ` on ${task.completedAt.toLocaleDateString()}` : ""}
+                            </>
+                          ) : null}
                         </p>
                         {task.description ? (
                           <p className="mt-1 text-sm text-slate-600">{task.description}</p>

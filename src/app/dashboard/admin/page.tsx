@@ -17,7 +17,7 @@ import { NewInquiriesCard } from "@/components/new-inquiries-card";
 import { RemindersWidget } from "@/components/reminders-widget";
 import { getRemindersForUser } from "@/lib/reminders";
 import { prisma } from "@/lib/prisma";
-import { redirectWithDelegationNotice } from "@/lib/redirect-after-delegation";
+import { redirectWithDashboardNotice, redirectWithDelegationNotice } from "@/lib/redirect-after-delegation";
 import { createWorkflowNotification } from "@/lib/workflow-notifications";
 import { buildSubmissionWhere } from "@/lib/submission-filters";
 import { formatSubmissionStatus } from "@/lib/submission";
@@ -153,9 +153,11 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
               include: {
                 assignments: {
                   where: { isActive: true },
-                  take: 1,
                   orderBy: { createdAt: "desc" },
-                  select: { assignedToId: true },
+                  select: {
+                    assignedToId: true,
+                    assignedTo: { select: { name: true, email: true } },
+                  },
                 },
               },
             },
@@ -646,8 +648,11 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
             ) : (
               <div className="mt-3 max-h-96 space-y-3 overflow-y-auto pr-1">
                 {filteredSubmissions.map((submission) => {
-                  const activeInternalDelegationId =
-                    submission.student.studentProfile?.assignments[0]?.assignedToId ?? "";
+                  const activeInternalDelegations =
+                    submission.student.studentProfile?.assignments ?? [];
+                  const activeInternalDelegationIds = new Set(
+                    activeInternalDelegations.map((assignment) => assignment.assignedToId),
+                  );
 
                   return (
                   <article id={`submission-${submission.id}`} key={submission.id} className="rounded-md border border-gray-200 p-3">
@@ -686,6 +691,16 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
                           | Years left: {formatYearsLeft(submission.student.studentProfile?.courseEndDate)}
                         </p>
                         <p className="text-xs text-gray-600">{getFollowUpLabel(submission.student.studentProfile?.visaExpiryDate, today)}</p>
+                        {activeInternalDelegations.length > 0 ? (
+                          <p className="text-xs text-gray-600">
+                            Internal staff:{" "}
+                            {activeInternalDelegations
+                              .map((assignment) => assignment.assignedTo.name ?? assignment.assignedTo.email)
+                              .join(", ")}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-gray-600">Internal staff: Not assigned</p>
+                        )}
                       </div>
                       <div className="flex items-center gap-2">
                         <Link
@@ -713,23 +728,26 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
                           </button>
                         </form>
                         {submission.student.studentProfile && internalStaffUsers.length > 0 ? (
-                          <form action={delegateStudentFromAdminAction} className="flex items-center gap-2">
+                          <form action={delegateStudentFromAdminAction} className="min-w-64 rounded-md border border-gray-200 p-2">
                             <input type="hidden" name="studentId" value={submission.studentId} />
                             <input type="hidden" name="anchorId" value={`submission-${submission.id}`} />
-                            <select
-                              name="internalStaffId"
-                              defaultValue={activeInternalDelegationId}
-                              className="rounded-md border px-2 py-1 text-sm"
-                            >
-                              <option value="">Delegate to staff</option>
+                            <p className="mb-1 text-xs font-semibold text-gray-700">Delegate to staff</p>
+                            <div className="max-h-28 space-y-1 overflow-y-auto pr-1">
                               {internalStaffUsers.map((staff) => (
-                                <option key={staff.id} value={staff.id}>
-                                  {staff.name ?? staff.email}
-                                </option>
+                                <label key={staff.id} className="flex items-center gap-2 text-xs text-gray-700">
+                                  <input
+                                    type="checkbox"
+                                    name="internalStaffIds"
+                                    value={staff.id}
+                                    defaultChecked={activeInternalDelegationIds.has(staff.id)}
+                                    className="h-4 w-4"
+                                  />
+                                  <span>{staff.name ?? staff.email}</span>
+                                </label>
                               ))}
-                            </select>
-                            <button type="submit" className="rounded-md border px-3 py-1 text-sm">
-                              Delegate
+                            </div>
+                            <button type="submit" className="mt-2 rounded-md border px-3 py-1 text-sm">
+                              Update delegation
                             </button>
                           </form>
                         ) : null}
@@ -1429,14 +1447,23 @@ async function delegateStudentFromAdminAction(formData: FormData) {
 
   const studentId = String(formData.get("studentId") ?? "");
   const anchorId = String(formData.get("anchorId") ?? "").trim();
-  const internalStaffId = String(formData.get("internalStaffId") ?? "");
-  if (!studentId || !internalStaffId) redirect("/dashboard/admin");
+  const selectedStaffIds = Array.from(
+    new Set(
+      [
+        ...formData.getAll("internalStaffIds").map((value) => String(value)),
+        String(formData.get("internalStaffId") ?? ""),
+      ]
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  );
+  if (!studentId) redirect("/dashboard/admin");
 
-  const staffMember = await prisma.user.findFirst({
-    where: { id: internalStaffId, role: "INTERNAL_STAFF" },
+  const staffMembers = await prisma.user.findMany({
+    where: { id: { in: selectedStaffIds }, role: "INTERNAL_STAFF" },
     select: { id: true, name: true, email: true },
   });
-  if (!staffMember) redirect("/dashboard/admin");
+  if (selectedStaffIds.length > 0 && staffMembers.length === 0) redirect("/dashboard/admin");
 
   const studentProfile = await prisma.studentProfile.findUnique({
     where: { userId: studentId },
@@ -1447,17 +1474,53 @@ async function delegateStudentFromAdminAction(formData: FormData) {
   });
   if (!studentProfile) redirect("/dashboard/admin");
 
-  await prisma.studentAssignment.updateMany({
-    where: { studentProfileId: studentProfile.id, isActive: true },
-    data: { isActive: false, endedAt: new Date() },
+  const validStaffIds = new Set(staffMembers.map((staff) => staff.id));
+  const now = new Date();
+  const currentAssignments = await prisma.studentAssignment.findMany({
+    where: { studentProfileId: studentProfile.id },
+    select: { id: true, assignedToId: true, isActive: true },
   });
-  await prisma.studentAssignment.create({
-    data: {
-      studentProfileId: studentProfile.id,
-      assignedToId: staffMember.id,
-      assignedById: session.user.id,
-      isActive: true,
-    },
+  const currentActiveIds = new Set(
+    currentAssignments
+      .filter((assignment) => assignment.isActive)
+      .map((assignment) => assignment.assignedToId),
+  );
+  const existingAssignmentsByStaffId = new Map(
+    currentAssignments.map((assignment) => [assignment.assignedToId, assignment]),
+  );
+
+  await prisma.$transaction(async (tx) => {
+    await tx.studentAssignment.updateMany({
+      where: {
+        studentProfileId: studentProfile.id,
+        isActive: true,
+        assignedToId: { notIn: Array.from(validStaffIds) },
+      },
+      data: { isActive: false, endedAt: now },
+    });
+
+    for (const staffId of validStaffIds) {
+      const existing = existingAssignmentsByStaffId.get(staffId);
+      if (existing) {
+        await tx.studentAssignment.update({
+          where: { id: existing.id },
+          data: {
+            assignedById: session.user.id,
+            isActive: true,
+            endedAt: null,
+          },
+        });
+      } else {
+        await tx.studentAssignment.create({
+          data: {
+            studentProfileId: studentProfile.id,
+            assignedToId: staffId,
+            assignedById: session.user.id,
+            isActive: true,
+          },
+        });
+      }
+    }
   });
 
   await prisma.activityLog.create({
@@ -1466,35 +1529,51 @@ async function delegateStudentFromAdminAction(formData: FormData) {
       targetStudentProfileId: studentProfile.id,
       entityType: "ASSIGNMENT",
       entityId: studentProfile.id,
-      action: "Assigned student to internal staff (from admin dashboard)",
-      metadata: { internalStaffId: staffMember.id },
+      action: "Updated internal staff delegation (from admin dashboard)",
+      metadata: { internalStaffIds: Array.from(validStaffIds) },
     },
   });
 
   const actorLabel = session.user.name?.trim() || session.user.email || "An admin";
   const studentLabel = studentProfile.user.name?.trim() || studentProfile.user.email;
-  await createWorkflowNotification({
-    recipientId: staffMember.id,
-    actorId: session.user.id,
-    studentProfileId: studentProfile.id,
-    type: "STUDENT_DELEGATED",
-    title: "Student delegated to you",
-    message: `${studentLabel} has been assigned to you by ${actorLabel}.`,
-    link: `/dashboard/students/${studentId}`,
-    actionRequired: true,
-    metadata: { delegatedFrom: "admin_dashboard" },
-  });
+  const newlyAssignedStaff = staffMembers.filter((staff) => !currentActiveIds.has(staff.id));
+  await Promise.all(
+    newlyAssignedStaff.map((staff) =>
+      createWorkflowNotification({
+        recipientId: staff.id,
+        actorId: session.user.id,
+        studentProfileId: studentProfile.id,
+        type: "STUDENT_DELEGATED",
+        title: "Student delegated to you",
+        message: `${studentLabel} has been assigned to you by ${actorLabel}.`,
+        link: `/dashboard/students/${studentId}`,
+        actionRequired: true,
+        metadata: { delegatedFrom: "admin_dashboard" },
+      }),
+    ),
+  );
 
   revalidatePath("/dashboard/admin");
   revalidatePath(`/dashboard/students/${studentId}`);
   revalidatePath("/dashboard/internal-staff");
 
-  const staffLabel = (staffMember.name?.trim() || staffMember.email || "staff").trim();
-  await redirectWithDelegationNotice({
-    dashboardPath: "/dashboard/admin",
-    staffLabel,
-    anchorId: anchorId || undefined,
-  });
+  if (validStaffIds.size === 0) {
+    await redirectWithDashboardNotice({
+      dashboardPath: "/dashboard/admin",
+      noticeParams: { statusUpdated: "1" },
+      anchorId: anchorId || undefined,
+    });
+  } else {
+    const staffLabel = staffMembers
+      .map((staff) => staff.name?.trim() || staff.email)
+      .filter(Boolean)
+      .join(", ");
+    await redirectWithDelegationNotice({
+      dashboardPath: "/dashboard/admin",
+      staffLabel: staffLabel || "staff",
+      anchorId: anchorId || undefined,
+    });
+  }
 }
 
 async function createInternalStaffAccountAction(formData: FormData) {

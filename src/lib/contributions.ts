@@ -39,7 +39,7 @@ export type ContributionResult = {
  * Compute weighted per-user contribution scores across three pools:
  *   - Stage pool (70 pts): based on net forward stage progress from CASE_STAGE logs
  *   - Document pool (15 pts): split equally across every uploaded document
- *   - Task pool (15 pts): split equally across every task with status=DONE
+ *   - Task pool (15 pts): split equally across every task completed by a user
  *
  * Pools are fixed; if a pool has zero items it stays unallocated (no auto-rebalance).
  *
@@ -50,7 +50,7 @@ export async function getContributions(params?: {
 }): Promise<ContributionResult> {
   const { studentProfileId } = params ?? {};
 
-  const [stageEvents, docGroups, taskGroups, scopedCaseCountRaw] = await Promise.all([
+  const [stageEvents, docGroups, taskGroups, assignedTeam, scopedCaseCountRaw] = await Promise.all([
     prisma.activityLog.findMany({
       where: {
         entityType: "CASE_STAGE",
@@ -70,13 +70,20 @@ export async function getContributions(params?: {
       _count: { _all: true },
     }),
     prisma.task.groupBy({
-      by: ["assigneeId"],
+      by: ["completedById"],
       where: {
         status: "DONE",
+        completedById: { not: null },
         ...(studentProfileId ? { studentProfileId } : {}),
       },
       _count: { _all: true },
     }),
+    studentProfileId
+      ? prisma.studentAssignment.findMany({
+          where: { studentProfileId, isActive: true },
+          select: { assignedToId: true },
+        })
+      : Promise.resolve([]),
     studentProfileId
       ? Promise.resolve(1)
       : prisma.studentProfile.count(),
@@ -122,7 +129,10 @@ export async function getContributions(params?: {
   const userIdSet = new Set<string>();
   for (const actorId of stageProgressByActor.keys()) userIdSet.add(actorId);
   for (const row of docGroups) userIdSet.add(row.uploadedById);
-  for (const row of taskGroups) userIdSet.add(row.assigneeId);
+  for (const row of taskGroups) {
+    if (row.completedById) userIdSet.add(row.completedById);
+  }
+  for (const row of assignedTeam) userIdSet.add(row.assignedToId);
 
   const userIds = Array.from(userIdSet);
   const users =
@@ -172,10 +182,15 @@ export async function getContributions(params?: {
   }
 
   for (const group of taskGroups) {
+    if (!group.completedById) continue;
     const count = group._count?._all ?? 0;
-    const row = ensureRow(group.assigneeId);
+    const row = ensureRow(group.completedById);
     row.taskCount = count;
     row.taskPts = (count / taskDenominator) * CONTRIBUTION_TASK_WEIGHT;
+  }
+
+  for (const assignment of assignedTeam) {
+    ensureRow(assignment.assignedToId);
   }
 
   for (const row of rowMap.values()) {
