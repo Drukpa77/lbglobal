@@ -60,9 +60,16 @@ export async function GET(request: Request) {
       _count: { _all: true },
     }),
   ]);
-  const assignmentByProfile = new Map(
-    assignments.map((item) => [item.studentProfileId, item.assignedTo.name ?? item.assignedTo.email]),
-  );
+  const assignmentsByProfile = new Map<string, string[]>();
+  for (const assignment of assignments) {
+    const label = assignment.assignedTo.name ?? assignment.assignedTo.email;
+    const existing = assignmentsByProfile.get(assignment.studentProfileId);
+    if (existing) {
+      existing.push(label);
+    } else {
+      assignmentsByProfile.set(assignment.studentProfileId, [label]);
+    }
+  }
   const taskCountByProfile = new Map(tasks.map((item) => [item.studentProfileId, item._count._all]));
 
   const rows = [
@@ -105,7 +112,7 @@ export async function GET(request: Request) {
         csvCell(item.assignedSubAdmin?.name ?? item.assignedSubAdmin?.email ?? ""),
         csvCell(
           item.student.studentProfile
-            ? (assignmentByProfile.get(item.student.studentProfile.id) ?? "")
+            ? (assignmentsByProfile.get(item.student.studentProfile.id)?.join("; ") ?? "")
             : "",
         ),
         csvCell(

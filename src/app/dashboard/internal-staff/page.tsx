@@ -2,7 +2,6 @@ import Link from "next/link";
 import type { DocumentVerificationStatus, TaskStatus } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { Suspense } from "react";
 
 import { auth } from "@/auth";
 import { CaseReferenceLabel } from "@/components/case-reference-label";
@@ -102,7 +101,18 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
       _count: { _all: true },
     }) : Promise.resolve([]),
     prisma.task.findMany({
-      where: isAdmin ? undefined : { assigneeId: session.user.id },
+      where: isAdmin
+        ? undefined
+        : {
+            OR: [
+              { assigneeId: session.user.id },
+              {
+                studentProfile: {
+                  assignments: { some: { assignedToId: session.user.id, isActive: true } },
+                },
+              },
+            ],
+          },
       include: {
         studentProfile: { include: { user: { select: { id: true, name: true, email: true } } } },
       },
@@ -1134,7 +1144,10 @@ async function updateTaskStatusFromDashboardAction(formData: FormData) {
 
   await prisma.task.update({
     where: { id: task.id },
-    data: { status },
+    data:
+      status === "DONE"
+        ? { status, completedById: session.user.id, completedAt: new Date() }
+        : { status, completedById: null, completedAt: null },
   });
   await prisma.activityLog.create({
     data: {
@@ -1290,7 +1303,10 @@ async function bulkUpdateTasksAction(formData: FormData) {
   const allowedTaskIds = allowedTasks.map((task) => task.id);
   await prisma.task.updateMany({
     where: { id: { in: allowedTaskIds } },
-    data: { status },
+    data:
+      status === "DONE"
+        ? { status, completedById: session.user.id, completedAt: new Date() }
+        : { status, completedById: null, completedAt: null },
   });
   await prisma.activityLog.createMany({
     data: allowedTasks.map((task) => ({

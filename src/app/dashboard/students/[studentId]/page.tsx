@@ -261,7 +261,10 @@ export default async function StudentProfileManagementPage(props: { params: Para
     needsTasksData
       ? prisma.task.findMany({
           where: { studentProfileId },
-          include: { assignee: { select: { id: true, name: true, email: true } } },
+          include: {
+            assignee: { select: { id: true, name: true, email: true } },
+            completedBy: { select: { id: true, name: true, email: true } },
+          },
           orderBy: [{ status: "asc" }, { createdAt: "desc" }],
           take: 30,
         })
@@ -785,7 +788,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
           <form action={assignStudentDelegationAction} className="mt-4 flex flex-wrap items-end gap-4">
             <input type="hidden" name="studentId" value={studentId} />
             <label className="block">
-              <span className="text-sm font-medium text-slate-700">Assign to case manager or agent</span>
+              <span className="text-sm font-medium text-slate-700">Add case manager or agent</span>
               <select
                 name="assigneeId"
                 required
@@ -826,7 +829,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
               type="submit"
               className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
             >
-              Assign
+              Add to team
             </button>
           </form>
         )}
@@ -2052,20 +2055,35 @@ async function assignStudentDelegationAction(formData: FormData) {
   });
   if (!assignee) redirect(returnToProfileTab);
 
-  await prisma.studentAssignment.updateMany({
-    where: { studentProfileId: studentProfile.id, isActive: true },
-    data: { isActive: false, endedAt: new Date() },
-  });
-
-  await prisma.studentAssignment.create({
-    data: {
+  const existingAssignment = await prisma.studentAssignment.findFirst({
+    where: {
       studentProfileId: studentProfile.id,
       assignedToId: assignee.id,
-      assignedById: session.user.id,
-      notes,
-      isActive: true,
     },
+    select: { id: true },
   });
+
+  if (existingAssignment) {
+    await prisma.studentAssignment.update({
+      where: { id: existingAssignment.id },
+      data: {
+        assignedById: session.user.id,
+        notes,
+        isActive: true,
+        endedAt: null,
+      },
+    });
+  } else {
+    await prisma.studentAssignment.create({
+      data: {
+        studentProfileId: studentProfile.id,
+        assignedToId: assignee.id,
+        assignedById: session.user.id,
+        notes,
+        isActive: true,
+      },
+    });
+  }
 
   if (assignee.role === "SUB_ADMIN") {
     await prisma.questionnaireSubmission.updateMany({
@@ -2194,20 +2212,36 @@ async function updateTaskStatusAction(formData: FormData) {
 
   const task = await prisma.task.findUnique({
     where: { id: taskId },
-    include: { studentProfile: true },
+    include: {
+      studentProfile: {
+        include: {
+          assignments: {
+            where: { isActive: true },
+            select: { assignedToId: true },
+          },
+        },
+      },
+    },
   });
   if (!task) redirect("/dashboard");
+  const isActiveAssignedTeamMember = task.studentProfile.assignments.some(
+    (assignment) => assignment.assignedToId === session.user.id,
+  );
   if (
     session.user.role !== "ADMIN" &&
     session.user.id !== task.assigneeId &&
-    session.user.id !== task.assignerId
+    session.user.id !== task.assignerId &&
+    !isActiveAssignedTeamMember
   ) {
     redirect(studentTasksUrl(task.studentProfile.userId));
   }
 
   await prisma.task.update({
     where: { id: taskId },
-    data: { status: safeStatus },
+    data:
+      safeStatus === "DONE"
+        ? { status: safeStatus, completedById: session.user.id, completedAt: new Date() }
+        : { status: safeStatus, completedById: null, completedAt: null },
   });
   await prisma.activityLog.create({
     data: {
@@ -2246,16 +2280,29 @@ async function updateTaskChecklistAction(formData: FormData) {
   const selectedTasks = await prisma.task.findMany({
     where: { id: { in: taskIds } },
     include: {
-      studentProfile: { select: { id: true, userId: true } },
+      studentProfile: {
+        select: {
+          id: true,
+          userId: true,
+          assignments: {
+            where: { isActive: true },
+            select: { assignedToId: true },
+          },
+        },
+      },
     },
   });
 
   const allowedTasks = selectedTasks.filter((task) => {
     if (task.studentProfile.userId !== studentId) return false;
+    const isActiveAssignedTeamMember = task.studentProfile.assignments.some(
+      (assignment) => assignment.assignedToId === session.user.id,
+    );
     return (
       session.user.role === "ADMIN" ||
       session.user.id === task.assigneeId ||
-      session.user.id === task.assignerId
+      session.user.id === task.assignerId ||
+      isActiveAssignedTeamMember
     );
   });
 
@@ -2268,7 +2315,10 @@ async function updateTaskChecklistAction(formData: FormData) {
 
   await prisma.task.updateMany({
     where: { id: { in: allowedTaskIds } },
-    data: { status: safeStatus },
+    data:
+      safeStatus === "DONE"
+        ? { status: safeStatus, completedById: session.user.id, completedAt: new Date() }
+        : { status: safeStatus, completedById: null, completedAt: null },
   });
 
   await prisma.activityLog.createMany({
