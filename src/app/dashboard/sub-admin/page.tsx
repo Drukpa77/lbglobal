@@ -17,6 +17,7 @@ import {
 import { deletedClientUserWhere, listDeletedClients } from "@/lib/deleted-clients";
 import { blobOpensThroughAuthenticatedApi } from "@/lib/blob-access";
 import { DelegationSuccessToast } from "@/components/delegation-success-toast";
+import { LocationFilterButtons } from "@/components/location-filter-buttons";
 import { NewInquiriesCard } from "@/components/new-inquiries-card";
 import { RemindersWidget } from "@/components/reminders-widget";
 import { StaffDashboardTasks } from "@/components/staff-dashboard-tasks";
@@ -47,7 +48,11 @@ import {
 import { redirectWithDashboardNotice, redirectWithDelegationNotice } from "@/lib/redirect-after-delegation";
 import { getRemindersForUser } from "@/lib/reminders";
 import { getDashboardPath } from "@/lib/roles";
-import { buildSubmissionWhere } from "@/lib/submission-filters";
+import {
+  buildInquiryLocationWhere,
+  buildSubmissionWhere,
+  normalizeInquiryLocationFilter,
+} from "@/lib/submission-filters";
 import { formatSubmissionStatus, submissionStatuses } from "@/lib/submission";
 import { formatVisaStatus, formatYearsLeft } from "@/lib/student-tracking";
 import { formatSubmissionServiceSummary } from "@/lib/visa-services";
@@ -64,6 +69,7 @@ type SearchParams = Promise<{
   status?: string;
   country?: string;
   course?: string;
+  inquiryLocation?: string;
   queue?: string;
   stage?: string;
   tab?: string;
@@ -95,6 +101,8 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   const status = searchParams.status ?? "";
   const country = searchParams.country ?? "";
   const course = searchParams.course ?? "";
+  const inquiryLocation = normalizeInquiryLocationFilter(searchParams.inquiryLocation);
+  const inquiryLocationWhere = buildInquiryLocationWhere(inquiryLocation);
   const queueRaw = searchParams.queue ?? "all";
   const queueFilter: "all" | "unassigned" | "my_cases" | "delegated" | "overdue" | "needs_approval" =
     queueRaw === "unassigned" ||
@@ -134,6 +142,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     status,
     country,
     course,
+    inquiryLocation,
     includeUnassignedForSubAdmin: true,
   });
   const studentsSubmissionWhere = buildSubmissionWhere({
@@ -143,6 +152,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     status,
     country,
     course,
+    inquiryLocation,
     subAdminScope: session.user.role === "SUB_ADMIN" ? "all" : undefined,
     includeUnassignedForSubAdmin: session.user.role === "ADMIN",
   });
@@ -319,6 +329,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
         where: {
           assignedToId: null,
           submittedAt: { gte: sevenDaysAgo },
+          ...(inquiryLocationWhere ?? {}),
         },
         select: {
           id: true,
@@ -334,6 +345,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
         where: {
           assignedToId: null,
           submittedAt: { gte: oneDayAgo },
+          ...(inquiryLocationWhere ?? {}),
         },
       }) : Promise.resolve(0),
       prisma.user.count({ where: deletedClientUserWhere }),
@@ -427,7 +439,8 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     const days = daysUntilDate(visaExpiryDate, today);
     return days >= 0 && days <= 90;
   }).length;
-  const exportUrl = `/api/submissions/export?search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}&country=${encodeURIComponent(country)}&course=${encodeURIComponent(course)}`;
+  const locationQuery = inquiryLocation === "all" ? "" : `&inquiryLocation=${encodeURIComponent(inquiryLocation)}`;
+  const exportUrl = `/api/submissions/export?search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}&country=${encodeURIComponent(country)}&course=${encodeURIComponent(course)}${locationQuery}`;
   const visaExpiringSoonItems = latestSubmissionPerStudent.filter((item) => {
     const visaExpiryDate = item.student.studentProfile?.visaExpiryDate;
     if (!visaExpiryDate) return false;
@@ -517,7 +530,16 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
             : queueFilter === "needs_approval"
               ? "Needs Approval"
               : "All Clients";
-  const managerReportUrl = `/api/sub-admin/report?queue=${encodeURIComponent(queueFilter)}&search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}&country=${encodeURIComponent(country)}&course=${encodeURIComponent(course)}`;
+  const managerReportUrl = `/api/sub-admin/report?queue=${encodeURIComponent(queueFilter)}&search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}&country=${encodeURIComponent(country)}&course=${encodeURIComponent(course)}${locationQuery}`;
+  const subAdminNewInquiryBaseHref =
+    inquiryLocation === "all"
+      ? "/dashboard/sub-admin?tab=overview"
+      : `/dashboard/sub-admin?tab=overview&inquiryLocation=${encodeURIComponent(inquiryLocation)}`;
+  const subAdminUnassignedQueueHref =
+    inquiryLocation === "all"
+      ? "/dashboard/sub-admin?tab=students&queue=unassigned"
+      : `/dashboard/sub-admin?tab=students&queue=unassigned&inquiryLocation=${encodeURIComponent(inquiryLocation)}`;
+  const subAdminCaseListHrefBase = `/dashboard/sub-admin?tab=students&queue=${encodeURIComponent(queueFilter)}&stage=${encodeURIComponent(stageFilter)}&search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}&country=${encodeURIComponent(country)}&course=${encodeURIComponent(course)}`;
   const trendBuckets = buildWeeklyTrendBuckets(trendSubmissions);
   const avgReviewHours = calculateAverageReviewHours(trendSubmissions);
   const conversionRate =
@@ -592,7 +614,10 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
           <NewInquiriesCard
             inquiries={newInquiries}
             last24hCount={newInquiriesLast24hCount}
+            locationFilter={inquiryLocation}
             claimAction={claimSubmissionAction}
+            filterHrefBase={subAdminNewInquiryBaseHref}
+            viewAllHref={subAdminUnassignedQueueHref}
           />
 
           <section className="grid gap-4 md:grid-cols-5">
@@ -803,12 +828,12 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
               <p className="text-xs text-gray-600">Current: {queueFilterLabel}</p>
             </div>
             <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-              <QueueFilterButton label="All Clients" queue="all" current={queueFilter} tab="students" />
-              <QueueFilterButton label="Unassigned" queue="unassigned" current={queueFilter} tab="students" />
-              <QueueFilterButton label="My Cases" queue="my_cases" current={queueFilter} tab="students" />
-              <QueueFilterButton label="Delegated" queue="delegated" current={queueFilter} tab="students" />
-              <QueueFilterButton label="Overdue" queue="overdue" current={queueFilter} tab="students" />
-              <QueueFilterButton label="Needs Approval" queue="needs_approval" current={queueFilter} tab="students" />
+              <QueueFilterButton label="All Clients" queue="all" current={queueFilter} tab="students" locationFilter={inquiryLocation} />
+              <QueueFilterButton label="Unassigned" queue="unassigned" current={queueFilter} tab="students" locationFilter={inquiryLocation} />
+              <QueueFilterButton label="My Cases" queue="my_cases" current={queueFilter} tab="students" locationFilter={inquiryLocation} />
+              <QueueFilterButton label="Delegated" queue="delegated" current={queueFilter} tab="students" locationFilter={inquiryLocation} />
+              <QueueFilterButton label="Overdue" queue="overdue" current={queueFilter} tab="students" locationFilter={inquiryLocation} />
+              <QueueFilterButton label="Needs Approval" queue="needs_approval" current={queueFilter} tab="students" locationFilter={inquiryLocation} />
             </div>
           </section>
 
@@ -822,13 +847,15 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
               </p>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
-              <StageFilterChip label="All Stages" stage="" current={stageFilter} />
+              <StageFilterChip label="All Stages" stage="" current={stageFilter} queue={queueFilter} locationFilter={inquiryLocation} />
               {caseStageOrder.map((stage) => (
                 <StageFilterChip
                   key={stage}
                   label={caseStageLabel(stage)}
                   stage={stage}
                   current={stageFilter}
+                  queue={queueFilter}
+                  locationFilter={inquiryLocation}
                 />
               ))}
               {caseStageTerminals.map((stage) => (
@@ -837,6 +864,8 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                   label={caseStageLabel(stage)}
                   stage={stage}
                   current={stageFilter}
+                  queue={queueFilter}
+                  locationFilter={inquiryLocation}
                 />
               ))}
             </div>
@@ -892,6 +921,8 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
             </div>
             <input type="hidden" name="tab" value="students" />
             <input type="hidden" name="queue" value={queueFilter} />
+            <input type="hidden" name="stage" value={stageFilter} />
+            <input type="hidden" name="inquiryLocation" value={inquiryLocation} />
             <div className="mt-3 grid gap-3 md:grid-cols-5">
               <input
                 name="search"
@@ -929,7 +960,13 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
 
           <div className="rounded-lg border bg-white p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold">Case list</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-sm font-semibold">Case list</h2>
+                <LocationFilterButtons
+                  active={inquiryLocation}
+                  hrefBase={subAdminCaseListHrefBase}
+                />
+              </div>
               <p className="text-xs text-gray-600">
                 {filteredSubmissions.length} results · filter: {queueFilterLabel}
               </p>
@@ -1531,16 +1568,20 @@ function QueueFilterButton({
   queue,
   current,
   tab,
+  locationFilter,
 }: {
   label: string;
   queue: "all" | "unassigned" | "my_cases" | "delegated" | "overdue" | "needs_approval";
   current: "all" | "unassigned" | "my_cases" | "delegated" | "overdue" | "needs_approval";
   tab: string;
+  locationFilter: "all" | "onshore" | "offshore";
 }) {
   const base = `/dashboard/sub-admin?tab=${tab}`;
+  const locationQuery =
+    locationFilter === "all" ? "" : `&inquiryLocation=${encodeURIComponent(locationFilter)}`;
   return (
     <Link
-      href={queue === "all" ? base : `${base}&queue=${queue}`}
+      href={queue === "all" ? `${base}${locationQuery}` : `${base}&queue=${queue}${locationQuery}`}
       className={`rounded-md border px-3 py-2 text-sm ${
         current === queue
           ? "border-blue-600 bg-blue-600 text-white"
@@ -1556,14 +1597,21 @@ function StageFilterChip({
   label,
   stage,
   current,
+  queue,
+  locationFilter,
 }: {
   label: string;
   stage: CaseStage | "";
   current: CaseStage | "";
+  queue: "all" | "unassigned" | "my_cases" | "delegated" | "overdue" | "needs_approval";
+  locationFilter: "all" | "onshore" | "offshore";
 }) {
   const isActive = current === stage;
   const base = "/dashboard/sub-admin?tab=students";
-  const href = stage === "" ? base : `${base}&stage=${stage}`;
+  const queueQuery = queue === "all" ? "" : `&queue=${queue}`;
+  const locationQuery =
+    locationFilter === "all" ? "" : `&inquiryLocation=${encodeURIComponent(locationFilter)}`;
+  const href = stage === "" ? `${base}${queueQuery}${locationQuery}` : `${base}${queueQuery}&stage=${stage}${locationQuery}`;
   return (
     <Link
       href={href}

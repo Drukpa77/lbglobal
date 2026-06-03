@@ -19,6 +19,7 @@ export async function GET(request: Request) {
   const status = url.searchParams.get("status") ?? "";
   const country = url.searchParams.get("country") ?? "";
   const course = url.searchParams.get("course") ?? "";
+  const inquiryLocation = url.searchParams.get("inquiryLocation") ?? "";
   const queue = url.searchParams.get("queue") ?? "all";
 
   const where = buildSubmissionWhere({
@@ -28,6 +29,7 @@ export async function GET(request: Request) {
     status,
     country,
     course,
+    inquiryLocation,
     includeUnassignedForSubAdmin: true,
   });
 

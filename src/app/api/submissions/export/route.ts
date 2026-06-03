@@ -21,6 +21,7 @@ export async function GET(request: Request) {
   const status = url.searchParams.get("status") ?? "";
   const country = url.searchParams.get("country") ?? "";
   const course = url.searchParams.get("course") ?? "";
+  const inquiryLocation = url.searchParams.get("inquiryLocation") ?? "";
 
   const where = buildSubmissionWhere({
     role: session.user.role,
@@ -29,6 +30,7 @@ export async function GET(request: Request) {
     status,
     country,
     course,
+    inquiryLocation,
     subAdminScope: session.user.role === "SUB_ADMIN" ? "all" : undefined,
     includeUnassignedForSubAdmin: session.user.role === "ADMIN",
   });

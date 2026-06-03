@@ -1,5 +1,8 @@
 import Link from "next/link";
 
+import { LocationFilterButtons } from "@/components/location-filter-buttons";
+import type { InquiryLocationFilter } from "@/lib/submission-filters";
+
 export type NewInquiry = {
   id: string;
   submittedAt: Date;
@@ -11,17 +14,21 @@ export type NewInquiry = {
 type NewInquiriesCardProps = {
   inquiries: NewInquiry[];
   last24hCount: number;
+  locationFilter?: InquiryLocationFilter;
   // Server action that accepts a `submissionId` form field and claims the
   // submission for the current user. Each dashboard wires its own action so
   // this component stays usable from both Sub-Admin and Admin pages.
   claimAction: (formData: FormData) => Promise<void>;
+  filterHrefBase?: string;
   viewAllHref?: string;
 };
 
 export function NewInquiriesCard({
   inquiries,
   last24hCount,
+  locationFilter = "all",
   claimAction,
+  filterHrefBase = "/dashboard/sub-admin?tab=overview",
   viewAllHref = "/dashboard/sub-admin?tab=students&queue=unassigned",
 }: NewInquiriesCardProps) {
   const total = inquiries.length;
@@ -34,7 +41,10 @@ export function NewInquiriesCard({
     <section className="rounded-lg border border-emerald-200 bg-emerald-50/40 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 className="text-sm font-semibold text-emerald-900">New Inquiries (Unclaimed)</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-sm font-semibold text-emerald-900">New Inquiries (Unclaimed)</h2>
+            <LocationFilterButtons active={locationFilter} hrefBase={filterHrefBase} tone="emerald" />
+          </div>
           <p className="mt-1 text-xs text-emerald-800/80">{subtitle}</p>
         </div>
         <Link

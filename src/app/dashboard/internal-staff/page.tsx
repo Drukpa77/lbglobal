@@ -9,6 +9,7 @@ import { ContributionsTabSection } from "@/components/contributions-tab-panel";
 import { DeletedClientsTab } from "@/components/deleted-clients-tab";
 import { DashboardProfileHeader } from "@/components/dashboard-profile-header";
 import { DashboardTabBar } from "@/components/dashboard-tab-bar";
+import { LocationFilterButtons } from "@/components/location-filter-buttons";
 import {
   restoreDeletedClientAction,
   permanentDeleteDeletedClientAction,
@@ -32,6 +33,10 @@ import {
 import { prisma } from "@/lib/prisma";
 import { getRemindersForUser } from "@/lib/reminders";
 import {
+  countryMatchesInquiryLocation,
+  normalizeInquiryLocationFilter,
+} from "@/lib/submission-filters";
+import {
   executeTaskReassignment,
   listTaskAssigneeOptions,
   taskDashboardWhereForStaff,
@@ -46,7 +51,7 @@ import {
   caseStageTone,
 } from "@/lib/case-stage";
 
-type SearchParams = Promise<{ filter?: string; tab?: string; manualError?: string; manualSuccess?: string }>;
+type SearchParams = Promise<{ filter?: string; tab?: string; inquiryLocation?: string; manualError?: string; manualSuccess?: string }>;
 
 export default async function InternalStaffDashboardPage(props: { searchParams: SearchParams }) {
   const session = await auth();
@@ -66,6 +71,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
   const filterRaw = String(searchParams.filter ?? "all");
   const filter: "all" | "overdue" | "today" =
     filterRaw === "overdue" || filterRaw === "today" ? filterRaw : "all";
+  const inquiryLocation = normalizeInquiryLocationFilter(searchParams.inquiryLocation);
   const manualStudentError =
     searchParams.manualError === "duplicate"
       ? "A client or staff account already exists with that email."
@@ -97,7 +103,18 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
       include: {
         studentProfile: {
           include: {
-            user: { select: { id: true, name: true, email: true } },
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                submissions: {
+                  select: { sourceCountry: true },
+                  orderBy: { submittedAt: "desc" },
+                  take: 1,
+                },
+              },
+            },
             assignments: { where: { isActive: true }, select: { assignedToId: true }, take: 1 },
             tasks: {
               where: { status: { not: "DONE" } },
@@ -202,9 +219,10 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
   const overdueFollowUps = followUps.filter(
     (profile) => profile.nextFollowUpDate && profile.nextFollowUpDate < startOfToday,
   );
-  const caseRows = assignments.map((assignment) => {
+  const allCaseRows = assignments.map((assignment) => {
     return {
       assignment,
+      sourceCountry: assignment.studentProfile.user.submissions[0]?.sourceCountry ?? null,
       stage: assignment.studentProfile.caseStage,
       openTaskCount: assignment.studentProfile.tasks.length,
       pendingDocCount: assignment.studentProfile.documents.length,
@@ -212,6 +230,9 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
       latestInvoice: assignment.studentProfile.invoices[0],
     };
   });
+  const caseRows = allCaseRows.filter((row) =>
+    countryMatchesInquiryLocation(row.sourceCountry, inquiryLocation),
+  );
   const activeCasePreview = caseRows.slice(0, 2).map((row) => {
     const studentName = row.assignment.studentProfile.user.name ?? row.assignment.studentProfile.user.email;
     return `${studentName} - ${caseStageLabel(row.stage)}`;
@@ -306,6 +327,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
   ]
     .sort((a, b) => a.date.getTime() - b.date.getTime())
     .slice(0, 25);
+  const staffCaseListHrefBase = `/dashboard/internal-staff?tab=students&filter=${encodeURIComponent(filter)}`;
 
   return (
     <section className="space-y-6 text-gray-900">
@@ -320,7 +342,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
           { id: "overview", label: "Overview" },
           { id: "queue", label: "Work Queue", count: filteredOpenTasks.length },
           { id: "tasks", label: "Tasks & Docs", count: tasks.length + filteredPendingDocuments.length },
-          { id: "students", label: "Cases", count: assignments.length },
+          { id: "students", label: "Cases", count: caseRows.length },
           { id: "contributions", label: "Contributions" },
           { id: "deleted-clients", label: "Deleted Clients", count: deletedClientsCount },
         ]}
@@ -667,9 +689,18 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
           ) : null}
 
           <section className="rounded-lg border bg-white p-4">
-            <h2 className="text-sm font-semibold">Your cases</h2>
-            {assignments.length === 0 ? (
-              <p className="mt-2 text-sm text-gray-600">No delegated clients yet.</p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-sm font-semibold">Your cases</h2>
+                <LocationFilterButtons
+                  active={inquiryLocation}
+                  hrefBase={staffCaseListHrefBase}
+                />
+              </div>
+              <p className="text-xs text-gray-600">{caseRows.length} results</p>
+            </div>
+            {caseRows.length === 0 ? (
+              <p className="mt-2 text-sm text-gray-600">No delegated clients match this filter.</p>
             ) : (
               <ul className="mt-3 max-h-[32rem] space-y-2 overflow-y-auto pr-1">
                 {caseRows.map((row) => (

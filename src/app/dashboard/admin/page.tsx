@@ -13,6 +13,7 @@ import { DashboardTabBar } from "@/components/dashboard-tab-bar";
 import { DelegationSuccessToast } from "@/components/delegation-success-toast";
 import { DeleteWithConfirm } from "@/components/delete-with-confirm";
 import { DeleteStaffButton } from "@/components/delete-staff-button";
+import { LocationFilterButtons } from "@/components/location-filter-buttons";
 import { NewInquiriesCard } from "@/components/new-inquiries-card";
 import { RemindersWidget } from "@/components/reminders-widget";
 import { getRemindersForUser } from "@/lib/reminders";
@@ -35,7 +36,11 @@ import {
   notifyStudentTeamDelegationChange,
 } from "@/lib/workflow-notifications";
 import { revalidateContributionsCache } from "@/lib/contributions-cache";
-import { buildSubmissionWhere } from "@/lib/submission-filters";
+import {
+  buildInquiryLocationWhere,
+  buildSubmissionWhere,
+  normalizeInquiryLocationFilter,
+} from "@/lib/submission-filters";
 import { formatSubmissionStatus } from "@/lib/submission";
 import { formatVisaStatus, formatYearsLeft } from "@/lib/student-tracking";
 import { formatSubmissionServiceSummary } from "@/lib/visa-services";
@@ -52,6 +57,7 @@ type SearchParams = Promise<{
   status?: string;
   country?: string;
   course?: string;
+  inquiryLocation?: string;
   tab?: string;
 }>;
 
@@ -78,6 +84,8 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
   const status = searchParams.status ?? "";
   const country = searchParams.country ?? "";
   const course = searchParams.course ?? "";
+  const inquiryLocation = normalizeInquiryLocationFilter(searchParams.inquiryLocation);
+  const inquiryLocationWhere = buildInquiryLocationWhere(inquiryLocation);
 
   const filteredWhere = buildSubmissionWhere({
     role: session.user.role,
@@ -86,6 +94,7 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
     status,
     country,
     course,
+    inquiryLocation,
   });
 
   // Gate queries by tab to avoid loading data that isn't needed
@@ -242,6 +251,7 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
       where: {
         assignedToId: null,
         submittedAt: { gte: sevenDaysAgoForFreshInquiries },
+        ...(inquiryLocationWhere ?? {}),
       },
       select: {
         id: true,
@@ -257,6 +267,7 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
       where: {
         assignedToId: null,
         submittedAt: { gte: oneDayAgoForFreshInquiries },
+        ...(inquiryLocationWhere ?? {}),
       },
     }) : Promise.resolve(0),
     prisma.user.count({ where: deletedClientUserWhere }),
@@ -306,7 +317,17 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
     value: item._count._all,
   }));
 
-  const exportUrl = `/api/submissions/export?search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}&country=${encodeURIComponent(country)}&course=${encodeURIComponent(course)}`;
+  const locationQuery = inquiryLocation === "all" ? "" : `&inquiryLocation=${encodeURIComponent(inquiryLocation)}`;
+  const exportUrl = `/api/submissions/export?search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}&country=${encodeURIComponent(country)}&course=${encodeURIComponent(course)}${locationQuery}`;
+  const adminNewInquiryBaseHref =
+    inquiryLocation === "all"
+      ? "/dashboard/admin?tab=overview"
+      : `/dashboard/admin?tab=overview&inquiryLocation=${encodeURIComponent(inquiryLocation)}`;
+  const adminUnassignedQueueHref =
+    inquiryLocation === "all"
+      ? "/dashboard/admin?tab=students"
+      : `/dashboard/admin?tab=students&inquiryLocation=${encodeURIComponent(inquiryLocation)}`;
+  const adminFilteredSubmissionsHrefBase = `/dashboard/admin?tab=students&search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}&country=${encodeURIComponent(country)}&course=${encodeURIComponent(course)}`;
   const today = new Date();
   const latestSubmissionPerStudent = dedupeLatestSubmissionPerStudent(filteredSubmissions);
   const visaExpiringSoonItems = latestSubmissionPerStudent.filter((item) => {
@@ -444,8 +465,10 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
           <NewInquiriesCard
             inquiries={newInquiries}
             last24hCount={newInquiriesLast24hCount}
+            locationFilter={inquiryLocation}
             claimAction={claimSubmissionAction}
-            viewAllHref="/dashboard/admin?tab=students"
+            filterHrefBase={adminNewInquiryBaseHref}
+            viewAllHref={adminUnassignedQueueHref}
           />
 
           <section className="rounded-lg border bg-white p-4">
@@ -627,6 +650,7 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
               </a>
             </div>
             <input type="hidden" name="tab" value="students" />
+            <input type="hidden" name="inquiryLocation" value={inquiryLocation} />
             <div className="mt-3 grid gap-3 md:grid-cols-5">
               <input
                 name="search"
@@ -663,7 +687,13 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
           </form>
 
           <section className="rounded-lg border bg-white p-4">
-            <h2 className="text-sm font-semibold">Filtered Submissions & Assignment</h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-sm font-semibold">Filtered Submissions & Assignment</h2>
+              <LocationFilterButtons
+                active={inquiryLocation}
+                hrefBase={adminFilteredSubmissionsHrefBase}
+              />
+            </div>
             <p className="mt-1 text-xs text-gray-600">
               Unified queue for assignment, delegation, and direct profile actions.
             </p>

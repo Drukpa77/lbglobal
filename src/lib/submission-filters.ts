@@ -7,11 +7,17 @@ type FilterInput = {
   status?: string;
   country?: string;
   course?: string;
+  inquiryLocation?: string;
   /** When true, agents also see unassigned enquiries (overview / legacy scope). */
   includeUnassignedForSubAdmin?: boolean;
   /** When `"all"`, agents see every active student submission, not only their cases. */
   subAdminScope?: "mine" | "all";
 };
+
+export type InquiryLocationFilter = "all" | "onshore" | "offshore";
+
+export const AUSTRALIA_COUNTRY = "Australia";
+const AUSTRALIA_COUNTRY_NORMALIZED = AUSTRALIA_COUNTRY.toLowerCase();
 
 const validStatuses: SubmissionStatus[] = [
   "SUBMITTED",
@@ -31,6 +37,7 @@ export function buildSubmissionWhere(input: FilterInput): Prisma.QuestionnaireSu
   const country = (input.country ?? "").trim();
   const course = (input.course ?? "").trim();
   const status = (input.status ?? "").trim() as SubmissionStatus;
+  const inquiryLocation = normalizeInquiryLocationFilter(input.inquiryLocation);
 
   if (input.role === "SUB_ADMIN" && input.subAdminScope !== "all") {
     if (input.includeUnassignedForSubAdmin) {
@@ -57,6 +64,11 @@ export function buildSubmissionWhere(input: FilterInput): Prisma.QuestionnaireSu
     clauses.push({ sourceCountry: { contains: country } });
   }
 
+  const inquiryLocationWhere = buildInquiryLocationWhere(inquiryLocation);
+  if (inquiryLocationWhere) {
+    clauses.push(inquiryLocationWhere);
+  }
+
   if (course) {
     clauses.push({ intendedCourse: { contains: course } });
   }
@@ -75,4 +87,41 @@ export function buildSubmissionWhere(input: FilterInput): Prisma.QuestionnaireSu
 export function isValidStatus(value?: string | null): value is SubmissionStatus {
   if (!value) return false;
   return validStatuses.includes(value as SubmissionStatus);
+}
+
+export function normalizeInquiryLocationFilter(
+  value?: string | null,
+): InquiryLocationFilter {
+  return value === "onshore" || value === "offshore" ? value : "all";
+}
+
+export function buildInquiryLocationWhere(
+  location: InquiryLocationFilter,
+): Prisma.QuestionnaireSubmissionWhereInput | null {
+  if (location === "onshore") {
+    return { sourceCountry: AUSTRALIA_COUNTRY };
+  }
+
+  if (location === "offshore") {
+    return {
+      AND: [
+        { sourceCountry: { not: null } },
+        { sourceCountry: { not: AUSTRALIA_COUNTRY } },
+      ],
+    };
+  }
+
+  return null;
+}
+
+export function countryMatchesInquiryLocation(
+  country: string | null | undefined,
+  location: InquiryLocationFilter,
+) {
+  if (location === "all") return true;
+  const normalizedCountry = country?.trim().toLowerCase();
+  if (location === "onshore") {
+    return normalizedCountry === AUSTRALIA_COUNTRY_NORMALIZED;
+  }
+  return Boolean(normalizedCountry) && normalizedCountry !== AUSTRALIA_COUNTRY_NORMALIZED;
 }
