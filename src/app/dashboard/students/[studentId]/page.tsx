@@ -18,6 +18,7 @@ import type {
 import { revalidatePath } from "next/cache";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import type { Session } from "next-auth";
 import { Suspense } from "react";
 import { z } from "zod";
 
@@ -2083,10 +2084,9 @@ async function deleteStudentAction(formData: FormData) {
   redirect("/dashboard/internal-staff?tab=deleted-clients");
 }
 
-async function assertStudentDelegationAccess(
-  session: NonNullable<Awaited<ReturnType<typeof auth>>>,
-  studentId: string,
-) {
+async function assertStudentDelegationAccess(session: Session, studentId: string) {
+  if (!session.user) redirect("/login");
+
   const returnToProfileTab = studentProfileUrl(studentId);
   const mayDelegate =
     session.user.role === "ADMIN" ||
