@@ -1,5 +1,6 @@
 import { DeleteWithConfirm } from "@/components/delete-with-confirm";
 import { FileSizeLimitedForm } from "@/components/file-size-limited-form";
+import type { TaskAssigneeOption } from "@/lib/task-assignment";
 import { MAX_STUDENT_DOCUMENT_UPLOAD_MB } from "@/lib/upload-limits";
 
 type TaskRow = {
@@ -10,6 +11,7 @@ type TaskRow = {
   status: string;
   dueDate: Date | null;
   assignee: {
+    id: string;
     name: string | null;
     email: string;
   };
@@ -133,7 +135,9 @@ type TasksDocumentsTabProps = {
   studentId: string;
   tasks: TaskRow[];
   documents: DocumentRow[];
+  taskAssigneeOptions: TaskAssigneeOption[];
   createTaskAction: (formData: FormData) => Promise<void>;
+  reassignTaskAction: (formData: FormData) => Promise<void>;
   updateTaskStatusAction: (formData: FormData) => Promise<void>;
   updateTaskChecklistAction: (formData: FormData) => Promise<void>;
   uploadStudentDocumentAction: (formData: FormData) => Promise<void>;
@@ -146,6 +150,55 @@ type TasksDocumentsTabProps = {
   /** When true, HTTPS blob links use the authenticated API proxy (private Blob stores). */
   blobOpensThroughAuthenticatedApi: boolean;
 };
+
+function TaskAssigneePicker({
+  options,
+  name = "assigneeId",
+  defaultAssigneeId,
+  className,
+}: {
+  options: TaskAssigneeOption[];
+  name?: string;
+  defaultAssigneeId?: string;
+  className?: string;
+}) {
+  const caseManagers = options.filter((option) => option.role === "INTERNAL_STAFF");
+  const agents = options.filter((option) => option.role === "SUB_ADMIN");
+
+  return (
+    <select
+      name={name}
+      required
+      defaultValue={defaultAssigneeId ?? ""}
+      className={
+        className ??
+        "rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+      }
+    >
+      <option value="" disabled>
+        Assign to
+      </option>
+      {caseManagers.length > 0 ? (
+        <optgroup label="Case managers">
+          {caseManagers.map((member) => (
+            <option key={member.id} value={member.id}>
+              {member.name ?? member.email}
+            </option>
+          ))}
+        </optgroup>
+      ) : null}
+      {agents.length > 0 ? (
+        <optgroup label="Agents">
+          {agents.map((member) => (
+            <option key={member.id} value={member.id}>
+              {member.name ?? member.email}
+            </option>
+          ))}
+        </optgroup>
+      ) : null}
+    </select>
+  );
+}
 
 function documentOpenHref(
   studentId: string,
@@ -163,7 +216,9 @@ export function TasksDocumentsTab({
   studentId,
   tasks,
   documents,
+  taskAssigneeOptions,
   createTaskAction,
+  reassignTaskAction,
   updateTaskStatusAction,
   updateTaskChecklistAction,
   uploadStudentDocumentAction,
@@ -203,6 +258,7 @@ export function TasksDocumentsTab({
               <option value="HIGH">High priority</option>
               <option value="URGENT">Urgent</option>
             </select>
+            <TaskAssigneePicker options={taskAssigneeOptions} />
             <button
               type="submit"
               className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
@@ -299,6 +355,23 @@ export function TasksDocumentsTab({
                       </button>
                     </form>
                   </div>
+                  {canCreateTasks ? (
+                    <form action={reassignTaskAction} className="mt-3 flex flex-wrap items-center gap-2">
+                      <input type="hidden" name="taskId" value={task.id} />
+                      <span className="text-xs font-medium text-slate-600">Reassign to</span>
+                      <TaskAssigneePicker
+                        options={taskAssigneeOptions}
+                        defaultAssigneeId={task.assignee.id}
+                        className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                      />
+                      <button
+                        type="submit"
+                        className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                      >
+                        Reassign
+                      </button>
+                    </form>
+                  ) : null}
                 </article>
               ))}
             </div>

@@ -8,6 +8,12 @@ import { redirect } from "next/navigation";
 import { prioritizedCountries } from "@/lib/countries";
 import { generateNextCaseReference } from "@/lib/case-reference";
 import { parseTemplateQuestions } from "@/lib/questionnaire";
+import {
+  isEnglishTestType,
+  isStudentVisaService,
+  isVisaServiceType,
+  STUDENT_ONLY_QUESTION_IDS,
+} from "@/lib/visa-services";
 import { prisma } from "@/lib/prisma";
 import { queueDevEmail } from "@/lib/email-outbox";
 import {
@@ -86,7 +92,10 @@ export default async function ApplyPage(props: { searchParams: SearchParams }) {
   const merged = [
     ...baseRequiredQuestions.filter((q) => !questionIds.has(q.id)),
     ...questions.filter(
-      (q) => q.id !== "hearFrom" && !NOTE_IDS.includes(q.id as (typeof NOTE_IDS)[number]),
+      (q) =>
+        q.id !== "hearFrom" &&
+        !NOTE_IDS.includes(q.id as (typeof NOTE_IDS)[number]) &&
+        !STUDENT_ONLY_QUESTION_IDS.has(q.id),
     ),
     hearFromQuestion,
     additionalNoteQuestion,
@@ -106,7 +115,7 @@ export default async function ApplyPage(props: { searchParams: SearchParams }) {
             : null;
 
   const successMessage = searchParams.success
-    ? "Thank you! Your application has been submitted. Our team will contact you within 1–2 business days."
+    ? "Thank you! Your inquiry has been submitted. Our team will contact you within 1–2 business days."
     : null;
 
   return (
@@ -128,10 +137,10 @@ export default async function ApplyPage(props: { searchParams: SearchParams }) {
                   Overseas Education and Visa Services
                 </p>
                 <h1 className="text-2xl font-semibold text-slate-900">
-                  {template?.title ?? "Student Inquiry Form"}
+                  {template?.title ?? "Visa & Immigration Inquiry"}
                 </h1>
                 <p className="mt-1 text-sm text-slate-600">
-                  Submit your details and our team will contact you for guidance.
+                  Tell us which service you need and our team will contact you with next steps.
                 </p>
               </div>
             </div>
@@ -216,7 +225,35 @@ async function submitQuestionnaireAction(formData: FormData) {
     redirect("/apply?error=hearfrom-note");
   }
 
+  const visaServiceType = answers.visaServiceType?.trim() ?? "";
+  if (!visaServiceType || !isVisaServiceType(visaServiceType)) {
+    redirect("/apply?error=validation");
+  }
+
+  const targetCourse = answers.targetCourse?.trim() ?? "";
+  const preferredIntake = answers.preferredIntake?.trim() ?? "";
+  const currentEducationLevel = answers.currentEducationLevel?.trim() ?? "";
+  if (isStudentVisaService(visaServiceType)) {
+    if (!targetCourse || !preferredIntake || !currentEducationLevel) {
+      redirect("/apply?error=validation");
+    }
+  } else {
+    delete answers.targetCourse;
+    delete answers.preferredIntake;
+    delete answers.currentEducationLevel;
+  }
+
+  const englishTestType = answers.englishTestType?.trim() ?? "";
+  const englishTestScore = answers.englishTestScore?.trim() ?? "";
+  if (englishTestScore && !englishTestType) {
+    redirect("/apply?error=validation");
+  }
+  if (englishTestType && !isEnglishTestType(englishTestType)) {
+    redirect("/apply?error=validation");
+  }
+
   // Normalize for analytics and consistency.
+  answers.visaServiceType = visaServiceType;
   answers.hearFrom = hearFrom;
   if (additionalNote) {
     answers.additionalNote = additionalNote;
@@ -234,9 +271,11 @@ async function submitQuestionnaireAction(formData: FormData) {
           phone: true,
           city: true,
           nationality: true,
+          visaServiceType: true,
           currentEducationLevel: true,
           targetCourse: true,
           preferredIntake: true,
+          englishTestType: true,
           englishTestScore: true,
         },
       },
@@ -262,8 +301,11 @@ async function submitQuestionnaireAction(formData: FormData) {
     phone: string;
     city: string;
     country: string;
+    visaServiceType: string;
     targetCourse: string;
     preferredIntake: string;
+    englishTestType: string;
+    englishTestScore: string;
     hearFrom: string;
   };
 
@@ -287,11 +329,6 @@ async function submitQuestionnaireAction(formData: FormData) {
     const city = answers.city?.trim() ?? answers.addressCity?.trim() ?? "";
     const country = answers.country?.trim() ?? answers.addressCountry?.trim() ?? "";
     const phone = answers.phone?.trim() ?? "";
-    const currentEducationLevel = answers.currentEducationLevel?.trim() ?? "";
-    const targetCourse = answers.targetCourse?.trim() ?? "";
-    const preferredIntake = answers.preferredIntake?.trim() ?? "";
-    const englishTestScore = answers.englishTestScore?.trim() ?? "";
-
     let studentProfile: { id: string };
     if (existingUser?.studentProfile) {
       // Resubmissions: backfill any profile field the staff hasn't filled in yet,
@@ -301,12 +338,17 @@ async function submitQuestionnaireAction(formData: FormData) {
       if (!existing.phone && phone) profileUpdate.phone = phone;
       if (!existing.city && city) profileUpdate.city = city;
       if (!existing.nationality && country) profileUpdate.nationality = country;
-      if (!existing.currentEducationLevel && currentEducationLevel)
-        profileUpdate.currentEducationLevel = currentEducationLevel;
-      if (!existing.targetCourse && targetCourse)
-        profileUpdate.targetCourse = targetCourse;
-      if (!existing.preferredIntake && preferredIntake)
-        profileUpdate.preferredIntake = preferredIntake;
+      if (!existing.visaServiceType && visaServiceType)
+        profileUpdate.visaServiceType = visaServiceType;
+      if (isStudentVisaService(visaServiceType)) {
+        if (!existing.currentEducationLevel && currentEducationLevel)
+          profileUpdate.currentEducationLevel = currentEducationLevel;
+        if (!existing.targetCourse && targetCourse) profileUpdate.targetCourse = targetCourse;
+        if (!existing.preferredIntake && preferredIntake)
+          profileUpdate.preferredIntake = preferredIntake;
+      }
+      if (!existing.englishTestType && englishTestType)
+        profileUpdate.englishTestType = englishTestType;
       if (!existing.englishTestScore && englishTestScore)
         profileUpdate.englishTestScore = englishTestScore;
       if (Object.keys(profileUpdate).length > 0) {
@@ -324,9 +366,13 @@ async function submitQuestionnaireAction(formData: FormData) {
           phone: phone || null,
           city: city || null,
           nationality: country || null,
-          currentEducationLevel: currentEducationLevel || null,
-          targetCourse: targetCourse || null,
-          preferredIntake: preferredIntake || null,
+          visaServiceType,
+          currentEducationLevel: isStudentVisaService(visaServiceType)
+            ? currentEducationLevel || null
+            : null,
+          targetCourse: isStudentVisaService(visaServiceType) ? targetCourse || null : null,
+          preferredIntake: isStudentVisaService(visaServiceType) ? preferredIntake || null : null,
+          englishTestType: englishTestType || null,
           englishTestScore: englishTestScore || null,
           followUpNotes: null,
         },
@@ -355,8 +401,11 @@ async function submitQuestionnaireAction(formData: FormData) {
       phone,
       city,
       country,
+      visaServiceType,
       targetCourse,
       preferredIntake,
+      englishTestType,
+      englishTestScore,
       hearFrom,
     };
   } catch (error) {
@@ -377,15 +426,18 @@ async function submitQuestionnaireAction(formData: FormData) {
     try {
       const googleInquiryResult = await sendGoogleWorkspaceEmail({
         to: getContactInboxEmail(),
-        subject: `New student inquiry: ${postSubmit.fullName}`,
+        subject: `New visa inquiry: ${postSubmit.fullName}`,
         html: buildApplicationInquiryEmail({
           name: postSubmit.fullName,
           email: postSubmit.email,
           phone: postSubmit.phone,
           city: postSubmit.city,
           country: postSubmit.country,
+          visaServiceType: postSubmit.visaServiceType,
           targetCourse: postSubmit.targetCourse,
           preferredIntake: postSubmit.preferredIntake,
+          englishTestType: postSubmit.englishTestType,
+          englishTestScore: postSubmit.englishTestScore,
           hearFrom: postSubmit.hearFrom,
         }),
         replyTo: postSubmit.email,
@@ -398,10 +450,10 @@ async function submitQuestionnaireAction(formData: FormData) {
       await queueDevEmail({
         createdById: postSubmit.studentUserId,
         toEmail: postSubmit.email,
-        subject: "Application Received – L&B Global",
+        subject: "Inquiry Received – L&B Global",
         htmlBody: `
       <p>Dear ${postSubmit.fullName},</p>
-      <p>Thank you for submitting your application. Our team has received your inquiry and will contact you within 1–2 business days.</p>
+      <p>Thank you for your inquiry. Our team has received your details and will contact you within 1–2 business days.</p>
       <p>Best regards,<br />L&B Global</p>
     `,
       });

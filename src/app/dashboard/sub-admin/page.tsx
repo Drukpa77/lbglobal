@@ -1,4 +1,4 @@
-import type { CaseStage, SubmissionStatus } from "@prisma/client";
+import type { CaseStage, SubmissionStatus, TaskStatus } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -7,21 +7,50 @@ import { Suspense } from "react";
 import { auth } from "@/auth";
 import { CaseReferenceLabel } from "@/components/case-reference-label";
 import { ContributionsTabSection } from "@/components/contributions-tab-panel";
+import { DeletedClientsTab } from "@/components/deleted-clients-tab";
+import { DashboardProfileHeader } from "@/components/dashboard-profile-header";
 import { DashboardTabBar } from "@/components/dashboard-tab-bar";
+import {
+  restoreDeletedClientAction,
+  permanentDeleteDeletedClientAction,
+} from "@/app/dashboard/deleted-client-actions";
+import { deletedClientUserWhere, listDeletedClients } from "@/lib/deleted-clients";
+import { blobOpensThroughAuthenticatedApi } from "@/lib/blob-access";
 import { DelegationSuccessToast } from "@/components/delegation-success-toast";
 import { NewInquiriesCard } from "@/components/new-inquiries-card";
 import { RemindersWidget } from "@/components/reminders-widget";
+import { StaffDashboardTasks } from "@/components/staff-dashboard-tasks";
 import { StudentClientIntakeForm } from "@/components/student-client-intake-form";
 import { queueDevEmail } from "@/lib/email-outbox";
 import { generateNextCaseReference } from "@/lib/case-reference";
+import {
+  buildManualIntakeAnswers,
+  buildManualIntakeProfileData,
+  parseManualClientIntakeFormData,
+} from "@/lib/manual-client-intake";
 import { prisma } from "@/lib/prisma";
-import { createWorkflowNotification } from "@/lib/workflow-notifications";
+import {
+  executeTaskReassignment,
+  listTaskAssigneeOptions,
+  taskDashboardListWhereForAgent,
+  taskDashboardWhereForAgent,
+  userCanManageTask,
+} from "@/lib/task-assignment";
+import {
+  createWorkflowNotification,
+  notifyStudentTeamDelegationChange,
+} from "@/lib/workflow-notifications";
+import {
+  revalidateContributionsCache,
+  revalidateContributionsCacheForCases,
+} from "@/lib/contributions-cache";
 import { redirectWithDashboardNotice, redirectWithDelegationNotice } from "@/lib/redirect-after-delegation";
 import { getRemindersForUser } from "@/lib/reminders";
 import { getDashboardPath } from "@/lib/roles";
 import { buildSubmissionWhere } from "@/lib/submission-filters";
 import { formatSubmissionStatus, submissionStatuses } from "@/lib/submission";
 import { formatVisaStatus, formatYearsLeft } from "@/lib/student-tracking";
+import { formatSubmissionServiceSummary } from "@/lib/visa-services";
 import {
   allCaseStages,
   caseStageLabel,
@@ -47,8 +76,11 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   const tab = (searchParams.tab ?? "overview") as
     | "overview"
     | "students"
+    | "tasks"
     | "team"
-    | "contributions";
+    | "contributions"
+    | "deleted-clients";
+  const isDeletedClientsTab = tab === "deleted-clients";
   const session = await auth();
 
   if (!session?.user) {
@@ -79,8 +111,8 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
         : searchParams.manualError === "template"
           ? "No active questionnaire template is available for agent intake."
           : null;
-  const manualStudentSuccess = searchParams.manualSuccess === "student" || searchParams.manualSuccess === "client";
-  const manualStudentSuccessType = searchParams.manualSuccess === "client" ? "client" : "student";
+  const manualStudentSuccess = searchParams.manualSuccess === "client";
+  const manualStudentSuccessType = "client" as const;
 
   const scopedWhere = buildSubmissionWhere({
     role: session.user.role,
@@ -95,7 +127,9 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   // Gate queries by tab — only fetch what the active tab actually needs
   const isOverviewTab = tab === "overview";
   const isStudentsTab = tab === "students";
+  const isTasksTab = tab === "tasks";
   const isTeamTab = tab === "team";
+  const isAdminViewer = session.user.role === "ADMIN";
   const needsSubmissions = isOverviewTab || isStudentsTab;
   const needsTeamData = isOverviewTab || isTeamTab;
   const needsApprovalData = isOverviewTab || isStudentsTab;
@@ -116,10 +150,14 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     teamMembers,
     activeAssignments,
     openTaskCount,
+    agentTasks,
+    taskAssigneeOptions,
     allInternalStaff,
     stagePipelineCounts,
     newInquiries,
     newInquiriesLast24hCount,
+    deletedClientsCount,
+    deletedClients,
   ] =
     await Promise.all([
       isOverviewTab ? getRemindersForUser(session.user.role as "ADMIN" | "SUB_ADMIN", session.user.id) : Promise.resolve([]),
@@ -220,15 +258,23 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
       orderBy: { createdAt: "desc" },
       take: 8,
     }) : Promise.resolve([]),
-      isOverviewTab ? prisma.task.count({
-        where:
-          session.user.role === "ADMIN"
-            ? { status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] } }
-            : {
-                assignerId: session.user.id,
-                status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] },
-              },
-      }) : Promise.resolve(0),
+      isOverviewTab || isTasksTab
+        ? prisma.task.count({
+            where: taskDashboardWhereForAgent(session.user.id, isAdminViewer),
+          })
+        : Promise.resolve(0),
+      isTasksTab
+        ? prisma.task.findMany({
+            where: taskDashboardListWhereForAgent(session.user.id, isAdminViewer),
+            include: {
+              assignee: { select: { id: true, name: true, email: true } },
+              studentProfile: { include: { user: { select: { id: true, name: true, email: true } } } },
+            },
+            orderBy: [{ dueDate: "asc" }, { status: "asc" }, { createdAt: "desc" }],
+            take: 100,
+          })
+        : Promise.resolve([]),
+      isTasksTab ? listTaskAssigneeOptions() : Promise.resolve([]),
       prisma.user.findMany({
         where: { role: "INTERNAL_STAFF" },
         select: { id: true, name: true, email: true },
@@ -275,6 +321,8 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
           submittedAt: { gte: oneDayAgo },
         },
       }) : Promise.resolve(0),
+      prisma.user.count({ where: deletedClientUserWhere }),
+      isDeletedClientsTab ? listDeletedClients() : Promise.resolve([]),
     ]);
 
   const stageCountMap = new Map<string, number>(
@@ -475,16 +523,20 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     .map((member) => member.internalStaff.name ?? member.internalStaff.email);
   return (
     <section className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-slate-900">Dashboard</h1>
-      </div>
+      <DashboardProfileHeader
+        name={session.user.name}
+        email={session.user.email ?? ""}
+        roleLabel={isAdminViewer ? "Administrator" : "Agent"}
+      />
 
       <DashboardTabBar
         tabs={[
           { id: "overview", label: "Overview" },
           { id: "students", label: "My Cases", count: assignedStudents },
+          { id: "tasks", label: "Tasks", count: openTaskCount },
           { id: "team", label: "Team & Operations" },
           { id: "contributions", label: "Contributions" },
+          { id: "deleted-clients", label: "Deleted Clients", count: deletedClientsCount },
         ]}
         activeTab={tab}
       />
@@ -668,6 +720,17 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
         </div>
       )}
 
+      {tab === "tasks" && (
+        <StaffDashboardTasks
+          tasks={agentTasks}
+          assigneeOptions={taskAssigneeOptions}
+          bulkUpdateTasksAction={bulkUpdateTasksFromSubAdminDashboardAction}
+          reassignTaskAction={reassignTaskFromSubAdminDashboardAction}
+          updateTaskStatusAction={updateTaskStatusFromSubAdminDashboardAction}
+          returnTab="tasks"
+        />
+      )}
+
       {/* ── STUDENTS TAB ───────────────────────────────────────── */}
       {tab === "students" && (
         <div className="space-y-6">
@@ -684,7 +747,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
               error={manualStudentError}
               success={manualStudentSuccess}
               successType={manualStudentSuccessType}
-              description="Choose whether you are adding a student or client, then assign the case to yourself."
+              description="Add a new client, choose their visa service, and assign the case to yourself."
             />
           ) : null}
 
@@ -692,7 +755,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
             <StatCard title="My Case Students" value={String(assignedStudents)} />
             <StatCard title="Pending Reviews" value={String(pendingReviews)} />
             <StatCard title="Offers in Progress" value={String(offersInProgress)} />
-            <StatCard title="Open Delegated Tasks" value={String(openTaskCount)} />
+            <StatCard title="Open Tasks" value={String(openTaskCount)} />
             <StatCard title="Visa Expiring <=90d" value={String(visaExpiringSoon)} />
           </div>
 
@@ -889,8 +952,13 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                           />
                         </div>
                         <p className="text-xs text-gray-600">
-                          {submission.intendedCourse ?? "Course not specified"} |{" "}
-                          {submission.sourceCity ?? "City unknown"},{" "}
+                          {formatSubmissionServiceSummary({
+                            intendedCourse: submission.intendedCourse,
+                            answers: submission.answers,
+                            profileVisaServiceType:
+                              submission.student.studentProfile?.visaServiceType,
+                          })}{" "}
+                          | {submission.sourceCity ?? "City unknown"},{" "}
                           {submission.sourceCountry ?? "Country unknown"}
                         </p>
                         <p className="text-xs text-gray-600">
@@ -1166,6 +1234,17 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
       )}
 
       {/* ── CONTRIBUTIONS TAB ──────────────────────────────────── */}
+      {tab === "deleted-clients" && (
+        <DeletedClientsTab
+          clients={deletedClients}
+          isAdmin={isAdminViewer}
+          returnPath="/dashboard/sub-admin?tab=deleted-clients"
+          restoreDeletedClientAction={restoreDeletedClientAction}
+          permanentDeleteDeletedClientAction={permanentDeleteDeletedClientAction}
+          blobOpensThroughAuthenticatedApi={blobOpensThroughAuthenticatedApi()}
+        />
+      )}
+
       {tab === "contributions" && <ContributionsTabSection />}
     </section>
   );
@@ -1392,6 +1471,184 @@ function StageFilterChip({
   );
 }
 
+function subAdminDashboardPath(tab = "tasks") {
+  return `/dashboard/sub-admin?tab=${tab}`;
+}
+
+async function updateTaskStatusFromSubAdminDashboardAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+  if (session.user.role !== "ADMIN" && session.user.role !== "SUB_ADMIN") {
+    redirect("/dashboard");
+  }
+
+  const taskId = String(formData.get("taskId") ?? "");
+  const statusRaw = String(formData.get("status") ?? "TODO") as TaskStatus;
+  const status: TaskStatus = ["TODO", "IN_PROGRESS", "BLOCKED", "DONE"].includes(statusRaw)
+    ? statusRaw
+    : "TODO";
+  const returnTab = String(formData.get("returnTab") ?? "tasks");
+  if (!taskId) redirect(subAdminDashboardPath(returnTab));
+
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
+    include: {
+      studentProfile: {
+        select: {
+          id: true,
+          userId: true,
+          assignments: {
+            where: { isActive: true },
+            select: { assignedToId: true },
+          },
+        },
+      },
+    },
+  });
+  if (!task) redirect(subAdminDashboardPath(returnTab));
+
+  if (
+    !userCanManageTask(
+      { id: session.user.id, role: session.user.role },
+      {
+        assigneeId: task.assigneeId,
+        assignerId: task.assignerId,
+        studentProfile: task.studentProfile,
+      },
+    )
+  ) {
+    redirect(subAdminDashboardPath(returnTab));
+  }
+
+  await prisma.task.update({
+    where: { id: task.id },
+    data:
+      status === "DONE"
+        ? { status, completedById: session.user.id, completedAt: new Date() }
+        : { status, completedById: null, completedAt: null },
+  });
+  await prisma.activityLog.create({
+    data: {
+      actorId: session.user.id,
+      targetStudentProfileId: task.studentProfileId,
+      entityType: "TASK",
+      entityId: task.id,
+      action: `Updated task status from agent dashboard to ${status}`,
+    },
+  });
+
+  revalidateContributionsCache(task.studentProfile.userId);
+  revalidatePath("/dashboard/sub-admin");
+  revalidatePath("/dashboard/internal-staff");
+  revalidatePath(`/dashboard/students/${task.studentProfile.userId}`);
+  redirect(subAdminDashboardPath(returnTab));
+}
+
+async function reassignTaskFromSubAdminDashboardAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+  if (session.user.role !== "ADMIN" && session.user.role !== "SUB_ADMIN") {
+    redirect("/dashboard");
+  }
+
+  const taskId = String(formData.get("taskId") ?? "");
+  const assigneeId = String(formData.get("assigneeId") ?? "");
+  const returnTab = String(formData.get("returnTab") ?? "tasks");
+  if (!taskId || !assigneeId) redirect(subAdminDashboardPath(returnTab));
+
+  const result = await executeTaskReassignment({
+    taskId,
+    newAssigneeId: assigneeId,
+    actor: { id: session.user.id, role: session.user.role },
+  });
+
+  revalidatePath("/dashboard/sub-admin");
+  revalidatePath("/dashboard/internal-staff");
+  if (result.ok) {
+    revalidatePath(`/dashboard/students/${result.studentUserId}`);
+  }
+  redirect(
+    `${subAdminDashboardPath(returnTab)}${result.ok && result.changed ? "&taskReassigned=1" : ""}`,
+  );
+}
+
+async function bulkUpdateTasksFromSubAdminDashboardAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+  if (session.user.role !== "ADMIN" && session.user.role !== "SUB_ADMIN") {
+    redirect("/dashboard");
+  }
+
+  const taskIds = formData
+    .getAll("taskIds")
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+  const statusRaw = String(formData.get("status") ?? "TODO") as TaskStatus;
+  const status: TaskStatus = ["TODO", "IN_PROGRESS", "BLOCKED", "DONE"].includes(statusRaw)
+    ? statusRaw
+    : "TODO";
+  const returnTab = String(formData.get("returnTab") ?? "tasks");
+  if (taskIds.length === 0) redirect(subAdminDashboardPath(returnTab));
+
+  const tasks = await prisma.task.findMany({
+    where: { id: { in: taskIds } },
+    include: {
+      studentProfile: {
+        select: {
+          userId: true,
+          assignments: {
+            where: { isActive: true },
+            select: { assignedToId: true },
+          },
+        },
+      },
+    },
+  });
+  if (tasks.length === 0) redirect(subAdminDashboardPath(returnTab));
+
+  const allowedTasks = tasks.filter((task) =>
+    userCanManageTask(
+      { id: session.user.id, role: session.user.role },
+      {
+        assigneeId: task.assigneeId,
+        assignerId: task.assignerId,
+        studentProfile: task.studentProfile,
+      },
+    ),
+  );
+  if (allowedTasks.length === 0) redirect(subAdminDashboardPath(returnTab));
+
+  const allowedTaskIds = allowedTasks.map((task) => task.id);
+  await prisma.task.updateMany({
+    where: { id: { in: allowedTaskIds } },
+    data:
+      status === "DONE"
+        ? { status, completedById: session.user.id, completedAt: new Date() }
+        : { status, completedById: null, completedAt: null },
+  });
+  await prisma.activityLog.createMany({
+    data: allowedTasks.map((task) => ({
+      actorId: session.user.id,
+      targetStudentProfileId: task.studentProfileId,
+      entityType: "TASK",
+      entityId: task.id,
+      action: `Updated task status from agent dashboard to ${status} (bulk)`,
+    })),
+  });
+
+  const userIds = Array.from(new Set(allowedTasks.map((task) => task.studentProfile.userId)));
+  revalidateContributionsCacheForCases(userIds);
+  for (const userId of userIds) {
+    revalidatePath(`/dashboard/students/${userId}`);
+  }
+  revalidatePath("/dashboard/sub-admin");
+  revalidatePath("/dashboard/internal-staff");
+  redirect(subAdminDashboardPath(returnTab));
+}
+
 async function updateSubmissionStatusAction(formData: FormData) {
   "use server";
   const returnToStudentsTab = "/dashboard/sub-admin?tab=students";
@@ -1615,28 +1872,49 @@ async function delegateStudentToInternalStaffAction(formData: FormData) {
     },
   });
 
-  const actorLabel = session.user.name?.trim() || session.user.email || "A sub-admin";
-  const studentLabel = studentProfile.user.name?.trim() || studentProfile.user.email;
   const newlyAssignedStaff = staffMembers.filter((staff) => !currentActiveIds.has(staff.id));
-  await Promise.all(
-    newlyAssignedStaff.map((staff) =>
-      createWorkflowNotification({
-        recipientId: staff.id,
-        actorId: session.user.id,
+  const removedStaffIds = currentAssignments
+    .filter((assignment) => assignment.isActive && !validStaffIds.has(assignment.assignedToId))
+    .map((assignment) => assignment.assignedToId);
+  const removedStaff =
+    removedStaffIds.length > 0
+      ? await prisma.user.findMany({
+          where: { id: { in: removedStaffIds }, role: "INTERNAL_STAFF" },
+          select: { id: true, name: true, email: true },
+        })
+      : [];
+
+  await Promise.all([
+    ...newlyAssignedStaff.map((staff) =>
+      notifyStudentTeamDelegationChange({
         studentProfileId: studentProfile.id,
-        type: "STUDENT_DELEGATED",
-        title: "Student delegated to you",
-        message: `${studentLabel} has been assigned to you by ${actorLabel}.`,
-        link: `/dashboard/students/${studentId}`,
-        actionRequired: true,
-        metadata: { delegatedFrom: "sub_admin_dashboard" },
+        studentUserId: studentId,
+        actorId: session.user.id,
+        assigneeId: staff.id,
+        assigneeName: staff.name?.trim() || staff.email,
+        assigneeRole: "INTERNAL_STAFF",
+        change: "added",
+        source: "sub_admin_dashboard",
       }),
     ),
-  );
+    ...removedStaff.map((staff) =>
+      notifyStudentTeamDelegationChange({
+        studentProfileId: studentProfile.id,
+        studentUserId: studentId,
+        actorId: session.user.id,
+        assigneeId: staff.id,
+        assigneeName: staff.name?.trim() || staff.email,
+        assigneeRole: "INTERNAL_STAFF",
+        change: "removed",
+        source: "sub_admin_dashboard",
+      }),
+    ),
+  ]);
 
   revalidatePath("/dashboard/sub-admin");
   revalidatePath(`/dashboard/students/${studentId}`);
   revalidatePath("/dashboard/internal-staff");
+  revalidateContributionsCache(studentId);
 
   if (validStaffIds.size === 0) {
     await redirectWithDashboardNotice({
@@ -1739,6 +2017,7 @@ async function escalateSubmissionAction(formData: FormData) {
     },
   });
 
+  revalidateContributionsCache(submission.studentId);
   revalidatePath("/dashboard/sub-admin");
   revalidatePath("/dashboard/internal-staff");
   revalidatePath(`/dashboard/students/${submission.studentId}`);
@@ -1752,22 +2031,11 @@ async function createManualStudentAction(formData: FormData) {
   if (!session?.user) redirect("/login");
   if (session.user.role !== "SUB_ADMIN") redirect("/dashboard/sub-admin?tab=students");
 
-  const recordType = formData.get("recordType") === "client" ? "client" : "student";
-  const isClient = recordType === "client";
-  const recordLabel = isClient ? "client" : "student";
-  const recordTitle = isClient ? "Client" : "Student";
-  const sourceLabel = isClient ? "Client Agent" : "Agent";
-  const courseFieldLabel = isClient ? "Service required" : "Course";
-  const intakeFieldLabel = isClient ? "Visa type" : "Intake";
-  const name = String(formData.get("name") ?? "").trim();
-  const email = String(formData.get("email") ?? "").trim().toLowerCase();
-  const phone = String(formData.get("phone") ?? "").trim();
-  const country = String(formData.get("country") ?? "").trim();
-  const city = String(formData.get("city") ?? "").trim();
-  const course = String(formData.get("course") ?? "").trim();
-  const intake = String(formData.get("intake") ?? "").trim();
-  const currentEducation = String(formData.get("currentEducation") ?? "").trim();
-  const notes = String(formData.get("notes") ?? "").trim();
+  const intake = parseManualClientIntakeFormData(formData);
+  if (!intake) {
+    redirect("/dashboard/sub-admin?tab=students&manualError=validation");
+  }
+
   const actor = await prisma.user.findFirst({
     where: {
       role: "SUB_ADMIN",
@@ -1778,23 +2046,8 @@ async function createManualStudentAction(formData: FormData) {
 
   if (!actor) redirect("/login");
 
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (
-    name.length < 2 ||
-    name.length > 100 ||
-    !emailRegex.test(email) ||
-    !phone ||
-    !country ||
-    !city ||
-    !course ||
-    !intake ||
-    !currentEducation
-  ) {
-    redirect("/dashboard/sub-admin?tab=students&manualError=validation");
-  }
-
   const [existingUser, template] = await Promise.all([
-    prisma.user.findUnique({ where: { email }, select: { id: true } }),
+    prisma.user.findUnique({ where: { email: intake.email }, select: { id: true } }),
     prisma.questionnaireTemplate.findFirst({
       where: { isActive: true },
       orderBy: { updatedAt: "desc" },
@@ -1805,25 +2058,13 @@ async function createManualStudentAction(formData: FormData) {
   if (existingUser) redirect("/dashboard/sub-admin?tab=students&manualError=duplicate");
   if (!template) redirect("/dashboard/sub-admin?tab=students&manualError=template");
 
-  const answers = {
-    fullName: name,
-    email,
-    phone,
-    country,
-    city,
-    currentEducationLevel: currentEducation,
-    targetCourse: course,
-    preferredIntake: intake,
-    additionalNote: notes,
-    recordType,
-    source: sourceLabel,
-  };
+  const answers = buildManualIntakeAnswers(intake, { source: "Agent" });
 
   const created = await prisma.$transaction(async (tx) => {
     const studentUser = await tx.user.create({
       data: {
-        name,
-        email,
+        name: intake.name,
+        email: intake.email,
         role: "USER",
       },
       select: { id: true, email: true, name: true },
@@ -1833,13 +2074,7 @@ async function createManualStudentAction(formData: FormData) {
       data: {
         caseReference: await generateNextCaseReference(tx),
         userId: studentUser.id,
-        phone,
-        city,
-        nationality: country,
-        currentEducationLevel: currentEducation,
-        targetCourse: course,
-        preferredIntake: intake,
-        followUpNotes: notes || null,
+        ...buildManualIntakeProfileData(intake),
       },
       select: { id: true },
     });
@@ -1849,10 +2084,10 @@ async function createManualStudentAction(formData: FormData) {
         studentId: studentUser.id,
         templateId: template.id,
         assignedToId: actor.id,
-        sourceCity: city,
-        sourceCountry: country,
-        intendedCourse: course,
-        intendedIntake: intake,
+        sourceCity: intake.city,
+        sourceCountry: intake.country,
+        intendedCourse: intake.isStudentVisa ? intake.course : null,
+        intendedIntake: intake.isStudentVisa ? intake.intake : null,
         answers,
       },
       select: { id: true },
@@ -1865,9 +2100,9 @@ async function createManualStudentAction(formData: FormData) {
         targetStudentProfileId: studentProfile.id,
         entityType: "STUDENT",
         entityId: studentUser.id,
-        action: `Created ${recordLabel} through agent intake`,
+        action: "Created client through agent intake",
         metadata: {
-          recordType,
+          visaServiceType: intake.visaServiceType,
           source: "sub_admin",
           submissionId: submission.id,
           assignedToId: actor.id,
@@ -1897,14 +2132,14 @@ async function createManualStudentAction(formData: FormData) {
         actorId: actor.id,
         studentProfileId: created.studentProfileId,
         type: "NEW_STUDENT_APPLICATION",
-        title: `${recordTitle} added by agent`,
-        message: `${created.studentName} was added as a ${recordLabel} by ${creatorLabel}.`,
-        note: notes || null,
+        title: "Client added by agent",
+        message: `${created.studentName} (${intake.visaServiceLabel}) was added by ${creatorLabel}.`,
+        note: intake.notes || null,
         link: `/dashboard/sub-admin?tab=students#submission-${created.submissionId}`,
         actionRequired: false,
         sendEmail: false,
         metadata: {
-          recordType,
+          visaServiceType: intake.visaServiceType,
           source: "sub_admin",
           submissionId: created.submissionId,
           subAdminId: actor.id,
@@ -1917,11 +2152,11 @@ async function createManualStudentAction(formData: FormData) {
     queueDevEmail({
       createdById: actor.id,
       toEmail: created.studentEmail,
-      subject: `Your ${recordLabel} profile has been created - L&B Global`,
+      subject: "Your client profile has been created - L&B Global",
       htmlBody: `
         <p>Dear ${escapeHtml(created.studentName)},</p>
-        <p>Your ${escapeHtml(recordLabel)} profile has been created by ${escapeHtml(creatorLabel)} at L&amp;B Global.</p>
-        <p>Our team will contact you with the next steps for your ${isClient ? "visa service" : "course and visa process"}.</p>
+        <p>Your client profile has been created by ${escapeHtml(creatorLabel)} at L&amp;B Global.</p>
+        <p>Our team will contact you with the next steps for your ${escapeHtml(intake.visaServiceLabel)} enquiry.</p>
         <p>Best regards,<br />L&amp;B Global</p>
       `,
       templateKey: "sub-admin-student-created",
@@ -1930,14 +2165,14 @@ async function createManualStudentAction(formData: FormData) {
       queueDevEmail({
         createdById: actor.id,
         toEmail: recipient.email,
-        subject: `${recordTitle} added by agent: ${created.studentName}`,
+        subject: `Client added by agent: ${created.studentName}`,
         htmlBody: `
-          <p>${escapeHtml(creatorLabel)} added a new ${escapeHtml(recordLabel)} through agent intake.</p>
+          <p>${escapeHtml(creatorLabel)} added a new client through agent intake.</p>
           <ul>
             <li><strong>Name:</strong> ${escapeHtml(created.studentName)}</li>
             <li><strong>Email:</strong> ${escapeHtml(created.studentEmail)}</li>
-            <li><strong>${escapeHtml(courseFieldLabel)}:</strong> ${escapeHtml(course)}</li>
-            <li><strong>${escapeHtml(intakeFieldLabel)}:</strong> ${escapeHtml(intake)}</li>
+            <li><strong>Service:</strong> ${escapeHtml(intake.visaServiceLabel)}</li>
+            ${intake.isStudentVisa ? `<li><strong>Target course:</strong> ${escapeHtml(intake.course)}</li><li><strong>Preferred intake:</strong> ${escapeHtml(intake.intake)}</li>` : ""}
           </ul>
           <p>The case has been assigned to ${escapeHtml(creatorLabel)}.</p>
         `,
@@ -1950,7 +2185,7 @@ async function createManualStudentAction(formData: FormData) {
   revalidatePath("/dashboard/admin");
   revalidatePath("/dashboard/internal-staff");
   revalidatePath(`/dashboard/students/${created.studentUserId}`);
-  redirect(`/dashboard/sub-admin?tab=students&manualSuccess=${recordType}`);
+  redirect("/dashboard/sub-admin?tab=students&manualSuccess=client");
 }
 
 function escapeHtml(value: string) {

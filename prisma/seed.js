@@ -263,7 +263,7 @@ async function main() {
     role: Role.USER,
   });
 
-  const questionTemplateTitle = "Student or Visa Application Questionnaire";
+  const questionTemplateTitle = "Visa & Immigration Inquiry Questionnaire";
   const existingTemplate = await prisma.questionnaireTemplate.findFirst({
     where: { title: questionTemplateTitle },
     select: { id: true },
@@ -306,39 +306,11 @@ async function main() {
       options: prioritizedCountries,
     },
     {
-      id: "currentEducationLevel",
-      label: "Current education level",
-      type: "select",
-      required: true,
-      options: ["+2 / High School", "Diploma", "Bachelors", "Masters", "Other"],
-    },
-    {
-      id: "targetCourse",
-      label: "Target course",
-      type: "text",
-      required: true,
-      placeholder: "e.g. Master of IT",
-    },
-    {
-      id: "preferredIntake",
-      label: "Preferred intake",
-      type: "select",
-      required: true,
-      options: getUpcomingIntakeOptions(),
-    },
-    {
-      id: "englishTestScore",
-      label: "English test score (IELTS/PTE/TOEFL)",
-      type: "text",
-      required: false,
-      placeholder: "e.g. IELTS 6.5",
-    },
-    {
       id: "notes",
       label: "Additional notes",
       type: "textarea",
       required: false,
-      placeholder: "Any extra details",
+      placeholder: "Any extra details about your visa goals",
     },
   ];
 
@@ -347,7 +319,7 @@ async function main() {
     await prisma.questionnaireTemplate.update({
       where: { id: templateId },
       data: {
-        description: "Initial student intake questionnaire for Australia applications",
+        description: "General visa and immigration inquiry form",
         isActive: true,
         questions,
       },
@@ -356,7 +328,7 @@ async function main() {
     const createdTemplate = await prisma.questionnaireTemplate.create({
       data: {
         title: questionTemplateTitle,
-        description: "Initial student intake questionnaire for Australia applications",
+        description: "General visa and immigration inquiry form",
         isActive: true,
         questions,
       },

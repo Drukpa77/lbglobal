@@ -1,5 +1,10 @@
 import nodemailer from "nodemailer";
 
+import {
+  formatEnglishTestDisplay,
+  getVisaServiceLabel,
+} from "@/lib/visa-services";
+
 type SendEmailInput = {
   to: string;
   subject: string;
@@ -114,22 +119,31 @@ export function buildApplicationInquiryEmail(params: {
   phone?: string | null;
   city?: string | null;
   country?: string | null;
+  visaServiceType?: string | null;
   targetCourse?: string | null;
   preferredIntake?: string | null;
+  englishTestType?: string | null;
+  englishTestScore?: string | null;
   hearFrom?: string | null;
 }) {
+  const englishTest = formatEnglishTestDisplay(
+    params.englishTestType,
+    params.englishTestScore,
+  );
   const details = [
     ["Name", params.name],
     ["Email", params.email],
     ["Phone", params.phone],
     ["Location", [params.city, params.country].filter(Boolean).join(", ")],
+    ["Service", getVisaServiceLabel(params.visaServiceType)],
     ["Target course", params.targetCourse],
     ["Preferred intake", params.preferredIntake],
+    ["English test", englishTest],
     ["Heard from", params.hearFrom],
   ].filter((entry): entry is [string, string] => Boolean(entry[1]));
 
   return `
-    <h2>New student inquiry</h2>
+    <h2>New visa inquiry</h2>
     <ul>
       ${details
         .map(([label, value]) => `<li><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}</li>`)

@@ -26,6 +26,7 @@ import { ContributionLeaderboard } from "@/components/contribution-leaderboard";
 import { DeleteWithConfirm } from "@/components/delete-with-confirm";
 import { VisaStatusSavedToast } from "@/components/visa-status-saved-toast";
 import { StudentNoteItem } from "@/components/student-note-item";
+import { ProfileVisaServiceFields } from "@/components/profile-visa-service-fields";
 import { SubmitButton } from "@/components/submit-button";
 import { DocumentNotificationReadTracker } from "@/components/document-notification-read-tracker";
 import { TaskActionToast } from "@/components/task-action-toast";
@@ -35,22 +36,40 @@ import { auth } from "@/auth";
 import { blobOpensThroughAuthenticatedApi } from "@/lib/blob-access";
 import { generateNextCaseReference } from "@/lib/case-reference";
 import { getCompanySettings } from "@/lib/company-settings";
+import { revalidateContributionsCache } from "@/lib/contributions-cache";
 import { getContributions } from "@/lib/contributions";
 import { prisma } from "@/lib/prisma";
 import { deleteStoredFile, studentDocumentUploadErrorParam, uploadBufferToStorage } from "@/lib/storage";
 import { renderTemplate } from "@/lib/template-renderer";
 import { MAX_STUDENT_DOCUMENT_UPLOAD_BYTES } from "@/lib/upload-limits";
-import { createWorkflowNotification } from "@/lib/workflow-notifications";
-import { getUpcomingIntakeOptions, mergeIntakeOptions } from "@/lib/intake-options";
+import {
+  buildOverviewAssignedTeam,
+  ensureStaffOnCaseTeam,
+  listTaskAssigneeOptions,
+  resolveTaskAssignee,
+  executeTaskReassignment,
+} from "@/lib/task-assignment";
+import { softDeleteClient } from "@/lib/deleted-clients";
+import { notifyTaskAssignment } from "@/lib/task-notifications";
+import {
+  createWorkflowNotification,
+  notifyStudentTeamDelegationChange,
+} from "@/lib/workflow-notifications";
+import {
+  getVisaServiceLabel,
+  isStudentVisaService,
+  resolveVisaServiceType,
+} from "@/lib/visa-services";
 import { formatVisaStatus, formatYearsLeft, visaStatuses } from "@/lib/student-tracking";
 import {
   allCaseStages,
   caseStageLabel,
-  caseStageOrder,
   caseStageTerminals,
   caseStageTone,
+  getCaseStageOrderForVisaService,
   getNextSuggestedStages,
   getStageProgressPercent,
+  isCaseStageAllowedForVisaService,
   isTerminalStage,
 } from "@/lib/case-stage";
 
@@ -152,7 +171,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
 
   const [student, latestSubmission] = await Promise.all([
     prisma.user.findFirst({
-      where: { id: studentId, role: "USER" },
+      where: { id: studentId, role: "USER", deletedAt: null },
       include: { studentProfile: true },
     }),
     prisma.questionnaireSubmission.findFirst({
@@ -224,6 +243,8 @@ export default async function StudentProfileManagementPage(props: { params: Para
     conversation,
     recentMessages,
     activityLogs,
+    taskAssigneeOptions,
+    overviewOpenTasks,
   ] = await Promise.all([
     needsContributionData && student.studentProfile
       ? getContributions({ studentProfileId })
@@ -242,7 +263,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
           orderBy: [{ role: "asc" }, { name: "asc" }],
         })
       : Promise.resolve([]),
-    needsProfileData
+    needsProfileData || needsOverviewData
       ? prisma.studentAssignment.findMany({
           where: { studentProfileId, isActive: true },
           include: {
@@ -318,6 +339,15 @@ export default async function StudentProfileManagementPage(props: { params: Para
           take: 50,
         })
       : Promise.resolve([]),
+    needsTasksData ? listTaskAssigneeOptions() : Promise.resolve([]),
+    needsOverviewData && studentProfileId !== "__none__"
+      ? prisma.task.findMany({
+          where: { studentProfileId, status: { not: "DONE" } },
+          select: {
+            assignee: { select: { id: true, name: true, email: true, role: true } },
+          },
+        })
+      : Promise.resolve([]),
   ]);
 
   const canCreateTasks =
@@ -370,14 +400,35 @@ export default async function StudentProfileManagementPage(props: { params: Para
         ? "/dashboard/sub-admin"
         : "/dashboard/internal-staff";
   const profile = student.studentProfile;
+  const resolvedVisaServiceType = resolveVisaServiceType(
+    profile?.visaServiceType,
+    latestSubmission?.answers,
+  );
+  const serviceTypeLabel = resolvedVisaServiceType
+    ? getVisaServiceLabel(resolvedVisaServiceType)
+    : "Not set";
 
-  const isAssignedCaseManager = session.user.role === "INTERNAL_STAFF";
+  const overviewOpenTaskAssignees = overviewOpenTasks.map((task) => task.assignee);
+  const assignedTeamForOverview = buildOverviewAssignedTeam({
+    assignments: currentAssignments,
+    openTaskAssignees: overviewOpenTaskAssignees,
+    submissionAgent: latestSubmission?.assignedSubAdmin ?? null,
+  });
+
+  const isAssignedCaseManager =
+    session.user.role === "INTERNAL_STAFF" &&
+    currentAssignments.some((assignment) => assignment.assignedTo.id === session.user.id);
   const canManageStudentDelegation =
     session.user.role === "ADMIN" ||
     session.user.role === "SUB_ADMIN" ||
     isAssignedCaseManager;
-  const caseManagersForDelegation = delegationTeamUsers.filter((u) => u.role === "INTERNAL_STAFF");
-  const agentsForDelegation = delegationTeamUsers.filter((u) => u.role === "SUB_ADMIN");
+  const activeAssigneeIds = new Set(currentAssignments.map((assignment) => assignment.assignedTo.id));
+  const caseManagersForDelegation = delegationTeamUsers.filter(
+    (u) => u.role === "INTERNAL_STAFF" && !activeAssigneeIds.has(u.id),
+  );
+  const agentsForDelegation = delegationTeamUsers.filter(
+    (u) => u.role === "SUB_ADMIN" && !activeAssigneeIds.has(u.id),
+  );
   const tabBase = `/dashboard/students/${studentId}`;
 
   return (
@@ -390,10 +441,9 @@ export default async function StudentProfileManagementPage(props: { params: Para
       />
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Student Profile</h1>
-          <p className="mt-1 text-base text-slate-600">
-            {student.name ?? student.email}
-          </p>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+            {student.name ?? student.email} Profile
+          </h1>
           {profile?.caseReference ? (
             <p className="mt-1 text-sm font-medium text-slate-500">
               Case reference: {profile.caseReference}
@@ -494,12 +544,26 @@ export default async function StudentProfileManagementPage(props: { params: Para
             <p className="mt-0.5 font-medium text-slate-900">{student.email}</p>
           </div>
           <div className="rounded-lg bg-slate-50/80 p-3">
-            <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Assigned Agent</p>
-            <p className="mt-0.5 font-medium text-slate-900">
-              {latestSubmission?.assignedSubAdmin?.name ??
-                latestSubmission?.assignedSubAdmin?.email ??
-                "Unassigned"}
-            </p>
+            <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Service Type</p>
+            <p className="mt-0.5 font-medium text-slate-900">{serviceTypeLabel}</p>
+          </div>
+          <div className="rounded-lg bg-slate-50/80 p-3 sm:col-span-2">
+            <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Assigned team</p>
+            {assignedTeamForOverview.length === 0 ? (
+              <p className="mt-0.5 font-medium text-slate-900">Unassigned</p>
+            ) : (
+              <ul className="mt-1 space-y-1">
+                {assignedTeamForOverview.map((member) => (
+                  <li key={member.id} className="font-medium text-slate-900">
+                    {member.name}
+                    <span className="ml-2 text-sm font-normal text-slate-500">
+                      ({member.roleLabel}
+                      {member.helpingViaTask ? " · helping on tasks" : ""})
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
           <div className="rounded-lg bg-slate-50/80 p-3">
             <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Last Submission</p>
@@ -528,6 +592,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
 
       <CaseStageCard
         studentId={studentId}
+        visaServiceType={resolvedVisaServiceType}
         currentStage={profile?.caseStage ?? "CONSULTATION_AND_DOCUMENTATION"}
         updatedAt={profile?.caseStageUpdatedAt ?? null}
         action={updateCaseStageAction}
@@ -630,55 +695,16 @@ export default async function StudentProfileManagementPage(props: { params: Para
               className="mt-1.5 w-full rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
             />
           </Field>
-          <Field label="Emergency Contact Residential Address" className="sm:col-span-2">
-            <textarea
-              name="emergencyContactAddress"
-              defaultValue={student.studentProfile?.emergencyContactAddress ?? ""}
-              rows={3}
-              className="mt-1.5 w-full rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+          <div className="sm:col-span-2 grid gap-4 sm:grid-cols-2">
+            <ProfileVisaServiceFields
+              visaServiceType={student.studentProfile?.visaServiceType}
+              currentEducationLevel={student.studentProfile?.currentEducationLevel}
+              targetCourse={student.studentProfile?.targetCourse}
+              preferredIntake={student.studentProfile?.preferredIntake}
+              englishTestType={student.studentProfile?.englishTestType}
+              englishTestScore={student.studentProfile?.englishTestScore}
             />
-          </Field>
-          <Field label="Current Education Level">
-            <input
-              type="text"
-              name="currentEducationLevel"
-              defaultValue={student.studentProfile?.currentEducationLevel ?? ""}
-              className="mt-1.5 w-full rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-            />
-          </Field>
-          <Field label="Target Course">
-            <input
-              type="text"
-              name="targetCourse"
-              defaultValue={student.studentProfile?.targetCourse ?? ""}
-              className="mt-1.5 w-full rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-            />
-          </Field>
-          <Field label="Preferred Intake">
-            <select
-              name="preferredIntake"
-              defaultValue={student.studentProfile?.preferredIntake ?? ""}
-              className="mt-1.5 w-full rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-            >
-              <option value="">Select intake...</option>
-              {mergeIntakeOptions(
-                getUpcomingIntakeOptions(),
-                student.studentProfile?.preferredIntake,
-              ).map((intake) => (
-                <option key={intake} value={intake}>
-                  {intake}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="English Test Score">
-            <input
-              type="text"
-              name="englishTestScore"
-              defaultValue={student.studentProfile?.englishTestScore ?? ""}
-              className="mt-1.5 w-full rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-            />
-          </Field>
+          </div>
           <Field label="Visa Status">
             <select
               name="visaStatus"
@@ -837,19 +863,42 @@ export default async function StudentProfileManagementPage(props: { params: Para
           <p className="mt-4 text-base text-slate-600">No active assignments yet.</p>
         ) : (
           <ul className="mt-4 space-y-3">
-            {currentAssignments.map((assignment) => (
-              <li key={assignment.id} className="rounded-lg border border-slate-200 bg-slate-50/80 p-4">
-                <p className="font-medium text-slate-900">
-                  {assignment.assignedTo.name ?? assignment.assignedTo.email}
-                  <span className="ml-2 text-sm font-normal text-slate-500">({assignment.assignedTo.role})</span>
-                </p>
-                <p className="mt-1 text-sm text-slate-600">
-                  Assigned by {assignment.assignedBy.name ?? assignment.assignedBy.email} on{" "}
-                  {assignment.createdAt.toLocaleDateString()}
-                </p>
-                {assignment.notes ? <p className="mt-2 text-sm text-slate-600">{assignment.notes}</p> : null}
-              </li>
-            ))}
+            {currentAssignments.map((assignment) => {
+              const assigneeLabel = assignment.assignedTo.name ?? assignment.assignedTo.email;
+              return (
+                <li
+                  key={assignment.id}
+                  className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50/80 p-4"
+                >
+                  <div>
+                    <p className="font-medium text-slate-900">
+                      {assigneeLabel}
+                      <span className="ml-2 text-sm font-normal text-slate-500">
+                        ({assignment.assignedTo.role})
+                      </span>
+                    </p>
+                    <p className="mt-1 text-sm text-slate-600">
+                      Assigned by {assignment.assignedBy.name ?? assignment.assignedBy.email} on{" "}
+                      {assignment.createdAt.toLocaleDateString()}
+                    </p>
+                    {assignment.notes ? (
+                      <p className="mt-2 text-sm text-slate-600">{assignment.notes}</p>
+                    ) : null}
+                  </div>
+                  {canManageStudentDelegation ? (
+                    <DeleteWithConfirm
+                      formAction={removeStudentDelegationAction}
+                      confirmMessage={`Remove ${assigneeLabel} from this case team?`}
+                      buttonLabel="Remove from team"
+                      buttonClassName="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-600 transition hover:bg-red-50"
+                    >
+                      <input type="hidden" name="studentId" value={studentId} />
+                      <input type="hidden" name="assignmentId" value={assignment.id} />
+                    </DeleteWithConfirm>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>
@@ -1442,7 +1491,9 @@ export default async function StudentProfileManagementPage(props: { params: Para
             studentId={studentId}
             tasks={tasks}
             documents={documents}
+            taskAssigneeOptions={taskAssigneeOptions}
             createTaskAction={createTaskAction}
+            reassignTaskAction={reassignTaskAction}
             updateTaskStatusAction={updateTaskStatusAction}
             updateTaskChecklistAction={updateTaskChecklistAction}
             uploadStudentDocumentAction={uploadStudentDocumentAction}
@@ -1646,20 +1697,28 @@ function Field({
 
 function CaseStageCard({
   studentId,
+  visaServiceType,
   currentStage,
   updatedAt,
   action,
 }: {
   studentId: string;
+  visaServiceType?: string | null;
   currentStage: CaseStage;
   updatedAt: Date | null;
   action: (formData: FormData) => Promise<void>;
 }) {
-  const suggestions = getNextSuggestedStages(currentStage);
-  const defaultNext = suggestions[0] ?? currentStage;
+  const workflowStages = getCaseStageOrderForVisaService(visaServiceType);
+  const suggestions = getNextSuggestedStages(currentStage, visaServiceType);
+  const defaultNext =
+    suggestions[0] ??
+    (isCaseStageAllowedForVisaService(currentStage, visaServiceType)
+      ? currentStage
+      : workflowStages[0] ?? currentStage);
   const terminal = isTerminalStage(currentStage);
-  const progressPct = getStageProgressPercent(currentStage);
-  const linearIdx = caseStageOrder.indexOf(currentStage);
+  const progressPct = getStageProgressPercent(currentStage, visaServiceType);
+  const linearIdx = workflowStages.indexOf(currentStage);
+  const onWorkflowTrack = linearIdx >= 0;
 
   return (
     <section
@@ -1670,7 +1729,10 @@ function CaseStageCard({
         <div>
           <h2 className="text-lg font-semibold text-slate-900">Case Stage</h2>
           <p className="mt-1 text-sm text-slate-600">
-            Track this student&apos;s position in the application workflow.
+            Track this client&apos;s position in the visa workflow.
+            {!isStudentVisaService(visaServiceType)
+              ? " Enrolment and study-only stages are hidden for this service type."
+              : null}
           </p>
         </div>
         <span
@@ -1687,7 +1749,9 @@ function CaseStageCard({
           <span>
             {terminal
               ? "Outcome"
-              : `Step ${linearIdx + 1} of ${caseStageOrder.length}`}
+              : onWorkflowTrack
+                ? `Step ${linearIdx + 1} of ${workflowStages.length}`
+                : "Outside standard track"}
           </span>
         </div>
         <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
@@ -1701,9 +1765,9 @@ function CaseStageCard({
           />
         </div>
         <div className="flex flex-wrap gap-1.5">
-          {caseStageOrder.map((stage, idx) => {
+          {workflowStages.map((stage, idx) => {
             const isCurrent = stage === currentStage;
-            const isPast = !terminal && linearIdx > idx;
+            const isPast = !terminal && onWorkflowTrack && linearIdx > idx;
             return (
               <span
                 key={stage}
@@ -1739,7 +1803,7 @@ function CaseStageCard({
           className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
         >
           <optgroup label="Workflow stages">
-            {caseStageOrder.map((stage) => (
+            {workflowStages.map((stage) => (
               <option key={stage} value={stage}>
                 {caseStageLabel(stage)}
                 {suggestions.includes(stage) ? " (suggested)" : ""}
@@ -1769,6 +1833,12 @@ function CaseStageCard({
 
     </section>
   );
+}
+
+function assignmentRoleLabel(role: string) {
+  if (role === "SUB_ADMIN") return "Agent";
+  if (role === "INTERNAL_STAFF") return "Case manager";
+  return role;
 }
 
 function formatDateInput(value?: Date | null) {
@@ -1823,7 +1893,7 @@ async function saveStudentProfileAction(formData: FormData) {
   const studentId = String(formData.get("studentId") ?? "");
 
   const student = await prisma.user.findFirst({
-    where: { id: studentId, role: "USER" },
+    where: { id: studentId, role: "USER", deletedAt: null },
     select: { id: true },
   });
 
@@ -1892,6 +1962,18 @@ async function saveStudentProfileAction(formData: FormData) {
   const visaStatusRaw = String(formData.get("visaStatus") ?? "NOT_STARTED") as VisaStatus;
   const visaStatus = visaStatuses.includes(visaStatusRaw) ? visaStatusRaw : "NOT_STARTED";
   const caseReference = await generateNextCaseReference();
+  const visaServiceType = nullableText(formData.get("visaServiceType"));
+  const isStudentVisa = isStudentVisaService(visaServiceType ?? "");
+  const profileVisaFields = {
+    visaServiceType,
+    currentEducationLevel: isStudentVisa
+      ? nullableText(formData.get("currentEducationLevel"))
+      : null,
+    targetCourse: isStudentVisa ? nullableText(formData.get("targetCourse")) : null,
+    preferredIntake: isStudentVisa ? nullableText(formData.get("preferredIntake")) : null,
+    englishTestType: nullableText(formData.get("englishTestType")),
+    englishTestScore: nullableText(formData.get("englishTestScore")),
+  };
 
   const profile = await prisma.studentProfile.upsert({
     where: { userId: studentId },
@@ -1904,11 +1986,7 @@ async function saveStudentProfileAction(formData: FormData) {
       emergencyContactName: nullableText(formData.get("emergencyContactName")),
       emergencyContactEmail: nullableText(formData.get("emergencyContactEmail")),
       emergencyContactPhone: nullableText(formData.get("emergencyContactPhone")),
-      emergencyContactAddress: nullableText(formData.get("emergencyContactAddress")),
-      currentEducationLevel: nullableText(formData.get("currentEducationLevel")),
-      targetCourse: nullableText(formData.get("targetCourse")),
-      preferredIntake: nullableText(formData.get("preferredIntake")),
-      englishTestScore: nullableText(formData.get("englishTestScore")),
+      ...profileVisaFields,
       visaStatus,
       courseStartDate,
       courseEndDate,
@@ -1928,11 +2006,7 @@ async function saveStudentProfileAction(formData: FormData) {
       emergencyContactName: nullableText(formData.get("emergencyContactName")),
       emergencyContactEmail: nullableText(formData.get("emergencyContactEmail")),
       emergencyContactPhone: nullableText(formData.get("emergencyContactPhone")),
-      emergencyContactAddress: nullableText(formData.get("emergencyContactAddress")),
-      currentEducationLevel: nullableText(formData.get("currentEducationLevel")),
-      targetCourse: nullableText(formData.get("targetCourse")),
-      preferredIntake: nullableText(formData.get("preferredIntake")),
-      englishTestScore: nullableText(formData.get("englishTestScore")),
+      ...profileVisaFields,
       visaStatus,
       courseStartDate,
       courseEndDate,
@@ -1950,7 +2024,7 @@ async function saveStudentProfileAction(formData: FormData) {
       targetStudentProfileId: profile.id,
       entityType: "STUDENT",
       entityId: studentId,
-      action: "Updated student profile (details, visa status, follow-up dates)",
+      action: "Updated client profile (details, visa status, follow-up dates)",
       metadata: { visaStatus },
     },
   });
@@ -2000,31 +2074,20 @@ async function deleteStudentAction(formData: FormData) {
     if (!assigned) redirect("/dashboard/internal-staff");
   }
 
-  await prisma.user.deleteMany({
-    where: { id: studentId, role: "USER" },
-  });
+  await softDeleteClient(studentId, session.user.id);
   revalidatePath("/dashboard/admin");
   revalidatePath("/dashboard/sub-admin");
   revalidatePath("/dashboard/internal-staff");
-  if (role === "ADMIN") redirect("/dashboard/admin");
-  if (role === "SUB_ADMIN") redirect("/dashboard/sub-admin");
-  redirect("/dashboard/internal-staff");
+  if (role === "ADMIN") redirect("/dashboard/admin?tab=deleted-clients");
+  if (role === "SUB_ADMIN") redirect("/dashboard/sub-admin?tab=deleted-clients");
+  redirect("/dashboard/internal-staff?tab=deleted-clients");
 }
 
-async function assignStudentDelegationAction(formData: FormData) {
-  "use server";
-  const session = await auth();
-  if (!session?.user) redirect("/login");
-
-  const studentId = String(formData.get("studentId") ?? "");
-  const returnToProfileTab = studentId ? studentProfileUrl(studentId) : "/dashboard";
-
-  const assigneeIdRaw =
-    String(formData.get("assigneeId") ?? "").trim() ||
-    String(formData.get("internalStaffId") ?? "").trim();
-  const notes = nullableText(formData.get("notes"));
-  if (!studentId || !assigneeIdRaw) redirect(returnToProfileTab);
-
+async function assertStudentDelegationAccess(
+  session: NonNullable<Awaited<ReturnType<typeof auth>>>,
+  studentId: string,
+) {
+  const returnToProfileTab = studentProfileUrl(studentId);
   const mayDelegate =
     session.user.role === "ADMIN" ||
     session.user.role === "SUB_ADMIN" ||
@@ -2042,6 +2105,24 @@ async function assignStudentDelegationAction(formData: FormData) {
     });
     if (!allowed) redirect(returnToProfileTab);
   }
+  return returnToProfileTab;
+}
+
+async function assignStudentDelegationAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+
+  const studentId = String(formData.get("studentId") ?? "");
+  const returnToProfileTab = studentId ? studentProfileUrl(studentId) : "/dashboard";
+
+  const assigneeIdRaw =
+    String(formData.get("assigneeId") ?? "").trim() ||
+    String(formData.get("internalStaffId") ?? "").trim();
+  const notes = nullableText(formData.get("notes"));
+  if (!studentId || !assigneeIdRaw) redirect(returnToProfileTab);
+
+  await assertStudentDelegationAccess(session, studentId);
 
   const studentProfile = await prisma.studentProfile.findUnique({
     where: { userId: studentId },
@@ -2051,7 +2132,7 @@ async function assignStudentDelegationAction(formData: FormData) {
 
   const assignee = await prisma.user.findFirst({
     where: { id: assigneeIdRaw, role: { in: ["INTERNAL_STAFF", "SUB_ADMIN"] } },
-    select: { id: true, role: true },
+    select: { id: true, role: true, name: true, email: true },
   });
   if (!assignee) redirect(returnToProfileTab);
 
@@ -2060,8 +2141,9 @@ async function assignStudentDelegationAction(formData: FormData) {
       studentProfileId: studentProfile.id,
       assignedToId: assignee.id,
     },
-    select: { id: true },
+    select: { id: true, isActive: true },
   });
+  const isNewTeamMember = !existingAssignment || !existingAssignment.isActive;
 
   if (existingAssignment) {
     await prisma.studentAssignment.update({
@@ -2106,10 +2188,99 @@ async function assignStudentDelegationAction(formData: FormData) {
     },
   });
 
-  revalidatePath(`/dashboard/students/${studentId}`);
-  revalidatePath("/dashboard/internal-staff");
-  revalidatePath("/dashboard/sub-admin");
-  revalidatePath("/dashboard/admin");
+  if (isNewTeamMember) {
+    await notifyStudentTeamDelegationChange({
+      studentProfileId: studentProfile.id,
+      studentUserId: studentId,
+      actorId: session.user.id,
+      assigneeId: assignee.id,
+      assigneeName: assignee.name?.trim() || assignee.email,
+      assigneeRole:
+        assignee.role === "SUB_ADMIN" ? "SUB_ADMIN" : "INTERNAL_STAFF",
+      change: "added",
+      delegationNotes: notes,
+      source: "student_profile",
+    });
+  }
+
+  revalidateContributionsCache(studentId);
+  redirect(returnToProfileTab);
+}
+
+async function removeStudentDelegationAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+
+  const studentId = String(formData.get("studentId") ?? "");
+  const assignmentId = String(formData.get("assignmentId") ?? "");
+  if (!studentId || !assignmentId) {
+    redirect(studentId ? studentProfileUrl(studentId) : "/dashboard");
+  }
+
+  const returnToProfileTab = await assertStudentDelegationAccess(session, studentId);
+
+  const studentProfile = await prisma.studentProfile.findUnique({
+    where: { userId: studentId },
+    select: { id: true },
+  });
+  if (!studentProfile) redirect(returnToProfileTab);
+
+  const assignment = await prisma.studentAssignment.findFirst({
+    where: {
+      id: assignmentId,
+      studentProfileId: studentProfile.id,
+      isActive: true,
+    },
+    include: {
+      assignedTo: { select: { id: true, role: true, name: true, email: true } },
+    },
+  });
+  if (!assignment) redirect(returnToProfileTab);
+
+  const now = new Date();
+  await prisma.studentAssignment.update({
+    where: { id: assignment.id },
+    data: { isActive: false, endedAt: now },
+  });
+
+  if (assignment.assignedTo.role === "SUB_ADMIN") {
+    await prisma.questionnaireSubmission.updateMany({
+      where: { studentId, assignedToId: assignment.assignedTo.id },
+      data: { assignedToId: null },
+    });
+  }
+
+  await prisma.activityLog.create({
+    data: {
+      actorId: session.user.id,
+      targetStudentProfileId: studentProfile.id,
+      entityType: "ASSIGNMENT",
+      entityId: assignment.id,
+      action:
+        assignment.assignedTo.role === "SUB_ADMIN"
+          ? "Removed agent from student delegation"
+          : "Removed case manager from student delegation",
+      metadata: {
+        assigneeId: assignment.assignedTo.id,
+        assigneeRole: assignment.assignedTo.role,
+      },
+    },
+  });
+
+  await notifyStudentTeamDelegationChange({
+    studentProfileId: studentProfile.id,
+    studentUserId: studentId,
+    actorId: session.user.id,
+    assigneeId: assignment.assignedTo.id,
+    assigneeName: assignment.assignedTo.name?.trim() || assignment.assignedTo.email,
+    assigneeRole:
+      assignment.assignedTo.role === "SUB_ADMIN" ? "SUB_ADMIN" : "INTERNAL_STAFF",
+    change: "removed",
+    source: "student_profile",
+  });
+
+  revalidateContributionsCache(studentId);
   redirect(returnToProfileTab);
 }
 
@@ -2175,29 +2346,94 @@ async function createTaskAction(formData: FormData) {
   const taskPriority: TaskPriority = ["LOW", "MEDIUM", "HIGH", "URGENT"].includes(priority)
     ? priority
     : "MEDIUM";
-  await prisma.task.create({
+
+  const assigneeIdRaw = String(formData.get("assigneeId") ?? "").trim();
+  let assignee = await resolveTaskAssignee(assigneeIdRaw);
+  if (!assignee) {
+    assignee = await resolveTaskAssignee(session.user.id);
+  }
+  if (!assignee) {
+    redirect(`/dashboard/students/${studentId}?tab=tasks&taskError=invalid-assignee`);
+  }
+
+  const task = await prisma.task.create({
     data: {
       title,
       description,
       studentProfileId: studentProfile.id,
-      assigneeId: session.user.id,
+      assigneeId: assignee.id,
       assignerId: session.user.id,
       priority: taskPriority,
     },
+    select: { id: true },
   });
   await prisma.activityLog.create({
     data: {
       actorId: session.user.id,
       targetStudentProfileId: studentProfile.id,
       entityType: "TASK",
-      entityId: studentProfile.id,
+      entityId: task.id,
       action: `Created task: ${title}`,
+      metadata: { assigneeId: assignee.id },
     },
   });
 
+  await notifyTaskAssignment({
+    taskId: task.id,
+    taskTitle: title,
+    studentProfileId: studentProfile.id,
+    studentUserId: studentId,
+    actorId: session.user.id,
+    previousAssigneeId: null,
+    newAssigneeId: assignee.id,
+    isNewTask: true,
+  });
+
+  await ensureStaffOnCaseTeam({
+    studentProfileId: studentProfile.id,
+    studentUserId: studentId,
+    staffId: assignee.id,
+    actorId: session.user.id,
+    taskTitle: title,
+  });
+
+  revalidateContributionsCache(studentId);
   revalidatePath(`/dashboard/students/${studentId}`);
   revalidatePath("/dashboard/internal-staff");
+  revalidatePath("/dashboard/sub-admin");
   redirect(`/dashboard/students/${studentId}?tab=tasks&taskCreated=1`);
+}
+
+async function reassignTaskAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+  if (
+    session.user.role !== "ADMIN" &&
+    session.user.role !== "SUB_ADMIN" &&
+    session.user.role !== "INTERNAL_STAFF"
+  ) {
+    redirect("/dashboard");
+  }
+
+  const taskId = String(formData.get("taskId") ?? "");
+  const assigneeId = String(formData.get("assigneeId") ?? "");
+  if (!taskId || !assigneeId) redirect("/dashboard");
+
+  const result = await executeTaskReassignment({
+    taskId,
+    newAssigneeId: assigneeId,
+    actor: { id: session.user.id, role: session.user.role },
+  });
+
+  if (!result.ok) {
+    redirect("/dashboard");
+  }
+
+  revalidatePath(`/dashboard/students/${result.studentUserId}`);
+  revalidatePath("/dashboard/internal-staff");
+  revalidatePath("/dashboard/sub-admin");
+  redirect(`/dashboard/students/${result.studentUserId}?tab=tasks&taskReassigned=1`);
 }
 
 async function updateTaskStatusAction(formData: FormData) {
@@ -2253,6 +2489,7 @@ async function updateTaskStatusAction(formData: FormData) {
     },
   });
 
+  revalidateContributionsCache(task.studentProfile.userId);
   revalidatePath(`/dashboard/students/${task.studentProfile.userId}`);
   revalidatePath("/dashboard/internal-staff");
   redirect(`/dashboard/students/${task.studentProfile.userId}?tab=tasks`);
@@ -2331,6 +2568,7 @@ async function updateTaskChecklistAction(formData: FormData) {
     })),
   });
 
+  revalidateContributionsCache(studentId);
   revalidatePath(`/dashboard/students/${studentId}`);
   revalidatePath("/dashboard/internal-staff");
   revalidatePath("/dashboard/sub-admin");
@@ -2362,6 +2600,7 @@ async function updateCaseStageAction(formData: FormData) {
     select: {
       id: true,
       caseStage: true,
+      visaServiceType: true,
       assignments: {
         where: { isActive: true },
         select: { assignedToId: true },
@@ -2369,6 +2608,10 @@ async function updateCaseStageAction(formData: FormData) {
     },
   });
   if (!profile) redirect(studentOverviewCaseStageUrl(studentId));
+
+  if (!isCaseStageAllowedForVisaService(stageRaw, profile.visaServiceType)) {
+    redirect(studentOverviewCaseStageUrl(studentId));
+  }
 
   if (session.user.role === "INTERNAL_STAFF") {
     const isAssigned = profile.assignments.some(
@@ -2412,6 +2655,7 @@ async function updateCaseStageAction(formData: FormData) {
     },
   });
 
+  revalidateContributionsCache(studentId);
   revalidatePath(`/dashboard/students/${studentId}`);
   revalidatePath("/dashboard/admin");
   revalidatePath("/dashboard/sub-admin");
@@ -2520,6 +2764,7 @@ async function uploadStudentDocumentAction(formData: FormData) {
         action: `Uploaded document: ${title}`,
       },
     });
+    revalidateContributionsCache(studentId);
   } catch (error) {
     console.error("uploadStudentDocumentAction db", error);
     await deleteStoredFile(publicPath).catch(() => undefined);
@@ -2648,6 +2893,7 @@ async function uploadReplacementDocumentAction(formData: FormData) {
         metadata: { originalDocumentId: document.id, replacementDocumentId: replacement.id },
       },
     });
+    revalidateContributionsCache(studentId);
   } catch (error) {
     console.error("uploadReplacementDocumentAction db", error);
     await deleteStoredFile(publicPath).catch(() => undefined);
@@ -4115,7 +4361,7 @@ async function ensureLeadWorkflowAccess(
     redirect("/dashboard");
   }
   const student = await prisma.user.findFirst({
-    where: { id: studentId, role: "USER" },
+    where: { id: studentId, role: "USER", deletedAt: null },
     select: { id: true, studentProfile: { select: { id: true } } },
   });
   if (!student) {

@@ -18,10 +18,27 @@ import { RemindersWidget } from "@/components/reminders-widget";
 import { getRemindersForUser } from "@/lib/reminders";
 import { prisma } from "@/lib/prisma";
 import { redirectWithDashboardNotice, redirectWithDelegationNotice } from "@/lib/redirect-after-delegation";
-import { createWorkflowNotification } from "@/lib/workflow-notifications";
+import { DeletedClientsTab } from "@/components/deleted-clients-tab";
+import {
+  activeClientUserWhere,
+  deletedClientUserWhere,
+  listDeletedClients,
+  softDeleteClient,
+} from "@/lib/deleted-clients";
+import { blobOpensThroughAuthenticatedApi } from "@/lib/blob-access";
+import {
+  restoreDeletedClientAction,
+  permanentDeleteDeletedClientAction,
+} from "@/app/dashboard/deleted-client-actions";
+import {
+  createWorkflowNotification,
+  notifyStudentTeamDelegationChange,
+} from "@/lib/workflow-notifications";
+import { revalidateContributionsCache } from "@/lib/contributions-cache";
 import { buildSubmissionWhere } from "@/lib/submission-filters";
 import { formatSubmissionStatus } from "@/lib/submission";
 import { formatVisaStatus, formatYearsLeft } from "@/lib/student-tracking";
+import { formatSubmissionServiceSummary } from "@/lib/visa-services";
 import {
   allCaseStages,
   caseStageLabel,
@@ -45,7 +62,8 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
     | "students"
     | "analytics"
     | "staff"
-    | "contributions";
+    | "contributions"
+    | "deleted-clients";
   const session = await auth();
 
   if (!session?.user) {
@@ -75,6 +93,7 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
   const isStudentsTab = tab === "students";
   const isAnalyticsTab = tab === "analytics";
   const isStaffTab = tab === "staff";
+  const isDeletedClientsTab = tab === "deleted-clients";
   const needsFilteredSubmissions = isOverviewTab || isStudentsTab || isAnalyticsTab;
   const needsInternalStaff = isOverviewTab || isStudentsTab || isStaffTab;
   const needsSubAdmins = isOverviewTab || isStudentsTab || isStaffTab;
@@ -103,9 +122,11 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
     stagePipelineCounts,
     newInquiries,
     newInquiriesLast24hCount,
+    deletedClientsCount,
+    deletedClients,
   ] = await Promise.all([
     isOverviewTab ? getRemindersForUser("ADMIN", session.user.id) : Promise.resolve([]),
-    prisma.user.count({ where: { role: "USER" } }),
+    prisma.user.count({ where: activeClientUserWhere }),
     isOverviewTab ? prisma.questionnaireSubmission.count() : Promise.resolve(0),
     isOverviewTab ? prisma.user.count({ where: { role: "SUB_ADMIN" } }) : Promise.resolve(0),
     isOverviewTab ? prisma.questionnaireSubmission.count({
@@ -238,6 +259,8 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
         submittedAt: { gte: oneDayAgoForFreshInquiries },
       },
     }) : Promise.resolve(0),
+    prisma.user.count({ where: deletedClientUserWhere }),
+    isDeletedClientsTab ? listDeletedClients() : Promise.resolve([]),
   ]);
 
   const stageCountMap = new Map<string, number>(
@@ -402,6 +425,7 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
           { id: "analytics", label: "Analytics" },
           { id: "staff", label: "Staff & Content" },
           { id: "contributions", label: "Contributions" },
+          { id: "deleted-clients", label: "Deleted Clients", count: deletedClientsCount },
         ]}
         activeTab={tab}
       />
@@ -667,9 +691,14 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
                           />
                         </div>
                         <p className="text-xs text-gray-600">
-                          {submission.sourceCity ?? "Unknown city"},{" "}
-                          {submission.sourceCountry ?? "Unknown country"} |{" "}
-                          {submission.intendedCourse ?? "No course"}
+                          {formatSubmissionServiceSummary({
+                            intendedCourse: submission.intendedCourse,
+                            answers: submission.answers,
+                            profileVisaServiceType:
+                              submission.student.studentProfile?.visaServiceType,
+                          })}{" "}
+                          | {submission.sourceCity ?? "Unknown city"},{" "}
+                          {submission.sourceCountry ?? "Unknown country"}
                         </p>
                         <p className="text-xs text-gray-600">
                           Status: {formatSubmissionStatus(submission.status)}
@@ -1259,6 +1288,17 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
       )}
 
       {/* ── CONTRIBUTIONS TAB ──────────────────────────────────── */}
+      {tab === "deleted-clients" && (
+        <DeletedClientsTab
+          clients={deletedClients}
+          isAdmin
+          returnPath="/dashboard/admin?tab=deleted-clients"
+          restoreDeletedClientAction={restoreDeletedClientAction}
+          permanentDeleteDeletedClientAction={permanentDeleteDeletedClientAction}
+          blobOpensThroughAuthenticatedApi={blobOpensThroughAuthenticatedApi()}
+        />
+      )}
+
       {tab === "contributions" && <ContributionsTabSection />}
     </section>
   );
@@ -1427,16 +1467,12 @@ async function deleteStudentFromAdminAction(formData: FormData) {
   const studentId = String(formData.get("studentId") ?? "");
   if (!studentId) redirect("/dashboard/admin");
 
-  await prisma.user.deleteMany({
-    where: {
-      id: studentId,
-      role: "USER",
-    },
-  });
+  await softDeleteClient(studentId, session.user.id);
 
   revalidatePath("/dashboard/admin");
   revalidatePath("/dashboard/sub-admin");
-  redirect("/dashboard/admin");
+  revalidatePath("/dashboard/internal-staff");
+  redirect("/dashboard/admin?tab=deleted-clients");
 }
 
 async function delegateStudentFromAdminAction(formData: FormData) {
@@ -1534,28 +1570,49 @@ async function delegateStudentFromAdminAction(formData: FormData) {
     },
   });
 
-  const actorLabel = session.user.name?.trim() || session.user.email || "An admin";
-  const studentLabel = studentProfile.user.name?.trim() || studentProfile.user.email;
   const newlyAssignedStaff = staffMembers.filter((staff) => !currentActiveIds.has(staff.id));
-  await Promise.all(
-    newlyAssignedStaff.map((staff) =>
-      createWorkflowNotification({
-        recipientId: staff.id,
-        actorId: session.user.id,
+  const removedStaffIds = currentAssignments
+    .filter((assignment) => assignment.isActive && !validStaffIds.has(assignment.assignedToId))
+    .map((assignment) => assignment.assignedToId);
+  const removedStaff =
+    removedStaffIds.length > 0
+      ? await prisma.user.findMany({
+          where: { id: { in: removedStaffIds }, role: "INTERNAL_STAFF" },
+          select: { id: true, name: true, email: true },
+        })
+      : [];
+
+  await Promise.all([
+    ...newlyAssignedStaff.map((staff) =>
+      notifyStudentTeamDelegationChange({
         studentProfileId: studentProfile.id,
-        type: "STUDENT_DELEGATED",
-        title: "Student delegated to you",
-        message: `${studentLabel} has been assigned to you by ${actorLabel}.`,
-        link: `/dashboard/students/${studentId}`,
-        actionRequired: true,
-        metadata: { delegatedFrom: "admin_dashboard" },
+        studentUserId: studentId,
+        actorId: session.user.id,
+        assigneeId: staff.id,
+        assigneeName: staff.name?.trim() || staff.email,
+        assigneeRole: "INTERNAL_STAFF",
+        change: "added",
+        source: "admin_dashboard",
       }),
     ),
-  );
+    ...removedStaff.map((staff) =>
+      notifyStudentTeamDelegationChange({
+        studentProfileId: studentProfile.id,
+        studentUserId: studentId,
+        actorId: session.user.id,
+        assigneeId: staff.id,
+        assigneeName: staff.name?.trim() || staff.email,
+        assigneeRole: "INTERNAL_STAFF",
+        change: "removed",
+        source: "admin_dashboard",
+      }),
+    ),
+  ]);
 
   revalidatePath("/dashboard/admin");
   revalidatePath(`/dashboard/students/${studentId}`);
   revalidatePath("/dashboard/internal-staff");
+  revalidateContributionsCache(studentId);
 
   if (validStaffIds.size === 0) {
     await redirectWithDashboardNotice({

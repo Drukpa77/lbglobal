@@ -21,7 +21,9 @@ const validStatuses: SubmissionStatus[] = [
 ];
 
 export function buildSubmissionWhere(input: FilterInput): Prisma.QuestionnaireSubmissionWhereInput {
-  const clauses: Prisma.QuestionnaireSubmissionWhereInput[] = [];
+  const clauses: Prisma.QuestionnaireSubmissionWhereInput[] = [
+    { student: { role: "USER", deletedAt: null } },
+  ];
   const search = (input.search ?? "").trim();
   const country = (input.country ?? "").trim();
   const course = (input.course ?? "").trim();

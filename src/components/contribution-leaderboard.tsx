@@ -33,10 +33,36 @@ function formatPct(n: number): string {
   return `${n.toFixed(1)}%`;
 }
 
+function formatCaseWorkUnits(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "0";
+  return n < 10 ? n.toFixed(1) : String(Math.round(n));
+}
+
+function formatCaseWorkDetail(row: ContributionRow): string {
+  const parts: string[] = [];
+  if (row.doneTaskCount > 0) {
+    parts.push(`${row.doneTaskCount} done`);
+  }
+  if (row.openTaskCount > 0) {
+    parts.push(`${row.openTaskCount} open`);
+  }
+  if (row.teamSlotCount > 0) {
+    parts.push(`${row.teamSlotCount} on team`);
+  }
+  if (row.caseActionCount > 0) {
+    parts.push(`${row.caseActionCount} action${row.caseActionCount === 1 ? "" : "s"}`);
+  }
+  return parts.length > 0 ? parts.join(", ") : "case support";
+}
+
 export function ContributionLeaderboard({ data, title, subtitle }: Props) {
   const { rows, totals } = data;
   const hasAnyData =
-    totals.stageMoves > 0 || totals.docs > 0 || totals.doneTasks > 0;
+    totals.stageMoves > 0 ||
+    totals.docs > 0 ||
+    totals.doneTasks > 0 ||
+    totals.openAssignedTasks > 0 ||
+    totals.caseWorkUnits > 0;
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -58,12 +84,12 @@ export function ContributionLeaderboard({ data, title, subtitle }: Props) {
             Docs {CONTRIBUTION_DOC_WEIGHT}%
           </span>
           <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-emerald-700">
-            Tasks {CONTRIBUTION_TASK_WEIGHT}%
+            Case work {CONTRIBUTION_TASK_WEIGHT}%
           </span>
         </div>
       </header>
 
-      <div className="mt-4 grid gap-3 text-xs text-slate-600 sm:grid-cols-3">
+      <div className="mt-4 grid gap-3 text-xs text-slate-600 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
           <p className="font-semibold uppercase tracking-wide text-slate-500">
             Stage moves
@@ -88,12 +114,20 @@ export function ContributionLeaderboard({ data, title, subtitle }: Props) {
             {totals.doneTasks}
           </p>
         </div>
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+          <p className="font-semibold uppercase tracking-wide text-slate-500">
+            Open tasks & case actions
+          </p>
+          <p className="mt-1 text-base font-semibold text-slate-900">
+            {totals.openAssignedTasks} open · {formatCaseWorkUnits(totals.caseWorkUnits)} work units
+          </p>
+        </div>
       </div>
 
       {!hasAnyData ? (
         <div className="mt-6 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm text-slate-600">
-          No contribution activity yet — try moving a case stage, uploading a
-          document, or marking a task done.
+          No contribution activity yet — move a case stage, upload a document, join the
+          case team, assign tasks, or complete work on the case.
         </div>
       ) : (
         <ol className="mt-6 space-y-4">
@@ -167,7 +201,7 @@ function LeaderboardRow({ row, rank }: { row: ContributionRow; rank: number }) {
               <div
                 className="h-full bg-emerald-500"
                 style={{ width: `${taskPctOfBar}%` }}
-                title={`Tasks: ${formatPct(row.taskPts)}`}
+                title={`Case work: ${formatPct(row.taskPts)}`}
               />
             )}
           </div>
@@ -189,10 +223,8 @@ function LeaderboardRow({ row, rank }: { row: ContributionRow; rank: number }) {
           </span>
           <span>
             <span className="mr-1 inline-block h-2 w-2 rounded-full bg-emerald-500" />
-            Tasks: <span className="font-semibold">{formatPct(row.taskPts)}</span>
-            <span className="ml-1 text-slate-400">
-              ({row.taskCount} done)
-            </span>
+            Case work: <span className="font-semibold">{formatPct(row.taskPts)}</span>
+            <span className="ml-1 text-slate-400">({formatCaseWorkDetail(row)})</span>
           </span>
         </div>
       </div>

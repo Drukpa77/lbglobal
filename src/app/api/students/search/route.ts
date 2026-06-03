@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { auth } from "@/auth";
+import { activeClientUserWhere } from "@/lib/deleted-clients";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(request: Request) {
@@ -21,7 +22,7 @@ export async function GET(request: Request) {
 
   const students = await prisma.user.findMany({
     where: {
-      role: "USER",
+      ...activeClientUserWhere,
       OR: [
         { name: { contains: q } },
         { email: { contains: q } },

@@ -2,17 +2,30 @@
 
 import { useState } from "react";
 
-type IntakeType = "student" | "client";
+import { getUpcomingIntakeOptions } from "@/lib/intake-options";
+import {
+  ENGLISH_TEST_TYPES,
+  isStudentVisaService,
+  VISA_SERVICE_OPTIONS,
+} from "@/lib/visa-services";
 
 type StudentClientIntakeFormProps = {
   action: (formData: FormData) => void | Promise<void>;
   error: string | null;
   success: boolean;
-  successType: IntakeType;
+  successType: "client";
   description: string;
 };
 
 const commonInputClass = "mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm";
+
+const EDUCATION_LEVEL_OPTIONS = [
+  "+2 / High School",
+  "Diploma",
+  "Bachelors",
+  "Masters",
+  "Other",
+] as const;
 
 export function StudentClientIntakeForm({
   action,
@@ -21,20 +34,19 @@ export function StudentClientIntakeForm({
   successType,
   description,
 }: StudentClientIntakeFormProps) {
-  const [intakeType, setIntakeType] = useState<IntakeType | null>(null);
-  const isClient = intakeType === "client";
-  const selectedLabel = isClient ? "Client" : "Student";
+  const [visaServiceType, setVisaServiceType] = useState("");
+  const showStudentFields = isStudentVisaService(visaServiceType);
 
   return (
     <section className="rounded-lg border bg-white p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 className="text-sm font-semibold">Add Student or Client</h2>
+          <h2 className="text-sm font-semibold">Add Client</h2>
           <p className="mt-1 text-xs text-gray-600">{description}</p>
         </div>
         {success ? (
           <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-            {successType === "client" ? "Client" : "Student"} added
+            Client added
           </span>
         ) : null}
       </div>
@@ -45,77 +57,107 @@ export function StudentClientIntakeForm({
         </p>
       ) : null}
 
-      <div className="mt-4 rounded-md border border-gray-200 bg-gray-50 p-2">
-        <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Choose intake type">
-          {(["student", "client"] as const).map((type) => {
-            const active = intakeType === type;
-            const label = type === "client" ? "Client" : "Student";
-            return (
-              <button
-                key={type}
-                type="button"
-                role="radio"
-                aria-checked={active}
-                onClick={() => setIntakeType(type)}
-                className={`rounded-md border px-3 py-2 text-left text-sm font-medium transition ${
-                  active
-                    ? "border-black bg-white text-black shadow-sm"
-                    : "border-transparent text-gray-600 hover:border-gray-300 hover:bg-white"
-                }`}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      <form action={action} className="mt-4 grid gap-3 rounded-md border border-gray-200 p-4 md:grid-cols-2">
+        <label className="text-xs font-medium text-gray-700 md:col-span-2">
+          Service required *
+          <select
+            name="visaServiceType"
+            required
+            value={visaServiceType}
+            onChange={(event) => setVisaServiceType(event.target.value)}
+            className={commonInputClass}
+          >
+            <option value="" disabled>
+              Select a service...
+            </option>
+            {VISA_SERVICE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs font-medium text-gray-700">
+          Name *
+          <input name="name" required minLength={2} maxLength={100} className={commonInputClass} />
+        </label>
+        <label className="text-xs font-medium text-gray-700">
+          Email *
+          <input name="email" type="email" required className={commonInputClass} />
+        </label>
+        <label className="text-xs font-medium text-gray-700">
+          Phone *
+          <input name="phone" required className={commonInputClass} />
+        </label>
+        <label className="text-xs font-medium text-gray-700">
+          Country *
+          <input name="country" required className={commonInputClass} />
+        </label>
+        <label className="text-xs font-medium text-gray-700">
+          City *
+          <input name="city" required className={commonInputClass} />
+        </label>
 
-      {intakeType ? (
-        <form action={action} className="mt-4 grid gap-3 rounded-md border border-gray-200 p-4 md:grid-cols-2">
-          <input type="hidden" name="recordType" value={intakeType} />
-          <label className="text-xs font-medium text-gray-700">
-            Name
-            <input name="name" required minLength={2} maxLength={100} className={commonInputClass} />
-          </label>
-          <label className="text-xs font-medium text-gray-700">
-            Email
-            <input name="email" type="email" required className={commonInputClass} />
-          </label>
-          <label className="text-xs font-medium text-gray-700">
-            Phone
-            <input name="phone" required className={commonInputClass} />
-          </label>
-          <label className="text-xs font-medium text-gray-700">
-            Country
-            <input name="country" required className={commonInputClass} />
-          </label>
-          <label className="text-xs font-medium text-gray-700">
-            City
-            <input name="city" required className={commonInputClass} />
-          </label>
-          <label className="text-xs font-medium text-gray-700">
-            {isClient ? "Service required" : "Course"}
-            <input name="course" required className={commonInputClass} />
-          </label>
-          <label className="text-xs font-medium text-gray-700">
-            {isClient ? "Visa type" : "Intake"}
-            <input name="intake" required className={commonInputClass} />
-          </label>
-          <label className="text-xs font-medium text-gray-700">
-            Current education
-            <input name="currentEducation" required className={commonInputClass} />
-          </label>
-          <label className="text-xs font-medium text-gray-700 md:col-span-2">
-            Notes
-            <textarea name="notes" rows={3} className={commonInputClass} />
-          </label>
-          <div className="md:col-span-2">
-            <button type="submit" className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white">
-              Add {selectedLabel} and assign to me
-            </button>
-          </div>
-        </form>
-      ) : null}
+        {showStudentFields ? (
+          <>
+            <label className="text-xs font-medium text-gray-700">
+              Current education *
+              <select name="currentEducation" required defaultValue="" className={commonInputClass}>
+                <option value="" disabled>
+                  Select...
+                </option>
+                {EDUCATION_LEVEL_OPTIONS.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs font-medium text-gray-700">
+              Target course *
+              <input name="course" required className={commonInputClass} />
+            </label>
+            <label className="text-xs font-medium text-gray-700 md:col-span-2">
+              Preferred intake *
+              <select name="intake" required defaultValue="" className={commonInputClass}>
+                <option value="" disabled>
+                  Select intake...
+                </option>
+                {getUpcomingIntakeOptions().map((intake) => (
+                  <option key={intake} value={intake}>
+                    {intake}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        ) : null}
+
+        <label className="text-xs font-medium text-gray-700">
+          English test type
+          <select name="englishTestType" defaultValue="" className={commonInputClass}>
+            <option value="">N/A</option>
+            {ENGLISH_TEST_TYPES.map((testType) => (
+              <option key={testType} value={testType}>
+                {testType}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs font-medium text-gray-700">
+          English test score
+          <input name="englishTestScore" placeholder="e.g. 6.5" className={commonInputClass} />
+        </label>
+        <label className="text-xs font-medium text-gray-700 md:col-span-2">
+          Notes
+          <textarea name="notes" rows={3} className={commonInputClass} />
+        </label>
+        <div className="md:col-span-2">
+          <button type="submit" className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white">
+            Add client and assign to me
+          </button>
+        </div>
+      </form>
     </section>
   );
 }

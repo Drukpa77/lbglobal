@@ -7,8 +7,15 @@ export const CONTRIBUTION_STAGE_WEIGHT = 70;
 export const CONTRIBUTION_DOC_WEIGHT = 15;
 export const CONTRIBUTION_TASK_WEIGHT = 15;
 const DOC_TARGET_PER_CASE = 10;
-const DONE_TASK_TARGET_PER_CASE = 10;
+const CASE_WORK_TARGET_PER_CASE = 12;
 const TERMINAL_STAGE_RANK = caseStageOrder.length;
+
+/** Relative weights inside the task (case work) pool. */
+const DONE_TASK_UNITS = 1;
+const OPEN_ASSIGNED_TASK_UNITS = 0.6;
+const ASSIGNMENT_ACTIVITY_UNITS = 0.5;
+const TASK_ACTIVITY_UNITS = 0.25;
+const ACTIVE_TEAM_UNITS = 0.35;
 
 export type ContributionRow = {
   userId: string;
@@ -21,13 +28,20 @@ export type ContributionRow = {
   totalPts: number;
   stageCount: number;
   docCount: number;
+  /** Weighted case-work units (tasks, team, and case actions combined). */
   taskCount: number;
+  doneTaskCount: number;
+  openTaskCount: number;
+  caseActionCount: number;
+  teamSlotCount: number;
 };
 
 export type ContributionTotals = {
   stageMoves: number;
   docs: number;
   doneTasks: number;
+  openAssignedTasks: number;
+  caseWorkUnits: number;
 };
 
 export type ContributionResult = {
@@ -39,7 +53,8 @@ export type ContributionResult = {
  * Compute weighted per-user contribution scores across three pools:
  *   - Stage pool (70 pts): based on net forward stage progress from CASE_STAGE logs
  *   - Document pool (15 pts): split equally across every uploaded document
- *   - Task pool (15 pts): split equally across every task completed by a user
+ *   - Task pool (15 pts): case work — completed tasks, open assigned tasks, team
+ *     membership, and ASSIGNMENT / TASK activity on the case
  *
  * Pools are fixed; if a pool has zero items it stays unallocated (no auto-rebalance).
  *
@@ -50,7 +65,18 @@ export async function getContributions(params?: {
 }): Promise<ContributionResult> {
   const { studentProfileId } = params ?? {};
 
-  const [stageEvents, docGroups, taskGroups, assignedTeam, scopedCaseCountRaw] = await Promise.all([
+  const caseScope = studentProfileId ? { targetStudentProfileId: studentProfileId } : {};
+
+  const [
+    stageEvents,
+    docGroups,
+    doneTaskGroups,
+    openTaskGroups,
+    caseActionGroups,
+    assignmentActionGroups,
+    assignedTeam,
+    scopedCaseCountRaw,
+  ] = await Promise.all([
     prisma.activityLog.findMany({
       where: {
         entityType: "CASE_STAGE",
@@ -75,6 +101,30 @@ export async function getContributions(params?: {
         status: "DONE",
         completedById: { not: null },
         ...(studentProfileId ? { studentProfileId } : {}),
+      },
+      _count: { _all: true },
+    }),
+    prisma.task.groupBy({
+      by: ["assigneeId"],
+      where: {
+        status: { not: "DONE" },
+        ...(studentProfileId ? { studentProfileId } : {}),
+      },
+      _count: { _all: true },
+    }),
+    prisma.activityLog.groupBy({
+      by: ["actorId"],
+      where: {
+        ...caseScope,
+        entityType: { in: ["ASSIGNMENT", "TASK"] },
+      },
+      _count: { _all: true },
+    }),
+    prisma.activityLog.groupBy({
+      by: ["actorId"],
+      where: {
+        ...caseScope,
+        entityType: "ASSIGNMENT",
       },
       _count: { _all: true },
     }),
@@ -111,8 +161,65 @@ export async function getContributions(params?: {
     (sum, row) => sum + (row._count?._all ?? 0),
     0,
   );
-  const totalDoneTasks = taskGroups.reduce(
+  const totalDoneTasks = doneTaskGroups.reduce(
     (sum, row) => sum + (row._count?._all ?? 0),
+    0,
+  );
+  const totalOpenAssignedTasks = openTaskGroups.reduce(
+    (sum, row) => sum + (row._count?._all ?? 0),
+    0,
+  );
+  const totalCaseActions = caseActionGroups.reduce(
+    (sum, row) => sum + (row._count?._all ?? 0),
+    0,
+  );
+
+  const caseWorkUnitsByUser = new Map<string, number>();
+  const doneTaskCountByUser = new Map<string, number>();
+  const openTaskCountByUser = new Map<string, number>();
+  const caseActionCountByUser = new Map<string, number>();
+  const teamSlotCountByUser = new Map<string, number>();
+
+  function addCaseWork(userId: string, units: number) {
+    if (!userId || units <= 0) return;
+    caseWorkUnitsByUser.set(userId, (caseWorkUnitsByUser.get(userId) ?? 0) + units);
+  }
+
+  for (const group of doneTaskGroups) {
+    if (!group.completedById) continue;
+    const count = group._count?._all ?? 0;
+    doneTaskCountByUser.set(group.completedById, count);
+    addCaseWork(group.completedById, count * DONE_TASK_UNITS);
+  }
+
+  for (const group of openTaskGroups) {
+    const count = group._count?._all ?? 0;
+    openTaskCountByUser.set(group.assigneeId, count);
+    addCaseWork(group.assigneeId, count * OPEN_ASSIGNED_TASK_UNITS);
+  }
+
+  for (const group of caseActionGroups) {
+    const count = group._count?._all ?? 0;
+    caseActionCountByUser.set(group.actorId, count);
+    addCaseWork(group.actorId, count * TASK_ACTIVITY_UNITS);
+  }
+
+  for (const assignment of assignedTeam) {
+    teamSlotCountByUser.set(
+      assignment.assignedToId,
+      (teamSlotCountByUser.get(assignment.assignedToId) ?? 0) + 1,
+    );
+    addCaseWork(assignment.assignedToId, ACTIVE_TEAM_UNITS);
+  }
+
+  // ASSIGNMENT logs are weighted slightly higher than generic TASK logs (already in caseActionGroups).
+  for (const group of assignmentActionGroups) {
+    const extra = (group._count?._all ?? 0) * (ASSIGNMENT_ACTIVITY_UNITS - TASK_ACTIVITY_UNITS);
+    if (extra > 0) addCaseWork(group.actorId, extra);
+  }
+
+  const totalCaseWorkUnits = Array.from(caseWorkUnitsByUser.values()).reduce(
+    (sum, units) => sum + units,
     0,
   );
   const scopedCaseCount = Math.max(scopedCaseCountRaw, 1);
@@ -122,16 +229,14 @@ export async function getContributions(params?: {
   );
   const docDenominator = Math.max(totalDocs, scopedCaseCount * DOC_TARGET_PER_CASE);
   const taskDenominator = Math.max(
-    totalDoneTasks,
-    scopedCaseCount * DONE_TASK_TARGET_PER_CASE,
+    totalCaseWorkUnits,
+    scopedCaseCount * CASE_WORK_TARGET_PER_CASE,
   );
 
   const userIdSet = new Set<string>();
   for (const actorId of stageProgressByActor.keys()) userIdSet.add(actorId);
   for (const row of docGroups) userIdSet.add(row.uploadedById);
-  for (const row of taskGroups) {
-    if (row.completedById) userIdSet.add(row.completedById);
-  }
+  for (const userId of caseWorkUnitsByUser.keys()) userIdSet.add(userId);
   for (const row of assignedTeam) userIdSet.add(row.assignedToId);
 
   const userIds = Array.from(userIdSet);
@@ -162,6 +267,10 @@ export async function getContributions(params?: {
         stageCount: 0,
         docCount: 0,
         taskCount: 0,
+        doneTaskCount: 0,
+        openTaskCount: 0,
+        caseActionCount: 0,
+        teamSlotCount: 0,
       };
       rowMap.set(userId, row);
     }
@@ -181,12 +290,14 @@ export async function getContributions(params?: {
     row.docPts = (count / docDenominator) * CONTRIBUTION_DOC_WEIGHT;
   }
 
-  for (const group of taskGroups) {
-    if (!group.completedById) continue;
-    const count = group._count?._all ?? 0;
-    const row = ensureRow(group.completedById);
-    row.taskCount = count;
-    row.taskPts = (count / taskDenominator) * CONTRIBUTION_TASK_WEIGHT;
+  for (const [userId, units] of caseWorkUnitsByUser.entries()) {
+    const row = ensureRow(userId);
+    row.taskCount = units;
+    row.doneTaskCount = doneTaskCountByUser.get(userId) ?? 0;
+    row.openTaskCount = openTaskCountByUser.get(userId) ?? 0;
+    row.caseActionCount = caseActionCountByUser.get(userId) ?? 0;
+    row.teamSlotCount = teamSlotCountByUser.get(userId) ?? 0;
+    row.taskPts = (units / taskDenominator) * CONTRIBUTION_TASK_WEIGHT;
   }
 
   for (const assignment of assignedTeam) {
@@ -205,6 +316,8 @@ export async function getContributions(params?: {
       stageMoves: totalStageMoves,
       docs: totalDocs,
       doneTasks: totalDoneTasks,
+      openAssignedTasks: totalOpenAssignedTasks,
+      caseWorkUnits: totalCaseWorkUnits,
     },
   };
 }

@@ -1,5 +1,17 @@
 import { CaseStage } from "@prisma/client";
 
+import { isStudentVisaService } from "@/lib/visa-services";
+
+/** Stages that apply only to student visa / study enrolment workflows */
+export const studentOnlyCaseStages: CaseStage[] = [
+  CaseStage.ENROLMENT_PROCESS,
+  CaseStage.CONDITIONAL_OFFER_LETTER,
+  CaseStage.UNCONDITIONAL_OFFER_LETTER,
+  CaseStage.TUITION_FEE_AND_OSHC_PAID,
+  CaseStage.COE_RECEIVED,
+  CaseStage.GTE_PROCESS,
+];
+
 export const caseStageOrder: CaseStage[] = [
   CaseStage.CONSULTATION_AND_DOCUMENTATION,
   CaseStage.RESEARCH_PROPOSAL,
@@ -83,16 +95,41 @@ export function isPostLodgment(stage: CaseStage): boolean {
   return stage === CaseStage.VISA_LODGMENT;
 }
 
+export function isStudentOnlyCaseStage(stage: CaseStage): boolean {
+  return studentOnlyCaseStages.includes(stage);
+}
+
+export function getCaseStageOrderForVisaService(
+  visaServiceType?: string | null,
+): CaseStage[] {
+  if (isStudentVisaService(visaServiceType)) {
+    return caseStageOrder;
+  }
+  return caseStageOrder.filter((stage) => !isStudentOnlyCaseStage(stage));
+}
+
+export function isCaseStageAllowedForVisaService(
+  stage: CaseStage,
+  visaServiceType?: string | null,
+): boolean {
+  if (isTerminalStage(stage)) return true;
+  return getCaseStageOrderForVisaService(visaServiceType).includes(stage);
+}
+
 /**
  * Suggests valid next stages from the current one based on the documented workflow.
  * The picker still allows any-to-any transition; this is just used for UI hints
  * (e.g. preselecting the most likely "next" choice).
  */
-export function getNextSuggestedStages(current: CaseStage): CaseStage[] {
-  const linearIdx = caseStageOrder.indexOf(current);
+export function getNextSuggestedStages(
+  current: CaseStage,
+  visaServiceType?: string | null,
+): CaseStage[] {
+  const order = getCaseStageOrderForVisaService(visaServiceType);
+  const linearIdx = order.indexOf(current);
 
   if (linearIdx >= 0) {
-    const next = caseStageOrder[linearIdx + 1];
+    const next = order[linearIdx + 1];
     const suggested: CaseStage[] = [];
     if (next) suggested.push(next);
     if (current === CaseStage.VISA_LODGMENT) {
@@ -102,7 +139,7 @@ export function getNextSuggestedStages(current: CaseStage): CaseStage[] {
       );
     }
     suggested.push(CaseStage.WITHDRAWN);
-    return suggested;
+    return suggested.filter((stage) => isCaseStageAllowedForVisaService(stage, visaServiceType));
   }
 
   // Already in a terminal stage
@@ -112,12 +149,16 @@ export function getNextSuggestedStages(current: CaseStage): CaseStage[] {
   return [];
 }
 
-export function getStageProgressPercent(stage: CaseStage): number {
+export function getStageProgressPercent(
+  stage: CaseStage,
+  visaServiceType?: string | null,
+): number {
   if (stage === CaseStage.VISA_GRANTED) return 100;
   if (stage === CaseStage.WITHDRAWN || stage === CaseStage.VISA_REFUSED || stage === CaseStage.AAT_CASE) {
     return 100;
   }
-  const idx = caseStageOrder.indexOf(stage);
+  const order = getCaseStageOrderForVisaService(visaServiceType);
+  const idx = order.indexOf(stage);
   if (idx < 0) return 0;
-  return Math.round(((idx + 1) / caseStageOrder.length) * 100);
+  return Math.round(((idx + 1) / order.length) * 100);
 }
