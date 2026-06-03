@@ -96,6 +96,19 @@ const allowedDocumentMime = new Set([
   "image/png",
   "image/webp",
   "image/gif",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]);
+
+const allowedDocumentExtensions = new Set([
+  ".pdf",
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".webp",
+  ".gif",
+  ".doc",
+  ".docx",
 ]);
 
 export default async function StudentProfileManagementPage(props: { params: Params; searchParams: SearchParams }) {
@@ -2736,9 +2749,11 @@ async function uploadStudentDocumentAction(formData: FormData) {
   if (file.size > MAX_STUDENT_DOCUMENT_UPLOAD_BYTES) {
     redirect(`/dashboard/students/${studentId}?tab=tasks&uploadError=file-too-large`);
   }
-  if (!allowedDocumentMime.has(file.type)) {
+  const ext = documentUploadExtension(file);
+  if (!isAllowedDocumentUpload(file, ext)) {
     redirect(`/dashboard/students/${studentId}?tab=tasks&uploadError=invalid-type`);
   }
+  const mimeType = documentUploadMimeType(file, ext);
 
   const studentProfile = await prisma.studentProfile.findUnique({
     where: { userId: studentId },
@@ -2762,14 +2777,13 @@ async function uploadStudentDocumentAction(formData: FormData) {
 
   const bytes = await file.arrayBuffer();
   const buffer = Buffer.from(bytes);
-  const ext = path.extname(file.name) || mimeToExt(file.type);
   const sanitizedName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
   const relativePath = `student-docs/${studentId}/${sanitizedName}`;
   let publicPath: string;
   try {
     publicPath = await uploadBufferToStorage({
       buffer,
-      mimeType: file.type,
+      mimeType,
       blobPath: relativePath,
       localRelativePath: relativePath,
     });
@@ -2801,7 +2815,7 @@ async function uploadStudentDocumentAction(formData: FormData) {
         title,
         originalFileName: file.name,
         storagePath: publicPath,
-        mimeType: file.type,
+        mimeType,
         sizeBytes: file.size,
       },
     });
@@ -2843,9 +2857,11 @@ async function uploadReplacementDocumentAction(formData: FormData) {
   if (file.size > MAX_STUDENT_DOCUMENT_UPLOAD_BYTES) {
     redirect(`/dashboard/students/${studentId}?tab=tasks&uploadError=file-too-large`);
   }
-  if (!allowedDocumentMime.has(file.type)) {
+  const ext = documentUploadExtension(file);
+  if (!isAllowedDocumentUpload(file, ext)) {
     redirect(`/dashboard/students/${studentId}?tab=tasks&uploadError=invalid-type`);
   }
+  const mimeType = documentUploadMimeType(file, ext);
 
   const document = await prisma.studentDocument.findUnique({
     where: { id: documentId },
@@ -2876,14 +2892,13 @@ async function uploadReplacementDocumentAction(formData: FormData) {
 
   const bytes = await file.arrayBuffer();
   const buffer = Buffer.from(bytes);
-  const ext = path.extname(file.name) || mimeToExt(file.type);
   const sanitizedName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
   const relativePath = `student-docs/${studentId}/${sanitizedName}`;
   let publicPath: string;
   try {
     publicPath = await uploadBufferToStorage({
       buffer,
-      mimeType: file.type,
+      mimeType,
       blobPath: relativePath,
       localRelativePath: relativePath,
     });
@@ -2905,7 +2920,7 @@ async function uploadReplacementDocumentAction(formData: FormData) {
         title,
         originalFileName: file.name,
         storagePath: publicPath,
-        mimeType: file.type,
+        mimeType,
         sizeBytes: file.size,
         verificationStatus: "PENDING",
         notes: document.returnedNote
@@ -4472,11 +4487,36 @@ function parseOptionalDate(value: string) {
 
 function mimeToExt(mime: string) {
   if (mime.includes("pdf")) return ".pdf";
+  if (mime.includes("officedocument.wordprocessingml.document")) return ".docx";
+  if (mime.includes("msword")) return ".doc";
   if (mime.includes("png")) return ".png";
   if (mime.includes("jpeg") || mime.includes("jpg")) return ".jpg";
   if (mime.includes("webp")) return ".webp";
   if (mime.includes("gif")) return ".gif";
   return ".bin";
+}
+
+function documentUploadExtension(file: File) {
+  const ext = path.extname(file.name).toLowerCase();
+  return ext || mimeToExt(file.type);
+}
+
+function isAllowedDocumentUpload(file: File, ext = documentUploadExtension(file)) {
+  return allowedDocumentMime.has(file.type) || allowedDocumentExtensions.has(ext);
+}
+
+function documentUploadMimeType(file: File, ext = documentUploadExtension(file)) {
+  if (file.type) return file.type;
+  if (ext === ".doc") return "application/msword";
+  if (ext === ".docx") {
+    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  }
+  if (ext === ".pdf") return "application/pdf";
+  if (ext === ".png") return "image/png";
+  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+  if (ext === ".webp") return "image/webp";
+  if (ext === ".gif") return "image/gif";
+  return "application/octet-stream";
 }
 
 function sanitizeLeadStatus(status: LeadStatus): LeadStatus {

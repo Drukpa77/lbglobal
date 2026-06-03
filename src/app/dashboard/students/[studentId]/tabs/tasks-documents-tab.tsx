@@ -382,7 +382,7 @@ export function TasksDocumentsTab({
       <section className="scroll-mt-24 rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">Documents</h2>
         <p className="mt-1 text-sm text-slate-600">
-          PDF or image, up to about {MAX_STUDENT_DOCUMENT_UPLOAD_MB} MB per file (hosted upload limit).
+          PDF, Word document, or image, up to about {MAX_STUDENT_DOCUMENT_UPLOAD_MB} MB per file (hosted upload limit).
         </p>
         <FileSizeLimitedForm
           action={uploadStudentDocumentAction}
@@ -410,7 +410,7 @@ export function TasksDocumentsTab({
             name="file"
             type="file"
             required
-            accept=".pdf,image/*"
+            accept=".pdf,.doc,.docx,image/*"
             className="rounded-lg border border-slate-300 px-4 py-2.5 text-base file:mr-4 file:rounded-lg file:border-0 file:bg-slate-100 file:px-4 file:py-2 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-200"
           />
           <button
@@ -625,7 +625,7 @@ export function TasksDocumentsTab({
                                   name="file"
                                   type="file"
                                   required
-                                  accept=".pdf,image/*"
+                                  accept=".pdf,.doc,.docx,image/*"
                                   className="rounded-lg border border-emerald-300 px-3 py-1.5 text-sm text-emerald-900 file:mr-3 file:rounded-lg file:border-0 file:bg-emerald-50 file:px-3 file:py-1 file:text-xs file:font-medium file:text-emerald-800 hover:file:bg-emerald-100"
                                 />
                                 <button
