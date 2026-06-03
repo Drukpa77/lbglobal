@@ -6,16 +6,9 @@ import { ServicesSection } from "@/components/home/sections/services-section";
 import { ProcessSection } from "@/components/home/sections/process-section";
 import { PartnersSection } from "@/components/home/sections/partners-section";
 import { AboutSection } from "@/components/home/sections/about-section";
+import { DestinationsSection } from "@/components/home/sections/destinations-section";
 import { UpdatesSection } from "@/components/home/sections/updates-section";
 import { TestimonialsSection } from "@/components/home/sections/testimonials-section";
-
-const DestinationsSection = dynamic(
-  () =>
-    import("@/components/home/sections/destinations-section").then(
-      (m) => m.DestinationsSection,
-    ),
-  { loading: () => <div className="h-20" /> },
-);
 
 const ContactSection = dynamic(
   () =>

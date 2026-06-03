@@ -144,6 +144,9 @@ export default async function ApplyPage(props: { searchParams: SearchParams }) {
                 <p className="mt-1 text-sm text-slate-600">
                   Tell us which service you need and our team will contact you with next steps.
                 </p>
+                <p className="mt-2 text-sm font-medium text-blue-800">
+                  Takes about 2 minutes — we respond within 1–2 business days.
+                </p>
               </div>
             </div>
             <Image

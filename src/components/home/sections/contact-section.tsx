@@ -1,9 +1,13 @@
-import { Mail, MapPin, Phone } from "lucide-react";
+import { Clock, Mail, MapPin, Phone } from "lucide-react";
 
 import { ContactForm } from "@/components/home/contact-form";
 import { offices } from "@/components/home/content";
 import { WHATSAPP_URL } from "@/lib/contact";
 import { SectionReveal } from "@/components/home/section-reveal";
+
+function mapsHref(address: string) {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+}
 
 export function ContactSection() {
   return (
@@ -39,22 +43,43 @@ export function ContactSection() {
                   <p className="mt-2 text-sm leading-relaxed text-slate-600">
                     {office.details}
                   </p>
-                  <div className="mt-3 space-y-2">
+                  <div className="mt-4 space-y-3">
+                    <div className="rounded-lg border border-rose-100 bg-rose-50/50 px-3 py-2.5">
+                      <p className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-rose-600">
+                        <Phone className="h-3.5 w-3.5" />
+                        Call us
+                      </p>
+                      <div className="space-y-1">
+                        {office.phones.map((phone) => (
+                          <a
+                            key={phone}
+                            href={`tel:${phone.replace(/[\s-]/g, "")}`}
+                            className="block text-base font-semibold text-blue-900 transition hover:text-rose-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2"
+                          >
+                            {phone}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
                     <p className="flex items-start gap-2 text-sm text-slate-600">
-                      <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" />
-                      {office.address}
+                      <Clock className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" />
+                      <span>
+                        <span className="font-medium text-slate-800">Hours: </span>
+                        {office.hours}
+                      </span>
                     </p>
-                    <p className="text-xs text-slate-500">{office.hours}</p>
                     <a
-                      href={`tel:${office.phone.replace(/\s/g, "")}`}
-                      className="flex items-center gap-2 text-sm text-slate-600 transition hover:text-blue-900"
+                      href={mapsHref(office.address)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-start gap-2 text-sm text-slate-600 transition hover:text-blue-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2"
                     >
-                      <Phone className="h-4 w-4 shrink-0 text-rose-500" />
-                      {office.phone}
+                      <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" />
+                      <span className="underline-offset-2 hover:underline">{office.address}</span>
                     </a>
                     <a
                       href={`mailto:${office.email}`}
-                      className="flex items-center gap-2 text-sm text-rose-500 transition hover:text-rose-600"
+                      className="flex items-center gap-2 text-sm text-rose-500 transition hover:text-rose-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2"
                     >
                       <Mail className="h-4 w-4 shrink-0 text-rose-500" />
                       {office.email}
@@ -69,7 +94,7 @@ export function ContactSection() {
                 href={WHATSAPP_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex w-full items-center justify-center gap-2 rounded bg-[#25D366] py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#20bd5a]"
+                className="flex w-full items-center justify-center gap-2 rounded bg-[#25D366] py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#20bd5a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2"
               >
                 <svg
                   className="h-5 w-5"

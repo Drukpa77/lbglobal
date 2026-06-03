@@ -1,3 +1,8 @@
+export const homeCta = {
+  primary: { href: "/apply", label: "Apply now" },
+  secondary: { href: "#process", label: "See how it works" },
+} as const;
+
 export const homeNavLinks = [
   { href: "#services", label: "Services" },
   { href: "#about", label: "About" },
@@ -6,14 +11,18 @@ export const homeNavLinks = [
   { href: "#contact", label: "Contact" },
 ] as const;
 
+/** One-line trust strip for hero (from trustStats, compact copy). */
+export const heroTrustLine =
+  "1,000+ students guided · 95%+ visa success · 2 offices · 1–2 day response";
+
 export const heroData = {
   eyebrow: "Admissions + Visa Execution",
   title: "Making Your Study Abroad",
   titleHighlight: "Journey a Success Story",
   subtitle:
     "We help students choose the right course, prepare stronger applications, and move through visa steps with confidence and practical timelines.",
-  primaryCta: { href: "/apply", label: "Book Free Assessment" },
-  secondaryCta: { href: "#process", label: "See How It Works" },
+  primaryCta: homeCta.primary,
+  secondaryCta: homeCta.secondary,
 };
 
 export const trustStats = [
@@ -148,7 +157,7 @@ export const offices = [
     address: "Thimphu, Kingdom of Bhutan",
     details:
       "Bhutan office offering free assessment, course-country counselling, document checks, SOP support, and visa application guidance.",
-    phone: "+975 7778 1399",
+    phones: ["+975 7778 1399", "+975 77 72 45 39"],
     email: "student@lbglobal.com",
     hours: "Mon–Fri, 9:00 AM – 5:00 PM (Bhutan Time)",
   },
@@ -158,7 +167,7 @@ export const offices = [
       "Level 5, Unit 32, 25 Walters Dr, Osborne Park, Perth, Western Australia 6017",
     details:
       "Perth-based team for enrolment follow-up, provider liaison, and onshore student support in Western Australia.",
-    phone: "0424 919 833",
+    phones: ["0451 106 077", "0424 919 833"],
     email: "student@lbglobal.com",
     hours: "Mon–Fri, 9:00 AM – 5:00 PM (AWST)",
   },

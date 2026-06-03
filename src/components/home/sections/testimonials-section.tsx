@@ -1,11 +1,57 @@
-import { Quote, Star } from "lucide-react";
+"use client";
+
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { ChevronLeft, ChevronRight, Quote, Star } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { testimonials } from "@/components/home/content";
 import { SectionReveal } from "@/components/home/section-reveal";
+import { useSectionInView } from "@/hooks/use-section-in-view";
+
+const AUTO_ADVANCE_MS = 6000;
+
+const focusRing =
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2";
 
 export function TestimonialsSection() {
+  const reduceMotion = useReducedMotion();
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const inView = useSectionInView(sectionRef);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
+
+  const active = testimonials[activeIndex];
+
+  const goTo = useCallback((index: number) => {
+    setActiveIndex(index);
+  }, []);
+
+  const goNext = useCallback(() => {
+    setActiveIndex((current) => (current + 1) % testimonials.length);
+  }, []);
+
+  const goPrev = useCallback(() => {
+    setActiveIndex(
+      (current) => (current - 1 + testimonials.length) % testimonials.length,
+    );
+  }, []);
+
+  useEffect(() => {
+    if (reduceMotion || isPaused || !inView) return;
+    const timer = window.setInterval(goNext, AUTO_ADVANCE_MS);
+    return () => window.clearInterval(timer);
+  }, [goNext, inView, isPaused, reduceMotion]);
+
   return (
-    <section id="testimonials" className="home-section-space bg-slate-50">
+    <section
+      ref={sectionRef}
+      id="testimonials"
+      className="home-section-space bg-slate-50"
+      onMouseEnter={() => setIsPaused(true)}
+      onMouseLeave={() => setIsPaused(false)}
+      onFocusCapture={() => setIsPaused(true)}
+      onBlurCapture={() => setIsPaused(false)}
+    >
       <div className="home-fluid-shell w-full">
         <SectionReveal>
           <div className="text-center">
@@ -22,42 +68,83 @@ export function TestimonialsSection() {
           </div>
         </SectionReveal>
 
-        <div className="mt-12 grid gap-6 md:grid-cols-3">
-          {testimonials.map((item, index) => (
-            <SectionReveal key={item.name} delay={index * 0.08}>
-              <article className="flex h-full flex-col rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-                {/* Stars */}
-                <div className="flex gap-0.5">
-                  {Array.from({ length: item.rating }).map((_, i) => (
-                    <Star
-                      key={i}
-                      className="h-4 w-4 fill-rose-500 text-rose-500"
-                    />
-                  ))}
-                </div>
-
-                {/* Quote icon */}
-                <Quote className="mt-4 h-7 w-7 text-blue-100" />
-
-                {/* Quote text */}
-                <p className="mt-2 flex-1 text-sm leading-relaxed text-slate-700">
-                  {item.quote}
-                </p>
-
-                {/* Author */}
-                <div className="mt-6 flex items-center gap-3 border-t border-slate-100 pt-4">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-rose-500 to-blue-600 text-sm font-bold text-white">
-                    {item.name.charAt(0)}
+        <SectionReveal delay={0.1}>
+          <div className="relative mx-auto mt-10 max-w-3xl">
+            <article className="min-h-[280px] rounded-2xl border border-slate-200 bg-white p-8 shadow-md md:p-10">
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.div
+                  key={active.name}
+                  initial={reduceMotion ? false : { opacity: 0, x: 16 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={reduceMotion ? undefined : { opacity: 0, x: -16 }}
+                  transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+                >
+                  <div className="flex gap-0.5">
+                    {Array.from({ length: active.rating }).map((_, i) => (
+                      <Star
+                        key={i}
+                        className="h-4 w-4 fill-rose-500 text-rose-500"
+                        aria-hidden
+                      />
+                    ))}
                   </div>
-                  <div>
-                    <p className="text-sm font-semibold text-blue-900">{item.name}</p>
-                    <p className="text-xs text-rose-500">{item.location}</p>
+                  <Quote className="mt-4 h-8 w-8 text-blue-100" aria-hidden />
+                  <p className="mt-3 text-lg leading-relaxed text-slate-700">
+                    &ldquo;{active.quote}&rdquo;
+                  </p>
+                  <div className="mt-8 flex items-center gap-3 border-t border-slate-100 pt-6">
+                    <div
+                      className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-rose-500 to-blue-600 text-base font-bold text-white"
+                      aria-hidden
+                    >
+                      {active.name.charAt(0)}
+                    </div>
+                    <div>
+                      <p className="font-bold text-blue-900">{active.name}</p>
+                      <p className="text-sm text-slate-500">{active.location}</p>
+                    </div>
                   </div>
-                </div>
-              </article>
-            </SectionReveal>
-          ))}
-        </div>
+                </motion.div>
+              </AnimatePresence>
+            </article>
+
+            <div className="mt-6 flex items-center justify-center gap-4">
+              <button
+                type="button"
+                onClick={goPrev}
+                className={`inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-rose-200 hover:text-blue-900 ${focusRing}`}
+                aria-label="Previous testimonial"
+              >
+                <ChevronLeft className="h-5 w-5" />
+              </button>
+              <div className="flex gap-2" role="tablist" aria-label="Testimonials">
+                {testimonials.map((item, index) => (
+                  <button
+                    key={item.name}
+                    type="button"
+                    role="tab"
+                    aria-selected={index === activeIndex}
+                    aria-label={`Show testimonial from ${item.name}`}
+                    onClick={() => goTo(index)}
+                    className={`h-2 rounded-full transition-all ${focusRing} ${
+                      index === activeIndex
+                        ? "w-8 bg-gradient-to-r from-rose-500 to-blue-600"
+                        : "w-2 bg-slate-300 hover:bg-slate-400"
+                    }`}
+                  />
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={goNext}
+                className={`inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-rose-200 hover:text-blue-900 ${focusRing}`}
+                aria-label="Next testimonial"
+              >
+                <ChevronRight className="h-5 w-5" />
+              </button>
+            </div>
+          </div>
+        </SectionReveal>
       </div>
     </section>
   );

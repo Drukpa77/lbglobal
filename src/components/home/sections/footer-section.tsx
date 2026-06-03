@@ -1,6 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 
+import { homeCta } from "@/components/home/content";
 import { WHATSAPP_MOBILE_DISPLAY, WHATSAPP_URL } from "@/lib/contact";
 
 const studentServices = [
@@ -20,7 +21,7 @@ const aboutLinks = [
 ];
 
 const quickLinks = [
-  { label: "Book Assessment", href: "/apply" },
+  { label: homeCta.primary.label, href: homeCta.primary.href },
   { label: "Newsletter", href: "/newsletter" },
   { label: "Contact Us", href: "#contact" },
   { label: "Sign In", href: "/login" },

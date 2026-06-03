@@ -1,12 +1,21 @@
+"use client";
+
+import { useRef } from "react";
+
 import { PartnerLogoMarquee } from "@/components/home/partner-logo-marquee";
 import { partnerLogosRowBottom, partnerLogosRowTop } from "@/components/home/partner-logos";
 import { SectionReveal } from "@/components/home/section-reveal";
+import { useSectionInView } from "@/hooks/use-section-in-view";
 
 export function PartnersSection() {
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const inView = useSectionInView(sectionRef);
+
   return (
     <section
+      ref={sectionRef}
       id="partners"
-      className="home-section-space relative overflow-hidden border-t border-slate-100 bg-gradient-to-b from-white via-slate-50/90 to-white"
+      className={`home-section-space relative overflow-hidden border-t border-slate-100 bg-gradient-to-b from-white via-slate-50/90 to-white ${inView ? "" : "partner-marquee--paused"}`}
       aria-labelledby="partners-heading"
     >
       <div
@@ -31,6 +40,7 @@ export function PartnersSection() {
               We collaborate with leading institutions and service providers across Australia and
               the region — giving you clearer pathways and stronger outcomes.
             </p>
+            <p className="mt-2 text-xs text-slate-500">Hover to pause</p>
           </div>
         </SectionReveal>
 
