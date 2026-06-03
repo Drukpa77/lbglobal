@@ -96,8 +96,12 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   const country = searchParams.country ?? "";
   const course = searchParams.course ?? "";
   const queueRaw = searchParams.queue ?? "all";
-  const queueFilter: "all" | "unassigned" | "overdue" | "needs_approval" =
-    queueRaw === "unassigned" || queueRaw === "overdue" || queueRaw === "needs_approval"
+  const queueFilter: "all" | "unassigned" | "my_cases" | "delegated" | "overdue" | "needs_approval" =
+    queueRaw === "unassigned" ||
+    queueRaw === "my_cases" ||
+    queueRaw === "delegated" ||
+    queueRaw === "overdue" ||
+    queueRaw === "needs_approval"
       ? queueRaw
       : "all";
   const stageRaw = (searchParams.stage ?? "") as CaseStage | "";
@@ -105,7 +109,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     stageRaw && (allCaseStages as string[]).includes(stageRaw) ? stageRaw : "";
   const manualStudentError =
     searchParams.manualError === "duplicate"
-      ? "A student or staff account already exists with that email."
+      ? "A client or staff account already exists with that email."
       : searchParams.manualError === "validation"
         ? "Please complete all required fields with valid details."
         : searchParams.manualError === "template"
@@ -114,17 +118,6 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   const manualStudentSuccess = searchParams.manualSuccess === "client";
   const manualStudentSuccessType = "client" as const;
 
-  const scopedWhere = buildSubmissionWhere({
-    role: session.user.role,
-    userId: session.user.id,
-    search,
-    status,
-    country,
-    course,
-    includeUnassignedForSubAdmin: true,
-  });
-
-  // Gate queries by tab — only fetch what the active tab actually needs
   const isOverviewTab = tab === "overview";
   const isStudentsTab = tab === "students";
   const isTasksTab = tab === "tasks";
@@ -133,6 +126,27 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   const needsSubmissions = isOverviewTab || isStudentsTab;
   const needsTeamData = isOverviewTab || isTeamTab;
   const needsApprovalData = isOverviewTab || isStudentsTab;
+
+  const overviewSubmissionWhere = buildSubmissionWhere({
+    role: session.user.role,
+    userId: session.user.id,
+    search,
+    status,
+    country,
+    course,
+    includeUnassignedForSubAdmin: true,
+  });
+  const studentsSubmissionWhere = buildSubmissionWhere({
+    role: session.user.role,
+    userId: session.user.id,
+    search,
+    status,
+    country,
+    course,
+    subAdminScope: session.user.role === "SUB_ADMIN" ? "all" : undefined,
+    includeUnassignedForSubAdmin: session.user.role === "ADMIN",
+  });
+  const activeSubmissionWhere = isStudentsTab ? studentsSubmissionWhere : overviewSubmissionWhere;
 
   const today = new Date();
   const trendWindowStart = new Date(today);
@@ -162,7 +176,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     await Promise.all([
       isOverviewTab ? getRemindersForUser(session.user.role as "ADMIN" | "SUB_ADMIN", session.user.id) : Promise.resolve([]),
       needsSubmissions ? prisma.questionnaireSubmission.findMany({
-        where: scopedWhere,
+        where: activeSubmissionWhere,
         include: {
           student: {
             include: {
@@ -174,7 +188,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                     select: {
                       id: true,
                       assignedToId: true,
-                      assignedTo: { select: { name: true, email: true } },
+                      assignedTo: { select: { name: true, email: true, role: true } },
                       assignedBy: { select: { name: true, email: true } },
                     },
                   },
@@ -182,15 +196,16 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
               },
             },
           },
+          assignedSubAdmin: { select: { id: true, name: true, email: true } },
           template: true,
         },
         orderBy: { submittedAt: "desc" },
-        take: 50,
+        take: isStudentsTab ? 300 : 50,
       }) : Promise.resolve([]),
       // trendSubmissions (500 rows) only needed for the overview trend chart
       isOverviewTab ? prisma.questionnaireSubmission.findMany({
         where: {
-          ...scopedWhere,
+          ...overviewSubmissionWhere,
           submittedAt: { gte: trendWindowStart },
         },
         select: {
@@ -203,7 +218,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
       }) : Promise.resolve([]),
     isOverviewTab ? prisma.questionnaireSubmission.count({
       where: {
-        ...scopedWhere,
+        ...overviewSubmissionWhere,
         status: {
           in: ["SUBMITTED", "UNDER_REVIEW", "DOCS_REQUESTED"],
         },
@@ -211,7 +226,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     }) : Promise.resolve(0),
     isOverviewTab ? prisma.questionnaireSubmission.count({
       where: {
-        ...scopedWhere,
+        ...overviewSubmissionWhere,
         status: {
           in: ["OFFER_RECEIVED", "VISA_GRANTED", "ENROLLED"],
         },
@@ -334,7 +349,18 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   }));
   const stageTotal = stageCounts.reduce((sum, item) => sum + item.count, 0);
 
-  const assignedStudents = new Set(submissions.map((item) => item.studentId)).size;
+  const latestSubmissionPerStudent = dedupeLatestSubmissionPerStudent(submissions);
+  const assignedStudents = latestSubmissionPerStudent.length;
+  const myCaseCount = latestSubmissionPerStudent.filter(
+    (item) => item.assignedToId === session.user.id,
+  ).length;
+  const delegatedCaseCount = latestSubmissionPerStudent.filter((item) => {
+    const staffDelegations =
+      item.student.studentProfile?.assignments.filter(
+        (assignment) => assignment.assignedTo.role === "INTERNAL_STAFF",
+      ) ?? [];
+    return item.assignedToId === session.user.id && staffDelegations.length > 0;
+  }).length;
   const studentProfileIds = submissions
     .map((item) => item.student.studentProfile?.id)
     .filter((id): id is string => Boolean(id));
@@ -402,7 +428,6 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     return days >= 0 && days <= 90;
   }).length;
   const exportUrl = `/api/submissions/export?search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}&country=${encodeURIComponent(country)}&course=${encodeURIComponent(course)}`;
-  const latestSubmissionPerStudent = dedupeLatestSubmissionPerStudent(submissions);
   const visaExpiringSoonItems = latestSubmissionPerStudent.filter((item) => {
     const visaExpiryDate = item.student.studentProfile?.visaExpiryDate;
     if (!visaExpiryDate) return false;
@@ -457,11 +482,19 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     ...draftInvoiceProfiles.map((item) => item.studentProfileId),
     ...pendingDocumentProfiles.map((item) => item.studentProfileId),
   ]);
-  const filteredSubmissions = submissions.filter((submission) => {
+  const filteredSubmissions = latestSubmissionPerStudent.filter((submission) => {
     if (stageFilter && submission.student.studentProfile?.caseStage !== stageFilter) {
       return false;
     }
     if (queueFilter === "unassigned") return submission.assignedToId === null;
+    if (queueFilter === "my_cases") return submission.assignedToId === session.user.id;
+    if (queueFilter === "delegated") {
+      const staffDelegations =
+        submission.student.studentProfile?.assignments.filter(
+          (assignment) => assignment.assignedTo.role === "INTERNAL_STAFF",
+        ) ?? [];
+      return submission.assignedToId === session.user.id && staffDelegations.length > 0;
+    }
     if (queueFilter === "overdue") {
       const nextFollowUpDate = submission.student.studentProfile?.nextFollowUpDate;
       return nextFollowUpDate ? daysUntilDate(nextFollowUpDate, today) < 0 : false;
@@ -475,11 +508,15 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   const queueFilterLabel =
     queueFilter === "unassigned"
       ? "Unassigned Cases"
-      : queueFilter === "overdue"
-        ? "Overdue Follow-ups"
-        : queueFilter === "needs_approval"
-          ? "Needs Approval"
-          : "All Cases";
+      : queueFilter === "my_cases"
+        ? "My Cases"
+        : queueFilter === "delegated"
+          ? "Delegated to Staff"
+          : queueFilter === "overdue"
+            ? "Overdue Follow-ups"
+            : queueFilter === "needs_approval"
+              ? "Needs Approval"
+              : "All Clients";
   const managerReportUrl = `/api/sub-admin/report?queue=${encodeURIComponent(queueFilter)}&search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}&country=${encodeURIComponent(country)}&course=${encodeURIComponent(course)}`;
   const trendBuckets = buildWeeklyTrendBuckets(trendSubmissions);
   const avgReviewHours = calculateAverageReviewHours(trendSubmissions);
@@ -532,7 +569,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
       <DashboardTabBar
         tabs={[
           { id: "overview", label: "Overview" },
-          { id: "students", label: "My Cases", count: assignedStudents },
+          { id: "students", label: "Cases", count: assignedStudents },
           { id: "tasks", label: "Tasks", count: openTaskCount },
           { id: "team", label: "Team & Operations" },
           { id: "contributions", label: "Contributions" },
@@ -591,7 +628,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
               <div>
                 <h2 className="text-sm font-semibold">Case Stage Funnel</h2>
                 <p className="mt-1 text-xs text-gray-600">
-                  {stageTotal} student{stageTotal === 1 ? "" : "s"} across the workflow
+                  {stageTotal} client{stageTotal === 1 ? "" : "s"} across the workflow
                 </p>
               </div>
             </div>
@@ -735,9 +772,10 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
       {tab === "students" && (
         <div className="space-y-6">
           <section className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3">
-            <h2 className="text-sm font-semibold text-blue-950">My Cases</h2>
+            <h2 className="text-sm font-semibold text-blue-950">Cases</h2>
             <p className="mt-1 text-sm text-blue-900">
-              Showing students assigned to you plus unassigned enquiries you can claim. Admins see the full student count across the system.
+              Every active client in the system — unclaimed, claimed by you, claimed by another agent, or
+              delegated to case managers. Delegated cases stay on this list with a clear status badge.
             </p>
           </section>
 
@@ -752,10 +790,10 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
           ) : null}
 
           <div className="grid gap-4 md:grid-cols-5">
-            <StatCard title="My Case Students" value={String(assignedStudents)} />
+            <StatCard title="All Clients" value={String(assignedStudents)} />
+            <StatCard title="My Cases" value={String(myCaseCount)} />
+            <StatCard title="Delegated to Staff" value={String(delegatedCaseCount)} />
             <StatCard title="Pending Reviews" value={String(pendingReviews)} />
-            <StatCard title="Offers in Progress" value={String(offersInProgress)} />
-            <StatCard title="Open Tasks" value={String(openTaskCount)} />
             <StatCard title="Visa Expiring <=90d" value={String(visaExpiringSoon)} />
           </div>
 
@@ -764,9 +802,11 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
               <h2 className="text-sm font-semibold">Saved Triage Filters</h2>
               <p className="text-xs text-gray-600">Current: {queueFilterLabel}</p>
             </div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-              <QueueFilterButton label="All Cases" queue="all" current={queueFilter} tab="students" />
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              <QueueFilterButton label="All Clients" queue="all" current={queueFilter} tab="students" />
               <QueueFilterButton label="Unassigned" queue="unassigned" current={queueFilter} tab="students" />
+              <QueueFilterButton label="My Cases" queue="my_cases" current={queueFilter} tab="students" />
+              <QueueFilterButton label="Delegated" queue="delegated" current={queueFilter} tab="students" />
               <QueueFilterButton label="Overdue" queue="overdue" current={queueFilter} tab="students" />
               <QueueFilterButton label="Needs Approval" queue="needs_approval" current={queueFilter} tab="students" />
             </div>
@@ -803,41 +843,41 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
           </section>
 
           <section className="rounded-lg border bg-white p-4">
-            <h2 className="text-sm font-semibold">Students Categorized by Priority</h2>
+            <h2 className="text-sm font-semibold">Cases categorized by priority</h2>
             <p className="mt-1 text-xs text-gray-600">
-              Click any student to open profile and update details.
+              Click any client to open profile and update details.
             </p>
             <div className="mt-3 max-h-[28rem] overflow-y-auto pr-1">
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 <CategoryCard
                   title="Visa Expiring Soon (<=90d)"
                   items={visaExpiringSoonItems}
-                  emptyLabel="No students with upcoming visa expiry."
+                  emptyLabel="No clients with upcoming visa expiry."
                 />
                 <CategoryCard
                   title="Auto Follow-up (Visa or follow-up in 4-5 months)"
                   items={autoFollowUpItems}
-                  emptyLabel="No students currently in the 4-5 month follow-up window."
+                  emptyLabel="No clients currently in the 4-5 month follow-up window."
                 />
                 <CategoryCard
                   title="Pending Review"
                   items={pendingItems}
-                  emptyLabel="No students in pending stage."
+                  emptyLabel="No clients in pending stage."
                 />
                 <CategoryCard
                   title="Offer In Progress"
                   items={offerInProgressItems}
-                  emptyLabel="No students in offer/visa processing stage."
+                  emptyLabel="No clients in offer/visa processing stage."
                 />
                 <CategoryCard
                   title="Enrolled"
                   items={enrolledItems}
-                  emptyLabel="No enrolled students in this view."
+                  emptyLabel="No enrolled clients in this view."
                 />
                 <CategoryCard
                   title="Rejected"
                   items={rejectedItems}
-                  emptyLabel="No rejected students in this view."
+                  emptyLabel="No rejected clients in this view."
                 />
               </div>
             </div>
@@ -889,7 +929,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
 
           <div className="rounded-lg border bg-white p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold">Assigned Submissions</h2>
+              <h2 className="text-sm font-semibold">Case list</h2>
               <p className="text-xs text-gray-600">
                 {filteredSubmissions.length} results · filter: {queueFilterLabel}
               </p>
@@ -922,12 +962,18 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                 <div className="max-h-96 space-y-3 overflow-y-auto pr-1">
                 {filteredSubmissions.map((submission) => {
                   const activeInternalDelegations =
-                    submission.student.studentProfile?.assignments ?? [];
+                    submission.student.studentProfile?.assignments.filter(
+                      (assignment) => assignment.assignedTo.role === "INTERNAL_STAFF",
+                    ) ?? [];
                   const activeInternalDelegationIds = new Set(
                     activeInternalDelegations.map((assignment) => assignment.assignedToId),
                   );
                   const showWorkloadSuggestionBadge =
                     activeInternalDelegationIds.size === 0 && Boolean(suggestedAssigneeId);
+                  const isUnclaimed = submission.assignedToId === null;
+                  const isMyCase = submission.assignedToId === session.user.id;
+                  const canManageCase =
+                    isAdminViewer || isMyCase || isUnclaimed;
 
                   return (
                   <article id={`submission-${submission.id}`} key={submission.id} className="rounded-md border border-gray-200 p-3">
@@ -950,6 +996,12 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                           <CaseReferenceLabel
                             caseReference={submission.student.studentProfile?.caseReference}
                           />
+                          <AgentStudentCaseBadge
+                            assignedToId={submission.assignedToId}
+                            assignedSubAdmin={submission.assignedSubAdmin}
+                            currentAgentId={session.user.id}
+                            hasStaffDelegation={activeInternalDelegations.length > 0}
+                          />
                         </div>
                         <p className="text-xs text-gray-600">
                           {formatSubmissionServiceSummary({
@@ -965,15 +1017,16 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                           Current status: {formatSubmissionStatus(submission.status)}
                         </p>
                         {activeInternalDelegations.length > 0 ? (
-                          <p className="text-xs text-gray-600">
-                            Assigned to internal staff:{" "}
+                          <p className="text-xs font-medium text-indigo-800">
+                            Delegated to case manager
+                            {activeInternalDelegations.length === 1 ? "" : "s"}:{" "}
                             {activeInternalDelegations
                               .map((assignment) => assignment.assignedTo.name ?? assignment.assignedTo.email)
                               .join(", ")}
                           </p>
-                        ) : (
-                          <p className="text-xs text-gray-600">Assigned to internal staff: Not assigned</p>
-                        )}
+                        ) : isMyCase ? (
+                          <p className="text-xs text-gray-600">Not delegated to case managers yet</p>
+                        ) : null}
                         {submission.student.studentProfile ? (
                           <p className="mt-1">
                             <span
@@ -997,13 +1050,25 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                             : "Not scheduled"}
                         </p>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <Link
                           href={`/dashboard/students/${submission.studentId}`}
                           className="rounded-md border border-gray-300 px-3 py-1 text-sm"
                         >
                           View profile
                         </Link>
+                        {isUnclaimed ? (
+                          <form action={claimSubmissionAction}>
+                            <input type="hidden" name="submissionId" value={submission.id} />
+                            <button
+                              type="submit"
+                              className="rounded-md border border-emerald-400 bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-900"
+                            >
+                              Claim case
+                            </button>
+                          </form>
+                        ) : null}
+                        {canManageCase ? (
                         <form action={updateSubmissionStatusAction} className="flex items-center gap-2">
                           <input type="hidden" name="submissionId" value={submission.id} />
                           <input type="hidden" name="anchorId" value={`submission-${submission.id}`} />
@@ -1022,7 +1087,8 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                             Update
                           </button>
                         </form>
-                        {allInternalStaff.length > 0 && submission.student.studentProfile ? (
+                        ) : null}
+                        {canManageCase && allInternalStaff.length > 0 && submission.student.studentProfile ? (
                           <form action={delegateStudentToInternalStaffAction} className="min-w-64 rounded-md border border-gray-200 p-2">
                             <input type="hidden" name="studentId" value={submission.studentId} />
                             <input type="hidden" name="anchorId" value={`submission-${submission.id}`} />
@@ -1166,7 +1232,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                       Assigned to {assignment.assignedTo.name ?? assignment.assignedTo.email}
                     </p>
                     <Link href={`/dashboard/students/${assignment.studentProfile.user.id}`} className="mt-1 inline-block text-xs text-blue-600 underline">
-                      Open student profile
+                      Open client profile
                     </Link>
                   </li>
                 ))}
@@ -1419,6 +1485,45 @@ function StatCard({ title, value, preview }: { title: string; value: string; pre
   );
 }
 
+function AgentStudentCaseBadge({
+  assignedToId,
+  assignedSubAdmin,
+  currentAgentId,
+  hasStaffDelegation,
+}: {
+  assignedToId: string | null;
+  assignedSubAdmin: { id: string; name: string | null; email: string } | null;
+  currentAgentId: string;
+  hasStaffDelegation: boolean;
+}) {
+  if (assignedToId === null) {
+    return (
+      <span className="inline-flex rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900">
+        Unclaimed
+      </span>
+    );
+  }
+  if (assignedToId === currentAgentId) {
+    return (
+      <span
+        className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+          hasStaffDelegation
+            ? "border-indigo-300 bg-indigo-50 text-indigo-900"
+            : "border-emerald-300 bg-emerald-50 text-emerald-900"
+        }`}
+      >
+        {hasStaffDelegation ? "Delegated" : "Your case"}
+      </span>
+    );
+  }
+  const agentLabel = assignedSubAdmin?.name?.trim() || assignedSubAdmin?.email || "Another agent";
+  return (
+    <span className="inline-flex rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-700">
+      Claimed · {agentLabel}
+    </span>
+  );
+}
+
 function QueueFilterButton({
   label,
   queue,
@@ -1426,8 +1531,8 @@ function QueueFilterButton({
   tab,
 }: {
   label: string;
-  queue: "all" | "unassigned" | "overdue" | "needs_approval";
-  current: "all" | "unassigned" | "overdue" | "needs_approval";
+  queue: "all" | "unassigned" | "my_cases" | "delegated" | "overdue" | "needs_approval";
+  current: "all" | "unassigned" | "my_cases" | "delegated" | "overdue" | "needs_approval";
   tab: string;
 }) {
   const base = `/dashboard/sub-admin?tab=${tab}`;

@@ -109,7 +109,7 @@ export function DeletedClientsTab({
                     <ArchiveField label="City" value={profile.city ?? "—"} />
                   </div>
                 ) : (
-                  <p className="mt-3 text-sm text-slate-600">No student profile on file.</p>
+                  <p className="mt-3 text-sm text-slate-600">No client profile on file.</p>
                 )}
 
                 {client.submissions.length > 0 ? (

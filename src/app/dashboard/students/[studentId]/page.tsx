@@ -141,16 +141,12 @@ export default async function StudentProfileManagementPage(props: { params: Para
   const leads: DisabledLead[] = [];
 
   if (session.user.role === "SUB_ADMIN") {
-    const assigned = await prisma.questionnaireSubmission.findFirst({
-      where: {
-        studentId,
-        OR: [{ assignedToId: session.user.id }, { assignedToId: null }],
-      },
+    const studentExists = await prisma.user.findFirst({
+      where: { id: studentId, role: "USER", deletedAt: null },
       select: { id: true },
     });
-
-    if (!assigned) {
-      redirect("/dashboard/sub-admin");
+    if (!studentExists) {
+      redirect("/dashboard/sub-admin?tab=students");
     }
   }
 
@@ -264,7 +260,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
           orderBy: [{ role: "asc" }, { name: "asc" }],
         })
       : Promise.resolve([]),
-    needsProfileData || needsOverviewData
+    studentProfileId !== "__none__"
       ? prisma.studentAssignment.findMany({
           where: { studentProfileId, isActive: true },
           include: {
@@ -351,9 +347,12 @@ export default async function StudentProfileManagementPage(props: { params: Para
       : Promise.resolve([]),
   ]);
 
+  const isAgentCaseOwner =
+    session.user.role === "SUB_ADMIN" && latestSubmission?.assignedToId === session.user.id;
+
   const canCreateTasks =
     session.user.role === "ADMIN" ||
-    session.user.role === "SUB_ADMIN" ||
+    isAgentCaseOwner ||
     Boolean(internalStaffAssignedForTasks);
 
   const documentsById = new Map(allDocuments.map((doc) => [doc.id, doc]));
@@ -421,7 +420,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
     currentAssignments.some((assignment) => assignment.assignedTo.id === session.user.id);
   const canManageStudentDelegation =
     session.user.role === "ADMIN" ||
-    session.user.role === "SUB_ADMIN" ||
+    isAgentCaseOwner ||
     isAssignedCaseManager;
   const activeAssigneeIds = new Set(currentAssignments.map((assignment) => assignment.assignedTo.id));
   const caseManagersForDelegation = delegationTeamUsers.filter(
@@ -431,6 +430,10 @@ export default async function StudentProfileManagementPage(props: { params: Para
     (u) => u.role === "SUB_ADMIN" && !activeAssigneeIds.has(u.id),
   );
   const tabBase = `/dashboard/students/${studentId}`;
+  const showDeleteStudentButton =
+    session.user.role === "ADMIN" ||
+    session.user.role === "SUB_ADMIN" ||
+    session.user.role === "INTERNAL_STAFF";
 
   return (
     <section className="space-y-8 text-slate-900">
@@ -443,7 +446,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-            {student.name ?? student.email} Profile
+            {student.name ?? student.email} — Client profile
           </h1>
           {profile?.caseReference ? (
             <p className="mt-1 text-sm font-medium text-slate-500">
@@ -451,12 +454,24 @@ export default async function StudentProfileManagementPage(props: { params: Para
             </p>
           ) : null}
         </div>
-        <Link
-          href={backLink}
-          className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
-        >
-          ← Back to dashboard
-        </Link>
+        <div className="flex flex-wrap items-center gap-3">
+          {showDeleteStudentButton ? (
+            <DeleteWithConfirm
+              formAction={deleteStudentAction}
+              confirmMessage="Move this client to Deleted Clients? You can restore them later from the Deleted Clients tab (admins can permanently delete)."
+              buttonLabel="Delete Client"
+              buttonClassName="rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50"
+            >
+              <input type="hidden" name="studentId" value={studentId} />
+            </DeleteWithConfirm>
+          ) : null}
+          <Link
+            href={backLink}
+            className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
+          >
+            ← Back to dashboard
+          </Link>
+        </div>
       </div>
 
       <nav className="sticky top-0 z-10 -mx-6 -mt-2 mb-6 flex flex-wrap gap-2 border-b border-slate-200 bg-white/95 px-6 py-3 backdrop-blur-sm">
@@ -777,16 +792,6 @@ export default async function StudentProfileManagementPage(props: { params: Para
           </SubmitButton>
         </div>
       </form>
-      <div className="mt-3">
-        <DeleteWithConfirm
-          formAction={deleteStudentAction}
-          confirmMessage="Permanently delete this student and all associated data? This cannot be undone."
-          buttonLabel="Delete Student"
-          buttonClassName="rounded-lg border border-red-200 bg-white px-5 py-2.5 text-sm font-medium text-red-600 transition hover:bg-red-50"
-        >
-          <input type="hidden" name="studentId" value={studentId} />
-        </DeleteWithConfirm>
-      </div>
 
       <div className="scroll-mt-24 rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">Questionnaire Answers</h2>
@@ -975,7 +980,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
               defaultValue="STUDENT"
               className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
             >
-              <option value="STUDENT">Student</option>
+              <option value="STUDENT">Client</option>
               <option value="PARENT">Parent/Sponsor</option>
               <option value="PARTNER">Partner</option>
               <option value="INSTITUTION">Institution</option>
@@ -1664,7 +1669,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
           <ContributionLeaderboard
             data={contributionData}
             title="Who contributed to this case"
-            subtitle="Stages 70% · Documents 15% · Tasks 15% — scoped to this student only."
+            subtitle="Stages 70% · Documents 15% · Tasks 15% — scoped to this client only."
           />
         ) : (
           <section className="rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
@@ -2182,8 +2187,8 @@ async function assignStudentDelegationAction(formData: FormData) {
       entityId: studentProfile.id,
       action:
         assignee.role === "SUB_ADMIN"
-          ? "Assigned student to agent"
-          : "Assigned student to case manager",
+          ? "Assigned client to agent"
+          : "Assigned client to case manager",
       metadata: { assigneeId: assignee.id, assigneeRole: assignee.role, notes },
     },
   });
@@ -2259,8 +2264,8 @@ async function removeStudentDelegationAction(formData: FormData) {
       entityId: assignment.id,
       action:
         assignment.assignedTo.role === "SUB_ADMIN"
-          ? "Removed agent from student delegation"
-          : "Removed case manager from student delegation",
+          ? "Removed agent from client delegation"
+          : "Removed case manager from client delegation",
       metadata: {
         assigneeId: assignment.assignedTo.id,
         assigneeRole: assignment.assignedTo.role,
@@ -3394,7 +3399,7 @@ async function addStudentThreadMessageAction(formData: FormData) {
     const created = await prisma.conversation.create({
       data: {
         type: "STUDENT_THREAD",
-        title: "Student Internal Thread",
+        title: "Client internal thread",
         studentProfileId: studentProfile.id,
         createdById: session.user.id,
       },
@@ -4474,7 +4479,7 @@ function formatCrmAccountType(type: CrmAccountType) {
   if (type === "INSTITUTION") return "Institution";
   if (type === "PARENT") return "Parent/Sponsor";
   if (type === "PARTNER") return "Partner";
-  return "Student";
+  return "Client";
 }
 
 function formatLeadStatus(status: LeadStatus) {

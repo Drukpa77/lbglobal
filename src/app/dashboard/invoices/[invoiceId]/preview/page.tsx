@@ -122,7 +122,7 @@ export default async function InvoiceBuilderPage(props: { params: Params }) {
             {invoice.status}
           </span>
           <Link href={studentReturnUrl} className="rounded-md border px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
-            Back to student
+            Back to client
           </Link>
         </div>
       </div>

@@ -68,7 +68,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
     filterRaw === "overdue" || filterRaw === "today" ? filterRaw : "all";
   const manualStudentError =
     searchParams.manualError === "duplicate"
-      ? "A student or staff account already exists with that email."
+      ? "A client or staff account already exists with that email."
       : searchParams.manualError === "validation"
         ? "Please complete all required fields with valid details."
         : searchParams.manualError === "template"
@@ -286,7 +286,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
       .map((profile) => ({
         id: `followup-${profile.id}`,
         kind: "FOLLOW_UP" as const,
-        title: "Student follow-up",
+        title: "Client follow-up",
         date: profile.nextFollowUpDate as Date,
         studentName: profile.user.name ?? profile.user.email,
         studentUserId: profile.user.id,
@@ -320,7 +320,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
           { id: "overview", label: "Overview" },
           { id: "queue", label: "Work Queue", count: filteredOpenTasks.length },
           { id: "tasks", label: "Tasks & Docs", count: tasks.length + filteredPendingDocuments.length },
-          { id: "students", label: "Students", count: assignments.length },
+          { id: "students", label: "Cases", count: assignments.length },
           { id: "contributions", label: "Contributions" },
           { id: "deleted-clients", label: "Deleted Clients", count: deletedClientsCount },
         ]}
@@ -364,7 +364,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
           <section className="rounded-lg border bg-white p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-sm font-semibold">Case Stage Pipeline</h2>
-              <p className="text-xs text-gray-500">Counts of students currently at each stage</p>
+              <p className="text-xs text-gray-500">Counts of clients currently at each stage</p>
             </div>
             <div className="mt-3">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Workflow stages</p>
@@ -491,7 +491,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
                         href={`/dashboard/students/${task.studentProfile.user.id}`}
                         className="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700"
                       >
-                        Open Student
+                        Open Client
                       </Link>
                     </div>
                   </li>
@@ -533,7 +533,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
                         href={`/dashboard/students/${profile.user.id}`}
                         className="mt-2 inline-block rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700"
                       >
-                        Open Student
+                        Open Client
                       </Link>
                     </li>
                   ))}
@@ -567,7 +567,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
                         href={`/dashboard/students/${item.studentUserId}`}
                         className="mt-2 inline-block rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700"
                       >
-                        Open Student
+                        Open Client
                       </Link>
                     </li>
                   ))}
@@ -641,7 +641,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
                           href={`/dashboard/students/${doc.studentProfile.user.id}`}
                           className="inline-block rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700"
                         >
-                          Open Student
+                          Open Client
                         </Link>
                       </div>
                     </li>
@@ -667,9 +667,9 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
           ) : null}
 
           <section className="rounded-lg border bg-white p-4">
-            <h2 className="text-sm font-semibold">Assigned Students</h2>
+            <h2 className="text-sm font-semibold">Your cases</h2>
             {assignments.length === 0 ? (
-              <p className="mt-2 text-sm text-gray-600">No delegated students yet.</p>
+              <p className="mt-2 text-sm text-gray-600">No delegated clients yet.</p>
             ) : (
               <ul className="mt-3 max-h-[32rem] space-y-2 overflow-y-auto pr-1">
                 {caseRows.map((row) => (
@@ -700,7 +700,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
                         href={`/dashboard/students/${row.assignment.studentProfile.user.id}`}
                         className="inline-block rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700"
                       >
-                        Open Student Profile
+                        Open Client Profile
                       </Link>
                       {row.latestInvoice?.status ? (
                         <span className="rounded-full bg-gray-100 px-2 py-1 text-[10px] font-semibold text-gray-700">
@@ -740,7 +740,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
                       href={`/dashboard/communication/${conversation.id}`}
                       className="block rounded-md border border-gray-200 px-3 py-2 text-sm transition hover:border-rose-300"
                     >
-                      <p className="font-medium">{conversation.title ?? "Student thread"}</p>
+                      <p className="font-medium">{conversation.title ?? "Client thread"}</p>
                       <p className="text-xs text-gray-600">
                         Updated {conversation.updatedAt.toLocaleString()}
                       </p>

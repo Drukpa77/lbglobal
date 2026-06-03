@@ -47,7 +47,7 @@ export default async function AdminLeadSourcesPage() {
       <div className="flex items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Lead Source Analytics Details</h1>
-          <p className="mt-1 text-sm text-gray-600">Students grouped by how they heard about L&B Global.</p>
+          <p className="mt-1 text-sm text-gray-600">Clients grouped by how they heard about L&B Global.</p>
         </div>
         <Link href="/dashboard/admin" className="rounded-md border px-3 py-2 text-sm">
           Back to admin dashboard

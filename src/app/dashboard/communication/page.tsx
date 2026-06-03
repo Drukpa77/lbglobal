@@ -164,7 +164,7 @@ export default async function CommunicationIndexPage() {
                     <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0 text-xs text-slate-500">
                       <span className="rounded-full bg-slate-100 px-2 py-0.5">{conversation.type}</span>
                       {conversation.studentProfile && (
-                        <span>Student: {conversation.studentProfile.user.name ?? conversation.studentProfile.user.email}</span>
+                        <span>Client: {conversation.studentProfile.user.name ?? conversation.studentProfile.user.email}</span>
                       )}
                       <span>{conversation._count.messages} messages</span>
                       <span>· Updated {conversation.updatedAt.toLocaleString()}</span>

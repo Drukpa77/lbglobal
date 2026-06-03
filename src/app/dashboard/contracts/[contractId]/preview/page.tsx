@@ -65,7 +65,7 @@ export default async function ContractPreviewPage(props: {
           href={`/dashboard/students/${studentUserId}`}
           className="rounded-md border px-3 py-2 text-sm"
         >
-          Back to student profile
+          Back to client profile
         </Link>
       </div>
 
@@ -100,7 +100,7 @@ export default async function ContractPreviewPage(props: {
             />
           </label>
           <p className="text-xs text-gray-500">
-            Tip: short paragraphs make the final contract easier for students to read.
+            Tip: short paragraphs make the final contract easier for clients to read.
           </p>
           <button
             type="submit"

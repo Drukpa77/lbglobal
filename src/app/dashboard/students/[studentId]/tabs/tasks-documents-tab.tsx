@@ -268,7 +268,7 @@ export function TasksDocumentsTab({
           </form>
         ) : viewerRole === "INTERNAL_STAFF" ? (
           <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-            You are not assigned to this student. Ask an administrator or case manager to assign you before you can create tasks here.
+            You are not assigned to this client. Ask an administrator or case manager to assign you before you can create tasks here.
           </p>
         ) : null}
         <div className="mt-4">

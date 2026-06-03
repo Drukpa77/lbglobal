@@ -413,7 +413,7 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
       <div>
         <h1 className="text-2xl font-semibold">Admin Analytics Dashboard</h1>
         <p className="mt-1 text-sm text-gray-600">
-          Full system visibility for students, agents, applications, and regional
+          Full system visibility for clients, agents, applications, and regional
           interest trends.
         </p>
       </div>
@@ -421,7 +421,7 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
       <DashboardTabBar
         tabs={[
           { id: "overview", label: "Overview" },
-          { id: "students", label: "Students", count: totalStudents },
+          { id: "students", label: "Clients", count: totalStudents },
           { id: "analytics", label: "Analytics" },
           { id: "staff", label: "Staff & Content" },
           { id: "contributions", label: "Contributions" },
@@ -454,7 +454,7 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
               <p className="text-xs text-gray-600">Core numbers at a glance</p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
-              <StatCard title="Total Students" value={String(totalStudents)} preview={totalStudentsPreview} />
+              <StatCard title="Total Clients" value={String(totalStudents)} preview={totalStudentsPreview} />
               <StatCard title="Submissions" value={String(submissionsCount)} preview={submissionsPreview} />
               <StatCard title="Active Sub Admins" value={String(activeSubAdmins)} preview={activeSubAdminsPreview} />
               <StatCard title="Internal Staff" value={String(internalStaffUsers.length)} preview={internalStaffPreview} />
@@ -477,7 +477,7 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
               <div>
                 <h2 className="text-sm font-semibold">Case Stage Funnel</h2>
                 <p className="mt-1 text-xs text-gray-600">
-                  All students grouped by their current workflow stage ({stageTotal} total)
+                  All clients grouped by their current workflow stage ({stageTotal} total)
                 </p>
               </div>
             </div>
@@ -579,41 +579,41 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
       {tab === "students" && (
         <div className="space-y-6">
           <section className="rounded-lg border bg-white p-4">
-            <h2 className="text-sm font-semibold">Students Categorized by Priority</h2>
+            <h2 className="text-sm font-semibold">Clients categorized by priority</h2>
             <p className="mt-1 text-xs text-gray-600">
-              Click any student to open profile and update details.
+              Click any client to open profile and update details.
             </p>
             <div className="mt-3 max-h-[28rem] overflow-y-auto pr-1">
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 <CategoryCard
                   title="Visa Expiring Soon (<=90d)"
                   items={visaExpiringSoonItems}
-                  emptyLabel="No students with upcoming visa expiry."
+                  emptyLabel="No clients with upcoming visa expiry."
                 />
                 <CategoryCard
                   title="Auto Follow-up (Visa or follow-up in 4-5 months)"
                   items={autoFollowUpItems}
-                  emptyLabel="No students currently in the 4-5 month follow-up window."
+                  emptyLabel="No clients currently in the 4-5 month follow-up window."
                 />
                 <CategoryCard
                   title="Pending Review"
                   items={pendingItems}
-                  emptyLabel="No students in pending stage."
+                  emptyLabel="No clients in pending stage."
                 />
                 <CategoryCard
                   title="Offer In Progress"
                   items={offerInProgressItems}
-                  emptyLabel="No students in offer/visa processing stage."
+                  emptyLabel="No clients in offer/visa processing stage."
                 />
                 <CategoryCard
                   title="Enrolled"
                   items={enrolledItems}
-                  emptyLabel="No enrolled students in this view."
+                  emptyLabel="No enrolled clients in this view."
                 />
                 <CategoryCard
                   title="Rejected"
                   items={rejectedItems}
-                  emptyLabel="No rejected students in this view."
+                  emptyLabel="No rejected clients in this view."
                 />
               </div>
             </div>
@@ -782,8 +782,8 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
                         ) : null}
                         <DeleteWithConfirm
                           formAction={deleteStudentFromAdminAction}
-                          confirmMessage="Delete this student and all associated records? This cannot be undone."
-                          buttonLabel="Delete student"
+                          confirmMessage="Move this client to Deleted Clients? You can restore them later (admins can permanently delete)."
+                          buttonLabel="Delete client"
                           buttonClassName="rounded-md border border-red-300 bg-red-50 px-3 py-1 text-sm text-red-700"
                         >
                           <input type="hidden" name="studentId" value={submission.studentId} />
@@ -1249,7 +1249,7 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
             <h2 className="text-sm font-semibold">Internal Delegation Snapshot</h2>
             <p className="mt-1 text-xs text-gray-600">Recent active assignments and workload hot spots.</p>
             {recentAssignments.length === 0 ? (
-              <p className="mt-2 text-sm text-gray-600">No active student-to-staff assignments yet.</p>
+              <p className="mt-2 text-sm text-gray-600">No active client-to-staff assignments yet.</p>
             ) : (
               <ul className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1">
                 {recentAssignments.map((assignment) => (
@@ -1277,7 +1277,7 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
                       href={`/dashboard/students/${assignment.studentProfile.user.id}`}
                       className="mt-1 inline-block text-xs text-blue-600 underline"
                     >
-                      Open student profile
+                      Open client profile
                     </Link>
                   </li>
                 ))}

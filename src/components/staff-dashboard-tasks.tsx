@@ -187,7 +187,7 @@ export function StaffDashboardTasks({
                         href={`/dashboard/students/${task.studentProfile.user.id}?tab=tasks`}
                         className="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700"
                       >
-                        Open Student
+                        Open Client
                       </Link>
                     </div>
                   </div>

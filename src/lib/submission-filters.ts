@@ -7,7 +7,10 @@ type FilterInput = {
   status?: string;
   country?: string;
   course?: string;
+  /** When true, agents also see unassigned enquiries (overview / legacy scope). */
   includeUnassignedForSubAdmin?: boolean;
+  /** When `"all"`, agents see every active student submission, not only their cases. */
+  subAdminScope?: "mine" | "all";
 };
 
 const validStatuses: SubmissionStatus[] = [
@@ -29,7 +32,7 @@ export function buildSubmissionWhere(input: FilterInput): Prisma.QuestionnaireSu
   const course = (input.course ?? "").trim();
   const status = (input.status ?? "").trim() as SubmissionStatus;
 
-  if (input.role === "SUB_ADMIN") {
+  if (input.role === "SUB_ADMIN" && input.subAdminScope !== "all") {
     if (input.includeUnassignedForSubAdmin) {
       clauses.push({ OR: [{ assignedToId: input.userId }, { assignedToId: null }] });
     } else {

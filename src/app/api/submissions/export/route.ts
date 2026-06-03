@@ -29,7 +29,8 @@ export async function GET(request: Request) {
     status,
     country,
     course,
-    includeUnassignedForSubAdmin: session.user.role === "SUB_ADMIN",
+    subAdminScope: session.user.role === "SUB_ADMIN" ? "all" : undefined,
+    includeUnassignedForSubAdmin: session.user.role === "ADMIN",
   });
 
   const submissions = await prisma.questionnaireSubmission.findMany({

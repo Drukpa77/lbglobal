@@ -16,7 +16,7 @@ const ROLE_LABELS: Record<string, string> = {
   ADMIN: "Admin",
   SUB_ADMIN: "Agent",
   INTERNAL_STAFF: "Case Manager",
-  USER: "Student",
+  USER: "Client",
   UNKNOWN: "Removed",
 };
 

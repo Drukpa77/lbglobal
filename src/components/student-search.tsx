@@ -63,7 +63,7 @@ export function StudentSearch() {
     <div ref={containerRef} className="relative">
       <input
         type="search"
-        placeholder="Find student or case ref..."
+        placeholder="Find client or case ref..."
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onFocus={() => results.length > 0 && setOpen(true)}

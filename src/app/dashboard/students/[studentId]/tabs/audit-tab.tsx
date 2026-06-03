@@ -13,7 +13,7 @@ export function AuditTab({ activityLogs }: { activityLogs: ActivityRow[] }) {
     <section id="audit" className="scroll-mt-24 rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
       <h2 className="text-lg font-semibold text-slate-900">Audit Log</h2>
       <p className="mt-1 text-sm text-slate-600">
-        History of changes on this student profile. See who did what and when.
+        History of changes on this client profile. See who did what and when.
       </p>
       {activityLogs.length === 0 ? (
         <p className="mt-4 text-sm text-slate-600">No activity recorded yet.</p>
