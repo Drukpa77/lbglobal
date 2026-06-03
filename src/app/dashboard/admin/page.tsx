@@ -696,6 +696,8 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
                             answers: submission.answers,
                             profileVisaServiceType:
                               submission.student.studentProfile?.visaServiceType,
+                            profileOtherServiceDescription:
+                              submission.student.studentProfile?.otherServiceDescription,
                           })}{" "}
                           | {submission.sourceCity ?? "Unknown city"},{" "}
                           {submission.sourceCountry ?? "Unknown country"}

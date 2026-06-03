@@ -5,7 +5,9 @@ import { useState } from "react";
 import { mergeIntakeOptions, getUpcomingIntakeOptions } from "@/lib/intake-options";
 import {
   ENGLISH_TEST_TYPES,
+  isOtherVisaService,
   isStudentVisaService,
+  OTHER_SERVICE_DESCRIPTION_KEY,
   parseLegacyEnglishTestScore,
   VISA_SERVICE_OPTIONS,
 } from "@/lib/visa-services";
@@ -23,6 +25,7 @@ const EDUCATION_LEVEL_OPTIONS = [
 
 type ProfileVisaServiceFieldsProps = {
   visaServiceType?: string | null;
+  otherServiceDescription?: string | null;
   currentEducationLevel?: string | null;
   targetCourse?: string | null;
   preferredIntake?: string | null;
@@ -32,6 +35,7 @@ type ProfileVisaServiceFieldsProps = {
 
 export function ProfileVisaServiceFields({
   visaServiceType: initialServiceType,
+  otherServiceDescription,
   currentEducationLevel,
   targetCourse,
   preferredIntake,
@@ -49,10 +53,11 @@ export function ProfileVisaServiceFields({
 
   const [visaServiceType, setVisaServiceType] = useState(initialServiceType ?? "");
   const showStudentFields = isStudentVisaService(visaServiceType);
+  const showOtherServiceField = isOtherVisaService(visaServiceType);
 
   return (
     <>
-      <label className="block text-sm font-medium text-slate-700">
+      <label className="block text-sm font-medium text-slate-700 sm:col-span-2">
         Service required
         <select
           name="visaServiceType"
@@ -68,6 +73,24 @@ export function ProfileVisaServiceFields({
           ))}
         </select>
       </label>
+
+      {showOtherServiceField ? (
+        <label className="block text-sm font-medium text-slate-700 sm:col-span-2">
+          Service requested
+          <textarea
+            name={OTHER_SERVICE_DESCRIPTION_KEY}
+            required
+            rows={3}
+            minLength={3}
+            maxLength={500}
+            defaultValue={otherServiceDescription ?? ""}
+            placeholder="Describe the service the client needs"
+            className={inputClass}
+          />
+        </label>
+      ) : (
+        <input type="hidden" name={OTHER_SERVICE_DESCRIPTION_KEY} value="" />
+      )}
 
       {showStudentFields ? (
         <>

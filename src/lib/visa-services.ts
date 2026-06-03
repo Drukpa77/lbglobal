@@ -5,10 +5,12 @@ export const VISA_SERVICE_OPTIONS = [
   { value: "PERMANENT_RESIDENCE", label: "Permanent Residence (PR)" },
   { value: "VISITOR_VISA", label: "Visitor Visa" },
   { value: "TOURIST_VISA", label: "Tourist Visa" },
-  { value: "OTHER", label: "Other Visa Services" },
+  { value: "OTHER", label: "Other Services" },
 ] as const;
 
 export type VisaServiceType = (typeof VISA_SERVICE_OPTIONS)[number]["value"];
+
+export const OTHER_SERVICE_DESCRIPTION_KEY = "otherServiceDescription";
 
 export const ENGLISH_TEST_TYPES = ["IELTS", "PTE", "TOEFL"] as const;
 
@@ -29,6 +31,23 @@ export function isVisaServiceType(value: string): value is VisaServiceType {
 
 export function isStudentVisaService(value: string | null | undefined) {
   return value === "STUDENT_VISA";
+}
+
+export function isOtherVisaService(value: string | null | undefined) {
+  return value === "OTHER";
+}
+
+export function getOtherServiceDescriptionFromAnswers(answers: unknown): string | null {
+  if (!answers || typeof answers !== "object") return null;
+  const raw = (answers as Record<string, unknown>)[OTHER_SERVICE_DESCRIPTION_KEY];
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+}
+
+export function resolveOtherServiceDescription(
+  profileValue?: string | null,
+  answers?: unknown,
+): string | null {
+  return profileValue?.trim() || getOtherServiceDescriptionFromAnswers(answers) || null;
 }
 
 export function getVisaServiceLabel(value: string | null | undefined) {
@@ -67,16 +86,40 @@ export function resolveVisaServiceType(
   return profileValue?.trim() || getVisaServiceFromAnswers(answers);
 }
 
+export function formatVisaServiceDisplay(input: {
+  visaServiceType?: string | null;
+  otherServiceDescription?: string | null;
+  answers?: unknown;
+}) {
+  const serviceType =
+    input.visaServiceType?.trim() ||
+    resolveVisaServiceType(undefined, input.answers);
+  const serviceLabel = getVisaServiceLabel(serviceType);
+  const otherDescription = resolveOtherServiceDescription(
+    input.otherServiceDescription,
+    input.answers,
+  );
+  if (isOtherVisaService(serviceType) && otherDescription) {
+    return `${serviceLabel} — ${otherDescription}`;
+  }
+  return serviceLabel;
+}
+
 export function formatSubmissionServiceSummary(input: {
   intendedCourse?: string | null;
   answers?: unknown;
   profileVisaServiceType?: string | null;
+  profileOtherServiceDescription?: string | null;
 }) {
   const serviceType = resolveVisaServiceType(input.profileVisaServiceType, input.answers);
-  const serviceLabel = getVisaServiceLabel(serviceType);
+  const serviceLabel = formatVisaServiceDisplay({
+    visaServiceType: serviceType,
+    otherServiceDescription: input.profileOtherServiceDescription,
+    answers: input.answers,
+  });
   if (serviceType && isStudentVisaService(serviceType)) {
     const course = input.intendedCourse?.trim();
-    return course ? `${serviceLabel} | ${course}` : serviceLabel;
+    return course ? `${getVisaServiceLabel(serviceType)} | ${course}` : getVisaServiceLabel(serviceType);
   }
   if (serviceLabel !== "—") return serviceLabel;
   return input.intendedCourse?.trim() || "Service not specified";

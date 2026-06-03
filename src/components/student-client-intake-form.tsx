@@ -5,7 +5,9 @@ import { useState } from "react";
 import { getUpcomingIntakeOptions } from "@/lib/intake-options";
 import {
   ENGLISH_TEST_TYPES,
+  isOtherVisaService,
   isStudentVisaService,
+  OTHER_SERVICE_DESCRIPTION_KEY,
   VISA_SERVICE_OPTIONS,
 } from "@/lib/visa-services";
 
@@ -36,6 +38,7 @@ export function StudentClientIntakeForm({
 }: StudentClientIntakeFormProps) {
   const [visaServiceType, setVisaServiceType] = useState("");
   const showStudentFields = isStudentVisaService(visaServiceType);
+  const showOtherServiceField = isOtherVisaService(visaServiceType);
 
   return (
     <section className="rounded-lg border bg-white p-4">
@@ -77,6 +80,20 @@ export function StudentClientIntakeForm({
             ))}
           </select>
         </label>
+        {showOtherServiceField ? (
+          <label className="text-xs font-medium text-gray-700 md:col-span-2">
+            Which service are they looking for? *
+            <textarea
+              name={OTHER_SERVICE_DESCRIPTION_KEY}
+              required
+              rows={3}
+              minLength={3}
+              maxLength={500}
+              placeholder="Describe the service needed"
+              className={commonInputClass}
+            />
+          </label>
+        ) : null}
         <label className="text-xs font-medium text-gray-700">
           Name *
           <input name="name" required minLength={2} maxLength={100} className={commonInputClass} />

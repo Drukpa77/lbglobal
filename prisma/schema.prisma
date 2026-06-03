@@ -272,6 +272,7 @@ model StudentProfile {
   emergencyContactPhone   String?
   emergencyContactAddress String?                @db.Text
   visaServiceType         String?
+  otherServiceDescription String?                @db.Text
   currentEducationLevel   String?
   targetCourse            String?
   preferredIntake         String?

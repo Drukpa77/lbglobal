@@ -10,8 +10,10 @@ import { generateNextCaseReference } from "@/lib/case-reference";
 import { parseTemplateQuestions } from "@/lib/questionnaire";
 import {
   isEnglishTestType,
+  isOtherVisaService,
   isStudentVisaService,
   isVisaServiceType,
+  OTHER_SERVICE_DESCRIPTION_KEY,
   STUDENT_ONLY_QUESTION_IDS,
 } from "@/lib/visa-services";
 import { prisma } from "@/lib/prisma";
@@ -122,17 +124,17 @@ export default async function ApplyPage(props: { searchParams: SearchParams }) {
     <main className="portal-theme min-h-screen py-10 text-slate-900">
       <div className="mx-auto max-w-3xl px-6">
         <div className="rounded-2xl border border-rose-200/40 bg-white/90 p-5 shadow-xl backdrop-blur-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex min-w-0 flex-1 items-center gap-3">
               <Image
                 src="/loogo.png"
                 alt="L&B Global logo"
                 width={44}
                 height={44}
-                className="h-11 w-11 rounded-md object-contain"
+                className="h-11 w-11 shrink-0 rounded-md object-contain"
                 priority
               />
-              <div>
+              <div className="min-w-0">
                 <p className="text-[11px] uppercase tracking-[0.22em] text-blue-600">
                   Overseas Education and Visa Services
                 </p>
@@ -144,6 +146,13 @@ export default async function ApplyPage(props: { searchParams: SearchParams }) {
                 </p>
               </div>
             </div>
+            <Image
+              src="/lucky7.png"
+              alt="Lucky 7 logo"
+              width={44}
+              height={44}
+              className="h-11 w-11 shrink-0 rounded-md object-contain"
+            />
           </div>
           <div className="mt-4">
             <Link
@@ -233,11 +242,23 @@ async function submitQuestionnaireAction(formData: FormData) {
   const targetCourse = answers.targetCourse?.trim() ?? "";
   const preferredIntake = answers.preferredIntake?.trim() ?? "";
   const currentEducationLevel = answers.currentEducationLevel?.trim() ?? "";
+  const otherServiceDescription =
+    answers[OTHER_SERVICE_DESCRIPTION_KEY]?.trim() ?? "";
   if (isStudentVisaService(visaServiceType)) {
     if (!targetCourse || !preferredIntake || !currentEducationLevel) {
       redirect("/apply?error=validation");
     }
+    delete answers[OTHER_SERVICE_DESCRIPTION_KEY];
+  } else if (isOtherVisaService(visaServiceType)) {
+    if (otherServiceDescription.length < 3 || otherServiceDescription.length > 500) {
+      redirect("/apply?error=validation");
+    }
+    answers[OTHER_SERVICE_DESCRIPTION_KEY] = otherServiceDescription;
+    delete answers.targetCourse;
+    delete answers.preferredIntake;
+    delete answers.currentEducationLevel;
   } else {
+    delete answers[OTHER_SERVICE_DESCRIPTION_KEY];
     delete answers.targetCourse;
     delete answers.preferredIntake;
     delete answers.currentEducationLevel;
@@ -272,6 +293,7 @@ async function submitQuestionnaireAction(formData: FormData) {
           city: true,
           nationality: true,
           visaServiceType: true,
+          otherServiceDescription: true,
           currentEducationLevel: true,
           targetCourse: true,
           preferredIntake: true,
@@ -302,6 +324,7 @@ async function submitQuestionnaireAction(formData: FormData) {
     city: string;
     country: string;
     visaServiceType: string;
+    otherServiceDescription: string;
     targetCourse: string;
     preferredIntake: string;
     englishTestType: string;
@@ -340,6 +363,10 @@ async function submitQuestionnaireAction(formData: FormData) {
       if (!existing.nationality && country) profileUpdate.nationality = country;
       if (!existing.visaServiceType && visaServiceType)
         profileUpdate.visaServiceType = visaServiceType;
+      if (isOtherVisaService(visaServiceType)) {
+        if (!existing.otherServiceDescription && otherServiceDescription)
+          profileUpdate.otherServiceDescription = otherServiceDescription;
+      }
       if (isStudentVisaService(visaServiceType)) {
         if (!existing.currentEducationLevel && currentEducationLevel)
           profileUpdate.currentEducationLevel = currentEducationLevel;
@@ -367,6 +394,9 @@ async function submitQuestionnaireAction(formData: FormData) {
           city: city || null,
           nationality: country || null,
           visaServiceType,
+          otherServiceDescription: isOtherVisaService(visaServiceType)
+            ? otherServiceDescription || null
+            : null,
           currentEducationLevel: isStudentVisaService(visaServiceType)
             ? currentEducationLevel || null
             : null,
@@ -402,6 +432,7 @@ async function submitQuestionnaireAction(formData: FormData) {
       city,
       country,
       visaServiceType,
+      otherServiceDescription,
       targetCourse,
       preferredIntake,
       englishTestType,
@@ -434,6 +465,7 @@ async function submitQuestionnaireAction(formData: FormData) {
           city: postSubmit.city,
           country: postSubmit.country,
           visaServiceType: postSubmit.visaServiceType,
+          otherServiceDescription: postSubmit.otherServiceDescription,
           targetCourse: postSubmit.targetCourse,
           preferredIntake: postSubmit.preferredIntake,
           englishTestType: postSubmit.englishTestType,

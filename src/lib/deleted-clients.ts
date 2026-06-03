@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { getVisaServiceLabel, resolveVisaServiceType } from "@/lib/visa-services";
+import { formatVisaServiceDisplay, resolveVisaServiceType } from "@/lib/visa-services";
 
 export const activeClientUserWhere = {
   role: "USER" as const,
@@ -131,7 +131,12 @@ export function getDeletedClientServiceLabel(client: DeletedClientRecord) {
     client.studentProfile?.visaServiceType,
     latestSubmission?.answers,
   );
-  return visaType ? getVisaServiceLabel(visaType) : "Not set";
+  const label = formatVisaServiceDisplay({
+    visaServiceType: visaType,
+    otherServiceDescription: client.studentProfile?.otherServiceDescription,
+    answers: latestSubmission?.answers,
+  });
+  return label !== "—" ? label : "Not set";
 }
 
 export function revalidateDeletedClientPaths(studentUserId?: string) {

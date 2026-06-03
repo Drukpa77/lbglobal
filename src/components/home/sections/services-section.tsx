@@ -122,11 +122,12 @@ export function ServicesSection() {
                   data-service-slide
                   className="group flex h-full w-full snap-start flex-col rounded-xl border border-slate-200 bg-white p-6 shadow-sm transition hover:border-rose-200 hover:shadow-md"
                 >
-                  <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-lg bg-rose-50 text-rose-500 ring-1 ring-rose-100 transition group-hover:bg-gradient-to-br group-hover:from-rose-500 group-hover:to-blue-500 group-hover:text-white">
+                  <div className="mb-4 inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-rose-50 text-rose-500 ring-1 ring-rose-100 transition group-hover:bg-gradient-to-br group-hover:from-rose-500 group-hover:to-blue-500 group-hover:text-white">
                     <Icon className="h-5 w-5" />
                   </div>
-                  <h3 className="text-base font-bold text-blue-900">{service.title}</h3>
-                  <span className="mt-4 text-sm font-semibold text-rose-500 transition group-hover:text-rose-600">
+                  <h3 className="text-base font-bold leading-snug text-blue-900">{service.title}</h3>
+                  <p className="mt-2 text-sm leading-snug text-slate-600">{service.description}</p>
+                  <span className="mt-4 inline-flex text-sm font-semibold text-rose-500 transition group-hover:text-rose-600">
                     Apply now →
                   </span>
                 </Link>

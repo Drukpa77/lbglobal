@@ -1,8 +1,10 @@
 import {
-  getVisaServiceLabel,
+  formatVisaServiceDisplay,
   isEnglishTestType,
+  isOtherVisaService,
   isStudentVisaService,
   isVisaServiceType,
+  OTHER_SERVICE_DESCRIPTION_KEY,
 } from "@/lib/visa-services";
 
 export type ManualClientIntakeInput = {
@@ -19,7 +21,9 @@ export type ManualClientIntakeInput = {
   englishTestType: string;
   englishTestScore: string;
   notes: string;
+  otherServiceDescription: string;
   isStudentVisa: boolean;
+  isOtherService: boolean;
 };
 
 export function parseManualClientIntakeFormData(
@@ -37,6 +41,9 @@ export function parseManualClientIntakeFormData(
   const englishTestType = String(formData.get("englishTestType") ?? "").trim();
   const englishTestScore = String(formData.get("englishTestScore") ?? "").trim();
   const notes = String(formData.get("notes") ?? "").trim();
+  const otherServiceDescription = String(
+    formData.get(OTHER_SERVICE_DESCRIPTION_KEY) ?? "",
+  ).trim();
 
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (
@@ -52,7 +59,14 @@ export function parseManualClientIntakeFormData(
   }
 
   const isStudentVisa = isStudentVisaService(visaServiceType);
+  const isOtherService = isOtherVisaService(visaServiceType);
   if (isStudentVisa && (!course || !intake || !currentEducation)) {
+    return null;
+  }
+  if (
+    isOtherService &&
+    (otherServiceDescription.length < 3 || otherServiceDescription.length > 500)
+  ) {
     return null;
   }
 
@@ -66,7 +80,10 @@ export function parseManualClientIntakeFormData(
 
   return {
     visaServiceType,
-    visaServiceLabel: getVisaServiceLabel(visaServiceType),
+    visaServiceLabel: formatVisaServiceDisplay({
+      visaServiceType,
+      otherServiceDescription,
+    }),
     name,
     email,
     phone,
@@ -78,7 +95,9 @@ export function parseManualClientIntakeFormData(
     englishTestType,
     englishTestScore,
     notes,
+    otherServiceDescription,
     isStudentVisa,
+    isOtherService,
   };
 }
 
@@ -93,6 +112,9 @@ export function buildManualIntakeAnswers(
     country: input.country,
     city: input.city,
     visaServiceType: input.visaServiceType,
+    [OTHER_SERVICE_DESCRIPTION_KEY]: input.isOtherService
+      ? input.otherServiceDescription
+      : "",
     currentEducationLevel: input.isStudentVisa ? input.currentEducation : "",
     targetCourse: input.isStudentVisa ? input.course : "",
     preferredIntake: input.isStudentVisa ? input.intake : "",
@@ -109,6 +131,7 @@ export function buildManualIntakeProfileData(input: ManualClientIntakeInput) {
     city: input.city,
     nationality: input.country,
     visaServiceType: input.visaServiceType,
+    otherServiceDescription: input.isOtherService ? input.otherServiceDescription : null,
     currentEducationLevel: input.isStudentVisa ? input.currentEducation : null,
     targetCourse: input.isStudentVisa ? input.course : null,
     preferredIntake: input.isStudentVisa ? input.intake : null,

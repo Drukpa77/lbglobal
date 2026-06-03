@@ -6,7 +6,9 @@ import { getUpcomingIntakeOptions } from "@/lib/intake-options";
 import type { QuestionnaireQuestion } from "@/lib/questionnaire";
 import {
   ENGLISH_TEST_TYPES,
+  isOtherVisaService,
   isStudentVisaService,
+  OTHER_SERVICE_DESCRIPTION_KEY,
   STUDENT_ONLY_QUESTION_IDS,
   VISA_SERVICE_OPTIONS,
 } from "@/lib/visa-services";
@@ -40,6 +42,7 @@ export function ApplyFormFields({
 }) {
   const [visaServiceType, setVisaServiceType] = useState("");
   const showStudentFields = isStudentVisaService(visaServiceType);
+  const showOtherServiceField = isOtherVisaService(visaServiceType);
 
   const hearFromQuestion = questions.find((q) => q.id === "hearFrom");
   const additionalNoteQuestion = questions.find((q) => NOTE_IDS.has(q.id));
@@ -145,6 +148,21 @@ export function ApplyFormFields({
           ))}
         </select>
       </label>
+
+      {showOtherServiceField ? (
+        <label className="block text-sm font-medium text-slate-700">
+          Which service are you looking for? *
+          <textarea
+            name={OTHER_SERVICE_DESCRIPTION_KEY}
+            required
+            rows={3}
+            minLength={3}
+            maxLength={500}
+            placeholder="e.g. Partner visa consultation, business visa advice..."
+            className={inputClass}
+          />
+        </label>
+      ) : null}
 
       {normalQuestions.map(renderQuestion)}
 

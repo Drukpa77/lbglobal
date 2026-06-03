@@ -63,33 +63,27 @@ export const processSteps = [
 export const services = [
   {
     title: "Student Admission",
-    description:
-      "Full guidance from course selection and institution matching to offer letter receipt.",
+    description: "Course matching and applications through to your offer letter.",
   },
   {
     title: "Visa Application",
-    description:
-      "End-to-end student visa support with documentation, compliance, and timeline planning.",
+    description: "Document checks and lodgement support for student visas.",
   },
   {
     title: "Health Insurance",
-    description:
-      "OSHC and health cover setup for international students studying abroad.",
+    description: "OSHC arranged to match your course and visa requirements.",
   },
   {
     title: "PTE / IELTS Preparation",
-    description:
-      "Structured language test preparation with experienced coaches and practice resources.",
+    description: "Coaching and practice to hit your target test scores.",
   },
   {
     title: "Student Accommodation",
-    description:
-      "Guidance on finding safe, affordable, and convenient housing near your institution.",
+    description: "Safe housing options near campus, within your budget.",
   },
   {
     title: "Skills Assessment",
-    description:
-      "Professional qualification assessments and recognition for further study pathways.",
+    description: "Authority requirements and documents for recognition pathways.",
   },
 ] as const;
 

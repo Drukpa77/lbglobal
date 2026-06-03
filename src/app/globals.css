@@ -362,3 +362,64 @@ input[type="reset"]:disabled {
     display: none !important;
   }
 }
+
+/* Partner logo marquee — home page */
+.partner-marquee {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    #000 10%,
+    #000 90%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(to right, transparent 0%, #000 10%, #000 90%, transparent 100%);
+}
+
+.partner-marquee-track {
+  width: max-content;
+  will-change: transform;
+}
+
+.partner-marquee-left {
+  animation: partner-marquee-left var(--partner-marquee-duration, 50s) linear infinite;
+}
+
+.partner-marquee-right {
+  animation: partner-marquee-right var(--partner-marquee-duration, 50s) linear infinite;
+}
+
+@keyframes partner-marquee-left {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+@keyframes partner-marquee-right {
+  from {
+    transform: translate3d(-50%, 0, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .partner-marquee-left,
+  .partner-marquee-right {
+    animation: none;
+    flex-wrap: wrap;
+    justify-content: center;
+    width: 100%;
+    max-width: 72rem;
+    margin-inline: auto;
+  }
+
+  .partner-marquee {
+    overflow: visible;
+    mask-image: none;
+    -webkit-mask-image: none;
+  }
+}

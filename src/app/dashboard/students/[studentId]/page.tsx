@@ -57,8 +57,11 @@ import {
   notifyStudentTeamDelegationChange,
 } from "@/lib/workflow-notifications";
 import {
+  formatVisaServiceDisplay,
   getVisaServiceLabel,
+  isOtherVisaService,
   isStudentVisaService,
+  OTHER_SERVICE_DESCRIPTION_KEY,
   resolveVisaServiceType,
 } from "@/lib/visa-services";
 import { formatVisaStatus, formatYearsLeft, visaStatuses } from "@/lib/student-tracking";
@@ -405,7 +408,11 @@ export default async function StudentProfileManagementPage(props: { params: Para
     latestSubmission?.answers,
   );
   const serviceTypeLabel = resolvedVisaServiceType
-    ? getVisaServiceLabel(resolvedVisaServiceType)
+    ? formatVisaServiceDisplay({
+        visaServiceType: resolvedVisaServiceType,
+        otherServiceDescription: profile?.otherServiceDescription,
+        answers: latestSubmission?.answers,
+      })
     : "Not set";
 
   const overviewOpenTaskAssignees = overviewOpenTasks.map((task) => task.assignee);
@@ -714,6 +721,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
           <div className="sm:col-span-2 grid gap-4 sm:grid-cols-2">
             <ProfileVisaServiceFields
               visaServiceType={student.studentProfile?.visaServiceType}
+              otherServiceDescription={student.studentProfile?.otherServiceDescription}
               currentEducationLevel={student.studentProfile?.currentEducationLevel}
               targetCourse={student.studentProfile?.targetCourse}
               preferredIntake={student.studentProfile?.preferredIntake}
@@ -1852,12 +1860,37 @@ function formatDateInput(value?: Date | null) {
   return value.toISOString().slice(0, 10);
 }
 
+const QUESTIONNAIRE_ANSWER_LABELS: Record<string, string> = {
+  otherServiceDescription: "Service requested",
+  visaServiceType: "Service type",
+  fullName: "Full name",
+  targetCourse: "Target course",
+  preferredIntake: "Preferred intake",
+  currentEducationLevel: "Current education level",
+  englishTestType: "English test type",
+  englishTestScore: "English test score",
+  hearFrom: "Heard from",
+  additionalNote: "Additional note",
+};
+
+function formatQuestionnaireAnswerLabel(key: string) {
+  return QUESTIONNAIRE_ANSWER_LABELS[key] ?? key.replace(/([A-Z])/g, " $1").trim();
+}
+
 function getAnswerEntries(answers?: Prisma.JsonValue) {
   if (!answers || typeof answers !== "object" || Array.isArray(answers)) {
     return [] as [string, string | number | boolean | null][];
   }
 
-  return Object.entries(answers as Record<string, string | number | boolean | null>);
+  return Object.entries(answers as Record<string, string | number | boolean | null>).map(
+    ([key, value]) => {
+      const label = formatQuestionnaireAnswerLabel(key);
+      if (key === "visaServiceType" && typeof value === "string") {
+        return [label, getVisaServiceLabel(value)] as const;
+      }
+      return [label, value] as const;
+    },
+  );
 }
 
 function studentProfileUrl(studentId: string) {
@@ -1970,8 +2003,21 @@ async function saveStudentProfileAction(formData: FormData) {
   const caseReference = await generateNextCaseReference();
   const visaServiceType = nullableText(formData.get("visaServiceType"));
   const isStudentVisa = isStudentVisaService(visaServiceType ?? "");
+  const isOtherService = isOtherVisaService(visaServiceType ?? "");
+  const otherServiceDescription = nullableText(
+    formData.get(OTHER_SERVICE_DESCRIPTION_KEY),
+  );
+  if (
+    isOtherService &&
+    (!otherServiceDescription ||
+      otherServiceDescription.length < 3 ||
+      otherServiceDescription.length > 500)
+  ) {
+    redirect(studentProfileUrl(studentId));
+  }
   const profileVisaFields = {
     visaServiceType,
+    otherServiceDescription: isOtherService ? otherServiceDescription : null,
     currentEducationLevel: isStudentVisa
       ? nullableText(formData.get("currentEducationLevel"))
       : null,

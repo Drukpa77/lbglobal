@@ -4,6 +4,7 @@ import { HomeNav } from "@/components/home/home-nav";
 import { HeroSection } from "@/components/home/sections/hero-section";
 import { ServicesSection } from "@/components/home/sections/services-section";
 import { ProcessSection } from "@/components/home/sections/process-section";
+import { PartnersSection } from "@/components/home/sections/partners-section";
 import { AboutSection } from "@/components/home/sections/about-section";
 import { UpdatesSection } from "@/components/home/sections/updates-section";
 import { TestimonialsSection } from "@/components/home/sections/testimonials-section";
@@ -39,6 +40,7 @@ export function HomePage({ posts }: { posts: HomePostItem[] }) {
       <HeroSection />
       <ServicesSection />
       <ProcessSection />
+      <PartnersSection />
       <AboutSection />
       <DestinationsSection />
       <TestimonialsSection />

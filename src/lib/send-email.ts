@@ -2,7 +2,7 @@ import nodemailer from "nodemailer";
 
 import {
   formatEnglishTestDisplay,
-  getVisaServiceLabel,
+  formatVisaServiceDisplay,
 } from "@/lib/visa-services";
 
 type SendEmailInput = {
@@ -120,6 +120,7 @@ export function buildApplicationInquiryEmail(params: {
   city?: string | null;
   country?: string | null;
   visaServiceType?: string | null;
+  otherServiceDescription?: string | null;
   targetCourse?: string | null;
   preferredIntake?: string | null;
   englishTestType?: string | null;
@@ -135,7 +136,13 @@ export function buildApplicationInquiryEmail(params: {
     ["Email", params.email],
     ["Phone", params.phone],
     ["Location", [params.city, params.country].filter(Boolean).join(", ")],
-    ["Service", getVisaServiceLabel(params.visaServiceType)],
+    [
+      "Service",
+      formatVisaServiceDisplay({
+        visaServiceType: params.visaServiceType,
+        otherServiceDescription: params.otherServiceDescription,
+      }),
+    ],
     ["Target course", params.targetCourse],
     ["Preferred intake", params.preferredIntake],
     ["English test", englishTest],

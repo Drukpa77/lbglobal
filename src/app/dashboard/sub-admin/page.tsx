@@ -1009,6 +1009,8 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                             answers: submission.answers,
                             profileVisaServiceType:
                               submission.student.studentProfile?.visaServiceType,
+                            profileOtherServiceDescription:
+                              submission.student.studentProfile?.otherServiceDescription,
                           })}{" "}
                           | {submission.sourceCity ?? "City unknown"},{" "}
                           {submission.sourceCountry ?? "Country unknown"}
