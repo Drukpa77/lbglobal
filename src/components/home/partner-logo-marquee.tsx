@@ -18,14 +18,14 @@ function MarqueeLogo({
   const isDuplicate = index >= originalCount;
   return (
     <li
-      className="partner-logo-card flex h-[4.5rem] w-[10.5rem] shrink-0 items-center justify-center rounded-2xl border border-slate-200/80 bg-white px-5 py-3 shadow-[0_8px_30px_rgba(15,23,42,0.06)] transition duration-300 hover:border-slate-300 hover:shadow-[0_12px_40px_rgba(15,23,42,0.1)] sm:h-[5rem] sm:w-[11.5rem]"
+      className="partner-logo-card flex h-[5.25rem] w-[12rem] shrink-0 items-center justify-center rounded-2xl border border-slate-200/80 bg-white px-4 py-2.5 shadow-[0_8px_30px_rgba(15,23,42,0.06)] transition duration-300 hover:border-slate-300 hover:shadow-[0_12px_40px_rgba(15,23,42,0.1)] sm:h-[6.25rem] sm:w-[14rem]"
       aria-hidden={isDuplicate}
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={logo.src}
         alt={isDuplicate ? "" : logo.alt}
-        className="max-h-full max-w-full object-contain opacity-80 grayscale transition duration-300 hover:opacity-100 hover:grayscale-0"
+        className="max-h-[3.25rem] max-w-full object-contain sm:max-h-[4rem]"
         loading="lazy"
         decoding="async"
         draggable={false}

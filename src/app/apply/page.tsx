@@ -125,38 +125,40 @@ export default async function ApplyPage(props: { searchParams: SearchParams }) {
     <main className="portal-theme min-h-screen py-10 text-slate-900">
       <div className="mx-auto max-w-3xl px-6">
         <div className="rounded-2xl border border-rose-200/40 bg-white/90 p-5 shadow-xl backdrop-blur-sm">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div className="flex min-w-0 flex-1 items-center gap-3">
+          <div className="flex items-center gap-4 sm:gap-6">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center sm:h-12 sm:w-12">
               <Image
                 src="/loogo.png"
                 alt="L&B Global logo"
-                width={44}
-                height={44}
-                className="h-11 w-11 shrink-0 rounded-md object-contain"
+                width={48}
+                height={48}
+                className="h-11 w-11 rounded-md object-contain sm:h-12 sm:w-12"
                 priority
               />
-              <div className="min-w-0">
-                <p className="text-[11px] uppercase tracking-[0.22em] text-blue-600">
-                  Overseas Education and Visa Services
-                </p>
-                <h1 className="text-2xl font-semibold text-slate-900">
-                  {template?.title ?? "Visa & Immigration Inquiry"}
-                </h1>
-                <p className="mt-1 text-sm text-slate-600">
-                  Tell us which service you need and our team will contact you with next steps.
-                </p>
-                <p className="mt-2 text-sm font-medium text-blue-800">
-                  Takes about 2 minutes — we respond within 1–2 business days.
-                </p>
-              </div>
             </div>
-            <Image
-              src="/lucky7.png"
-              alt="Lucky 7 logo"
-              width={44}
-              height={44}
-              className="h-11 w-11 shrink-0 rounded-md object-contain"
-            />
+            <div className="min-w-0 flex-1 px-1 text-center sm:px-2">
+              <p className="text-[11px] uppercase tracking-[0.22em] text-blue-600">
+                Overseas Education and Visa Services
+              </p>
+              <h1 className="mt-0.5 text-2xl font-semibold text-slate-900">
+                {template?.title ?? "Visa & Immigration Inquiry"}
+              </h1>
+              <p className="mt-1 text-sm text-slate-600">
+                Tell us which service you need and our team will contact you with next steps.
+              </p>
+              <p className="mt-2 text-sm font-medium text-blue-800">
+                Takes about 2 minutes — we respond within 1–2 business days.
+              </p>
+            </div>
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center sm:h-12 sm:w-12">
+              <Image
+                src="/lucky7.png"
+                alt="Lucky 7 logo"
+                width={48}
+                height={48}
+                className="h-11 w-11 rounded-md object-contain sm:h-12 sm:w-12"
+              />
+            </div>
           </div>
           <div className="mt-4">
             <Link
