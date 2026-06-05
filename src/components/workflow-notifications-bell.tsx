@@ -169,12 +169,12 @@ export function WorkflowNotificationsBell() {
       </button>
 
       {open ? (
-        <div className="absolute right-0 z-[80] mt-2 w-[28rem] max-w-[90vw] rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
+        <div className="fixed left-3 right-3 top-36 z-[80] max-h-[calc(100dvh-10rem)] rounded-xl border border-slate-200 bg-white p-3 shadow-xl sm:absolute sm:left-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-[28rem] sm:max-w-[90vw]">
           <p className="text-sm font-semibold text-slate-900">Notifications</p>
           {!hasItems ? (
             <p className="mt-3 text-sm text-slate-600">No notifications right now.</p>
           ) : (
-            <div className="mt-3 max-h-[28rem] space-y-3 overflow-y-auto pr-1">
+            <div className="mt-3 max-h-[calc(100dvh-14rem)] space-y-3 overflow-y-auto pr-1 sm:max-h-[28rem]">
               {data.groups.map((group) => (
                 <section key={group.studentId} className="rounded-lg border border-slate-200 bg-slate-50/50 p-2.5">
                   <div className="flex items-center justify-between gap-2">
