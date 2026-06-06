@@ -207,10 +207,9 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
             },
           },
           assignedSubAdmin: { select: { id: true, name: true, email: true } },
-          template: true,
         },
         orderBy: { submittedAt: "desc" },
-        take: isStudentsTab ? 300 : 50,
+        take: isStudentsTab ? 100 : 50,
       }) : Promise.resolve([]),
       // trendSubmissions (500 rows) only needed for the overview trend chart
       isOverviewTab ? prisma.questionnaireSubmission.findMany({
@@ -300,11 +299,13 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
           })
         : Promise.resolve([]),
       isTasksTab ? listTaskAssigneeOptions() : Promise.resolve([]),
-      prisma.user.findMany({
-        where: { role: "INTERNAL_STAFF" },
-        select: { id: true, name: true, email: true },
-        orderBy: { name: "asc" },
-      }),
+      isStudentsTab || isTeamTab || isTasksTab
+        ? prisma.user.findMany({
+            where: { role: "INTERNAL_STAFF" },
+            select: { id: true, name: true, email: true },
+            orderBy: { name: "asc" },
+          })
+        : Promise.resolve([]),
       // stagePipelineCounts only shown in overview
       isOverviewTab ? prisma.studentProfile.groupBy({
         by: ["caseStage"],

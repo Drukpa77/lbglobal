@@ -265,6 +265,8 @@ model User {
 
   @@index([deletedAt])
   @@index([deletedById])
+  @@index([role])
+  @@index([role, deletedAt])
 }
 
 model StudentProfile {
@@ -309,6 +311,10 @@ model StudentProfile {
   activities              ActivityLog[]          @relation("ActivityTargetStudent")
   workflowNotifications   WorkflowNotification[]
   leads                   Lead[]
+
+  @@index([caseStage])
+  @@index([nextFollowUpDate])
+  @@index([visaExpiryDate])
 }
 
 model VisaCase {
@@ -361,6 +367,12 @@ model QuestionnaireSubmission {
   student          User                  @relation("StudentSubmissions", fields: [studentId], references: [id], onDelete: Cascade)
   template         QuestionnaireTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
   assignedSubAdmin User?                 @relation("AssignedSubAdmin", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  @@index([assignedToId, submittedAt])
+  @@index([studentId, submittedAt])
+  @@index([status, submittedAt])
+  @@index([assignedToId, status])
+  @@index([submittedAt])
 }
 
 model HomePost {
@@ -414,6 +426,8 @@ model StaffTeamMembership {
   internalStaff   User     @relation("StaffMemberships", fields: [internalStaffId], references: [id], onDelete: Cascade)
 
   @@unique([managerId, internalStaffId])
+  @@index([managerId])
+  @@index([internalStaffId])
 }
 
 model StudentAssignment {
@@ -454,6 +468,9 @@ model Task {
   completedBy      User?          @relation("TaskCompleter", fields: [completedById], references: [id], onDelete: SetNull)
 
   @@index([completedById])
+  @@index([studentProfileId, status])
+  @@index([assigneeId, status])
+  @@index([status, dueDate])
 }
 
 model StudentDocument {
@@ -486,6 +503,8 @@ model StudentDocument {
   workflowNotifications WorkflowNotification[]
 
   @@index([replacedDocumentId])
+  @@index([studentProfileId, verificationStatus])
+  @@index([verificationStatus, createdAt])
 }
 
 model EmailTemplate {
@@ -513,7 +532,18 @@ model Contract {
   title            String
   subject          String
   recipientEmail   String
-  htmlSnapshot     String
+  htmlSnapshot     String         @db.LongText
+  contractNumber   String?        @unique
+  contractDate     String?
+  applicantTitle   String?
+  applicantName    String?
+  applicantCid     String?
+  organizationName String?
+  hasDependent     Boolean        @default(false)
+  dependentName    String?
+  witnessName      String?
+  witnessCid       String?
+  witnessContact   String?
   status           ContractStatus @default(DRAFT)
   sentAt           DateTime?
   acceptedAt       DateTime?
@@ -522,6 +552,8 @@ model Contract {
   studentProfile   StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
   template         EmailTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   createdBy        User           @relation("ContractCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([studentProfileId, status])
 }
 
 model Invoice {

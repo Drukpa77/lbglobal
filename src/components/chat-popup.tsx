@@ -35,8 +35,8 @@ const ROLE_LABELS: Record<string, string> = {
   INTERNAL_STAFF: "Case Manager",
   USER: "Applicant",
 };
-const CHAT_MESSAGES_POLL_MS = process.env.NODE_ENV === "development" ? 20_000 : 10_000;
-const CHAT_UNREAD_POLL_MS = process.env.NODE_ENV === "development" ? 20_000 : 8_000;
+const CHAT_MESSAGES_POLL_MS = process.env.NODE_ENV === "development" ? 30_000 : 15_000;
+const CHAT_UNREAD_POLL_MS = process.env.NODE_ENV === "development" ? 60_000 : 45_000;
 
 function getInitial(user: ChatUser) {
   return (user.name || user.email)[0].toUpperCase();
@@ -164,8 +164,9 @@ export function ChatPopup({ currentUserId }: { currentUserId: string }) {
       }
     };
 
+    const pollIfVisible = () => { if (!document.hidden) void fetchUnread(); };
     void fetchUnread();
-    const interval = setInterval(fetchUnread, CHAT_UNREAD_POLL_MS);
+    const interval = setInterval(pollIfVisible, CHAT_UNREAD_POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(interval);

@@ -26,8 +26,9 @@ export function UnreadChatBadge() {
   }, [fetchCount]);
 
   useEffect(() => {
-    const intervalMs = process.env.NODE_ENV === "development" ? 30_000 : 12_000;
-    const id = window.setInterval(fetchCount, intervalMs);
+    const intervalMs = process.env.NODE_ENV === "development" ? 60_000 : 45_000;
+    const poll = () => { if (!document.hidden) fetchCount(); };
+    const id = window.setInterval(poll, intervalMs);
     return () => window.clearInterval(id);
   }, [fetchCount]);
 

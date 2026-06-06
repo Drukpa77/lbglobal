@@ -241,6 +241,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
           returnedBy: { select: { id: true, name: true, email: true } },
         },
         orderBy: { createdAt: "desc" },
+        take: 80,
       })
     : Promise.resolve([] as StudentDocumentWithRelations[]);
 
@@ -363,6 +364,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
           select: {
             assignee: { select: { id: true, name: true, email: true, role: true } },
           },
+          take: 15,
         })
       : Promise.resolve([]),
     (needsOverviewData || needsProfileData) && studentProfileId !== "__none__"
@@ -1570,33 +1572,16 @@ export default async function StudentProfileManagementPage(props: { params: Para
           <form action={createContractPreviewAction} className="space-y-4 rounded-xl border border-slate-200 bg-slate-50/80 p-5">
             <input type="hidden" name="studentId" value={studentId} />
             <div>
-              <p className="font-semibold text-slate-900">Generate Contract Preview</p>
+              <p className="font-semibold text-slate-900">Create Contract</p>
               <p className="mt-1 text-sm text-slate-600">
-                Choose a template and review the final contract content before sending.
+                Opens the contract builder with a live A4 preview of the Declaration Form. Fill in the applicant details, witness information, and download or send as a PDF.
               </p>
             </div>
-            <label className="block">
-              <span className="text-sm font-medium text-slate-700">Template</span>
-              <select
-                name="templateId"
-                required
-                className="mt-1.5 w-full rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-              >
-                <option value="">Select contract template</option>
-                {templates
-                  .filter((template) => template.type === "CONTRACT" || template.type === "GENERAL")
-                  .map((template) => (
-                    <option key={template.id} value={template.id}>
-                      {template.name}
-                    </option>
-                  ))}
-              </select>
-            </label>
             <button
               type="submit"
               className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
             >
-              Generate Preview
+              Open Contract Builder
             </button>
           </form>
 
@@ -3593,8 +3578,7 @@ async function createContractPreviewAction(formData: FormData) {
     redirect("/login");
   }
   const studentId = String(formData.get("studentId") ?? "");
-  const templateId = String(formData.get("templateId") ?? "");
-  if (!studentId || !templateId) redirect(studentFinancialsUrl(studentId));
+  if (!studentId) redirect("/dashboard");
 
   if (session.user.role === "SUB_ADMIN") {
     const assigned = await prisma.questionnaireSubmission.findFirst({
@@ -3619,33 +3603,32 @@ async function createContractPreviewAction(formData: FormData) {
     if (!assigned) redirect(studentFinancialsUrl(studentId));
   }
 
-  const [student, template] = await Promise.all([
-    prisma.user.findUnique({
-      where: { id: studentId },
-      include: { studentProfile: true },
-    }),
-    prisma.emailTemplate.findUnique({ where: { id: templateId } }),
-  ]);
-  if (!student || !student.studentProfile || !template) redirect(studentFinancialsUrl(studentId));
+  const student = await prisma.user.findUnique({
+    where: { id: studentId },
+    include: { studentProfile: true },
+  });
+  if (!student?.studentProfile) redirect(studentFinancialsUrl(studentId));
 
-  const variables = {
-    studentName: student.name ?? student.email,
-    email: student.email,
-    targetCourse: student.studentProfile.targetCourse ?? "",
-    senderName: session.user.name ?? session.user.email ?? "L&B Global",
-  };
-  const subject = renderTemplate(template.subject, variables);
-  const htmlSnapshot = renderTemplate(template.htmlBody, variables);
+  const { getCompanySettings } = await import("@/lib/company-settings");
+  const companySettings = await getCompanySettings();
+
+  const contractNumber = `CTR-${Date.now().toString().slice(-8)}`;
+  const studentName = student.name ?? student.email;
+  const today = new Date().toLocaleDateString("en-AU", { day: "numeric", month: "long", year: "numeric" });
 
   const contract = await prisma.contract.create({
     data: {
       studentProfileId: student.studentProfile.id,
-      templateId: template.id,
       createdById: session.user.id,
-      title: `${template.name} - ${student.name ?? student.email}`,
-      subject,
+      contractNumber,
+      title: `Declaration Form - ${studentName}`,
+      subject: `Declaration Form for Submission of Documents — ${studentName}`,
       recipientEmail: student.email,
-      htmlSnapshot,
+      htmlSnapshot: "",
+      contractDate: today,
+      applicantName: studentName,
+      organizationName: companySettings.companyName,
+      hasDependent: false,
       status: "DRAFT",
     },
   });
@@ -3655,7 +3638,7 @@ async function createContractPreviewAction(formData: FormData) {
       targetStudentProfileId: student.studentProfile.id,
       entityType: "CONTRACT",
       entityId: contract.id,
-      action: "Generated contract preview",
+      action: "Created contract draft via builder",
     },
   });
   redirect(`/dashboard/contracts/${contract.id}/preview`);

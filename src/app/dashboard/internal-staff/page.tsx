@@ -90,10 +90,16 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
 
   // Gate queries by tab — overview-only data shouldn't block queue/tasks/students views
   const isOverviewTab = tab === "overview";
+  const isQueueTab = tab === "queue";
+  const isTasksTab = tab === "tasks";
+  const isStudentsTab = tab === "students";
+  const needsAssignments = isOverviewTab || isQueueTab || isStudentsTab;
+  const needsTasks = isOverviewTab || isQueueTab || isTasksTab;
+  const needsPendingDocs = isOverviewTab || isQueueTab;
 
   const [reminders, assignments, stagePipelineCounts, tasks, taskAssigneeOptions, conversations, followUps, pendingDocuments, deletedClientsCount, deletedClients] = await Promise.all([
     isOverviewTab ? getRemindersForUser(session.user.role as "ADMIN" | "INTERNAL_STAFF", session.user.id) : Promise.resolve([]),
-    prisma.studentAssignment.findMany({
+    needsAssignments ? prisma.studentAssignment.findMany({
       where: isAdmin
         ? { isActive: true, studentProfile: { user: { deletedAt: null } } }
         : {
@@ -141,7 +147,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
       },
       orderBy: { createdAt: "desc" },
       take: 50,
-    }),
+    }) : Promise.resolve([]),
     // Pipeline counts only needed for the overview tab case stage funnel
     isOverviewTab ? prisma.studentProfile.groupBy({
       by: ["caseStage"],
@@ -150,7 +156,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
         : { assignments: { some: { assignedToId: session.user.id, isActive: true } } },
       _count: { _all: true },
     }) : Promise.resolve([]),
-    prisma.task.findMany({
+    needsTasks ? prisma.task.findMany({
       where: taskDashboardWhereForStaff(session.user.id, isAdmin),
       include: {
         assignee: { select: { id: true, name: true, email: true } },
@@ -158,8 +164,8 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
       },
       orderBy: [{ dueDate: "asc" }, { status: "asc" }, { createdAt: "desc" }],
       take: 100,
-    }),
-    listTaskAssigneeOptions(),
+    }) : Promise.resolve([]),
+    needsTasks ? listTaskAssigneeOptions() : Promise.resolve([]),
     // conversations only rendered in the overview tab
     isOverviewTab ? prisma.conversation.findMany({
       where: isAdmin ? { type: "STUDENT_THREAD" } : { participants: { some: { userId: session.user.id } } },
@@ -183,7 +189,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
       orderBy: { nextFollowUpDate: "asc" },
       take: 25,
     }),
-    prisma.studentDocument.findMany({
+    needsPendingDocs ? prisma.studentDocument.findMany({
       where: isAdmin
         ? { verificationStatus: "PENDING" }
         : {
@@ -205,7 +211,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
       },
       orderBy: { createdAt: "desc" },
       take: 30,
-    }),
+    }) : Promise.resolve([]),
     prisma.user.count({ where: deletedClientUserWhere }),
     isDeletedClientsTab ? listDeletedClients() : Promise.resolve([]),
   ]);

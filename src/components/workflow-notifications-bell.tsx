@@ -112,7 +112,10 @@ export function WorkflowNotificationsBell() {
   }, [fetchNotifications]);
 
   useEffect(() => {
-    const id = window.setInterval(fetchNotifications, process.env.NODE_ENV === "development" ? 20_000 : 10_000);
+    const poll = () => {
+      if (!document.hidden) fetchNotifications();
+    };
+    const id = window.setInterval(poll, process.env.NODE_ENV === "development" ? 60_000 : 45_000);
     return () => window.clearInterval(id);
   }, [fetchNotifications]);
 
