@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import type { TaskAssigneeOption } from "@/lib/task-assignment";
+import { taskStatusCardClass, taskStatusTone } from "@/lib/task-status-styles";
 
 type DashboardTask = {
   id: string;
@@ -23,13 +24,6 @@ type StaffDashboardTasksProps = {
   updateTaskStatusAction: (formData: FormData) => Promise<void>;
   returnTab: string;
 };
-
-function taskStatusTone(status: string) {
-  if (status === "DONE") return "bg-emerald-50 text-emerald-700";
-  if (status === "IN_PROGRESS") return "bg-blue-50 text-blue-700";
-  if (status === "BLOCKED") return "bg-amber-50 text-amber-800";
-  return "bg-slate-100 text-slate-700";
-}
 
 function AssigneeSelect({
   assigneeOptions,
@@ -119,7 +113,7 @@ export function StaffDashboardTasks({
           </form>
           <ul className="max-h-80 space-y-2 overflow-y-auto pr-1">
             {tasks.map((task) => (
-              <li key={task.id} className="rounded-md border border-gray-200 p-3">
+              <li key={task.id} className={`rounded-md border p-3 ${taskStatusCardClass(task.status)}`}>
                 <div className="flex items-start gap-2">
                   <input
                     type="checkbox"

@@ -12,17 +12,26 @@ export async function generateNextCaseReference(client: DbClient = prisma): Prom
   const year = new Date().getFullYear();
   const prefix = `LBG-${year}-`;
 
-  const latest = await client.studentProfile.findFirst({
-    where: { caseReference: { startsWith: prefix } },
-    orderBy: { caseReference: "desc" },
-    select: { caseReference: true },
-  });
+  const [latestProfile, latestVisaCase] = await Promise.all([
+    client.studentProfile.findFirst({
+      where: { caseReference: { startsWith: prefix } },
+      orderBy: { caseReference: "desc" },
+      select: { caseReference: true },
+    }),
+    client.visaCase.findFirst({
+      where: { caseReference: { startsWith: prefix } },
+      orderBy: { caseReference: "desc" },
+      select: { caseReference: true },
+    }),
+  ]);
 
   let nextSequence = 1;
-  if (latest?.caseReference) {
-    const match = latest.caseReference.match(/^LBG-\d{4}-(\d+)$/);
-    if (match) {
-      nextSequence = Number.parseInt(match[1], 10) + 1;
+  for (const latest of [latestProfile, latestVisaCase]) {
+    if (latest?.caseReference) {
+      const match = latest.caseReference.match(/^LBG-\d{4}-(\d+)$/);
+      if (match) {
+        nextSequence = Math.max(nextSequence, Number.parseInt(match[1], 10) + 1);
+      }
     }
   }
 

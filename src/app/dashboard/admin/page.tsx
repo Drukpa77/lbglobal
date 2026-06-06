@@ -348,9 +348,8 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
   const pendingItems = latestSubmissionPerStudent.filter((item) =>
     ["SUBMITTED", "UNDER_REVIEW", "DOCS_REQUESTED"].includes(item.status),
   );
-  const offerInProgressItems = latestSubmissionPerStudent.filter((item) =>
-    ["OFFER_RECEIVED", "VISA_GRANTED"].includes(item.status),
-  );
+  const offerInProgressItems = latestSubmissionPerStudent.filter((item) => item.status === "OFFER_RECEIVED");
+  const visaGrantedItems = latestSubmissionPerStudent.filter((item) => item.status === "VISA_GRANTED");
   const enrolledItems = latestSubmissionPerStudent.filter((item) => item.status === "ENROLLED");
   const rejectedItems = latestSubmissionPerStudent.filter((item) => item.status === "REJECTED");
   const visaExpiringSoon = filteredSubmissions.filter((item) => {
@@ -581,7 +580,8 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
                 <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Case Pressure</p>
                 <ul className="mt-2 space-y-1 text-sm text-gray-700">
                   <li>Pending/under review: {pendingItems.length}</li>
-                  <li>Offer/visa in progress: {offerInProgressItems.length}</li>
+                  <li>Offer in progress: {offerInProgressItems.length}</li>
+                  <li>Visa granted: {visaGrantedItems.length}</li>
                   <li>Visa expiring soon: {visaExpiringSoonItems.length}</li>
                 </ul>
               </article>
@@ -626,7 +626,12 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
                 <CategoryCard
                   title="Offer In Progress"
                   items={offerInProgressItems}
-                  emptyLabel="No clients in offer/visa processing stage."
+                  emptyLabel="No clients in offer processing stage."
+                />
+                <CategoryCard
+                  title="Visa Granted"
+                  items={visaGrantedItems}
+                  emptyLabel="No visa granted clients in this view."
                 />
                 <CategoryCard
                   title="Enrolled"

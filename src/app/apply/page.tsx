@@ -24,6 +24,7 @@ import {
   sendGoogleWorkspaceEmail,
 } from "@/lib/send-email";
 import { notifyStaffOfNewApplication } from "@/lib/workflow-notifications";
+import { startNewVisaCaseForProfile, syncActiveVisaCaseFromProfile } from "@/lib/visa-cases";
 import { SubmitButton } from "@/components/submit-button";
 import { ApplyFormFields } from "./apply-form-fields";
 
@@ -387,9 +388,17 @@ async function submitQuestionnaireAction(formData: FormData) {
           data: profileUpdate,
         });
       }
+      await prisma.$transaction(async (tx) => {
+        await startNewVisaCaseForProfile(tx, {
+          studentProfileId: existing.id,
+          visaServiceType,
+          otherServiceDescription,
+          notes: "Started from repeat online application",
+        });
+      });
       studentProfile = { id: existing.id };
     } else {
-      studentProfile = await prisma.studentProfile.create({
+      const createdProfile = await prisma.studentProfile.create({
         data: {
           caseReference: await generateNextCaseReference(),
           userId: studentUser.id,
@@ -409,8 +418,22 @@ async function submitQuestionnaireAction(formData: FormData) {
           englishTestScore: englishTestScore || null,
           followUpNotes: null,
         },
-        select: { id: true },
+        select: {
+          id: true,
+          caseReference: true,
+          visaServiceType: true,
+          otherServiceDescription: true,
+          caseStage: true,
+          visaStatus: true,
+          courseStartDate: true,
+          courseEndDate: true,
+          visaExpiryDate: true,
+        },
       });
+      await prisma.$transaction(async (tx) => {
+        await syncActiveVisaCaseFromProfile(tx, createdProfile);
+      });
+      studentProfile = { id: createdProfile.id };
     }
 
     const submission = await prisma.questionnaireSubmission.create({

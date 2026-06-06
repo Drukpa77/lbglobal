@@ -42,6 +42,7 @@ import {
   taskDashboardWhereForStaff,
   userCanManageTask,
 } from "@/lib/task-assignment";
+import { taskStatusCardClass, taskStatusTone } from "@/lib/task-status-styles";
 import { createWorkflowNotification } from "@/lib/workflow-notifications";
 import {
   allCaseStages,
@@ -473,7 +474,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
             ) : (
               <ul className="mt-3 max-h-80 space-y-2 overflow-y-auto pr-1">
                 {filteredOpenTasks.slice(0, 20).map((task) => (
-                  <li key={task.id} className="rounded-md border border-gray-200 bg-white p-3">
+                  <li key={task.id} className={`rounded-md border p-3 ${taskStatusCardClass(task.status)}`}>
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div>
                         <p className="text-sm font-medium">{task.title}</p>
@@ -1021,13 +1022,6 @@ function MetricCard({
       )}
     </article>
   );
-}
-
-function taskStatusTone(status: string) {
-  if (status === "DONE") return "bg-emerald-50 text-emerald-700";
-  if (status === "IN_PROGRESS") return "bg-blue-50 text-blue-700";
-  if (status === "BLOCKED") return "bg-rose-50 text-rose-700";
-  return "bg-gray-100 text-gray-700";
 }
 
 function deadlineKindLabel(kind: "TASK" | "FOLLOW_UP" | "INVOICE_DUE") {

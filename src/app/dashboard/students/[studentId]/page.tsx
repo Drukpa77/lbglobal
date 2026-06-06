@@ -60,10 +60,13 @@ import {
   formatVisaServiceDisplay,
   getVisaServiceLabel,
   isOtherVisaService,
+  isVisaServiceType,
   isStudentVisaService,
   OTHER_SERVICE_DESCRIPTION_KEY,
   resolveVisaServiceType,
+  VISA_SERVICE_OPTIONS,
 } from "@/lib/visa-services";
+import { startNewVisaCaseForProfile, syncActiveVisaCaseFromProfile } from "@/lib/visa-cases";
 import { formatVisaStatus, formatYearsLeft, visaStatuses } from "@/lib/student-tracking";
 import {
   allCaseStages,
@@ -258,6 +261,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
     activityLogs,
     taskAssigneeOptions,
     overviewOpenTasks,
+    visaCases,
   ] = await Promise.all([
     needsContributionData && student.studentProfile
       ? getContributions({ studentProfileId })
@@ -359,6 +363,12 @@ export default async function StudentProfileManagementPage(props: { params: Para
           select: {
             assignee: { select: { id: true, name: true, email: true, role: true } },
           },
+        })
+      : Promise.resolve([]),
+    (needsOverviewData || needsProfileData) && studentProfileId !== "__none__"
+      ? prisma.visaCase.findMany({
+          where: { studentProfileId },
+          orderBy: [{ status: "asc" }, { startedAt: "desc" }],
         })
       : Promise.resolve([]),
   ]);
@@ -633,6 +643,21 @@ export default async function StudentProfileManagementPage(props: { params: Para
         updatedAt={profile?.caseStageUpdatedAt ?? null}
         action={updateCaseStageAction}
       />
+      {profile ? (
+        <VisaCasesSection
+          studentId={studentId}
+          currentCase={{
+            caseReference: profile.caseReference,
+            visaServiceType: profile.visaServiceType,
+            otherServiceDescription: profile.otherServiceDescription,
+            caseStage: profile.caseStage,
+            visaStatus: profile.visaStatus,
+            visaExpiryDate: profile.visaExpiryDate,
+          }}
+          visaCases={visaCases}
+          action={startNewVisaCaseAction}
+        />
+      ) : null}
       </>
       )}
 
@@ -1873,6 +1898,142 @@ function formatDateInput(value?: Date | null) {
   return value.toISOString().slice(0, 10);
 }
 
+type VisaCaseRow = {
+  id: string;
+  caseReference: string;
+  visaServiceType: string | null;
+  otherServiceDescription: string | null;
+  caseStage: CaseStage;
+  visaStatus: VisaStatus;
+  status: string;
+  visaExpiryDate: Date | null;
+  startedAt: Date;
+  completedAt: Date | null;
+  notes: string | null;
+};
+
+function VisaCasesSection({
+  studentId,
+  currentCase,
+  visaCases,
+  action,
+}: {
+  studentId: string;
+  currentCase: {
+    caseReference: string;
+    visaServiceType: string | null;
+    otherServiceDescription: string | null;
+    caseStage: CaseStage;
+    visaStatus: VisaStatus;
+    visaExpiryDate: Date | null;
+  };
+  visaCases: VisaCaseRow[];
+  action: (formData: FormData) => Promise<void>;
+}) {
+  const previousCases = visaCases.filter(
+    (visaCase) => visaCase.caseReference !== currentCase.caseReference,
+  );
+
+  return (
+    <section className="scroll-mt-24 rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">Visa Cases</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Keep one client profile while tracking each visa/application as its own case.
+          </p>
+        </div>
+        <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${caseStageTone(currentCase.caseStage)}`}>
+          Active: {currentCase.caseReference}
+        </span>
+      </div>
+
+      <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_1fr]">
+        <article className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Current case</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">{currentCase.caseReference}</p>
+          <p className="mt-1 text-sm text-slate-700">
+            {formatVisaServiceDisplay({
+              visaServiceType: currentCase.visaServiceType,
+              otherServiceDescription: currentCase.otherServiceDescription,
+            })}
+          </p>
+          <p className="mt-1 text-xs text-slate-600">
+            {caseStageLabel(currentCase.caseStage)} · {formatVisaStatus(currentCase.visaStatus)}
+            {currentCase.visaExpiryDate ? ` · Expires ${currentCase.visaExpiryDate.toLocaleDateString()}` : ""}
+          </p>
+        </article>
+
+        <form action={action} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <input type="hidden" name="studentId" value={studentId} />
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Start new case</p>
+          <div className="mt-3 grid gap-2">
+            <select
+              name="visaServiceType"
+              defaultValue={currentCase.visaServiceType ?? ""}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            >
+              <option value="">Use existing service / decide later</option>
+              {VISA_SERVICE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <input
+              name="otherServiceDescription"
+              placeholder="Service note for Other Services (optional)"
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400"
+            />
+            <textarea
+              name="notes"
+              rows={2}
+              placeholder="New case notes (optional)"
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400"
+            />
+            <button
+              type="submit"
+              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+            >
+              Start New Case
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div className="mt-4">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Previous cases</p>
+        {previousCases.length === 0 ? (
+          <p className="mt-2 text-sm text-slate-600">No previous visa cases yet.</p>
+        ) : (
+          <ul className="mt-2 space-y-2">
+            {previousCases.map((visaCase) => (
+              <li key={visaCase.id} className="rounded-lg border border-slate-200 bg-white p-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">{visaCase.caseReference}</p>
+                    <p className="mt-0.5 text-xs text-slate-600">
+                      {formatVisaServiceDisplay({
+                        visaServiceType: visaCase.visaServiceType,
+                        otherServiceDescription: visaCase.otherServiceDescription,
+                      })}{" "}
+                      · {caseStageLabel(visaCase.caseStage)} · {formatVisaStatus(visaCase.visaStatus)}
+                    </p>
+                    {visaCase.notes ? <p className="mt-1 text-xs text-slate-600">{visaCase.notes}</p> : null}
+                  </div>
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-semibold text-slate-600">
+                    {visaCase.status}
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+}
+
 const QUESTIONNAIRE_ANSWER_LABELS: Record<string, string> = {
   otherServiceDescription: "Service requested",
   visaServiceType: "Service type",
@@ -1924,6 +2085,105 @@ function studentOverviewCaseStageUrl(studentId: string) {
 
 function studentOverviewUrl(studentId: string) {
   return `/dashboard/students/${studentId}?tab=overview`;
+}
+
+async function startNewVisaCaseAction(formData: FormData) {
+  "use server";
+
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+  if (
+    session.user.role !== "ADMIN" &&
+    session.user.role !== "SUB_ADMIN" &&
+    session.user.role !== "INTERNAL_STAFF"
+  ) {
+    redirect("/dashboard");
+  }
+
+  const studentId = String(formData.get("studentId") ?? "");
+  const visaServiceTypeRaw = String(formData.get("visaServiceType") ?? "").trim();
+  const visaServiceType = visaServiceTypeRaw && isVisaServiceType(visaServiceTypeRaw) ? visaServiceTypeRaw : null;
+  const otherServiceDescription = nullableText(formData.get("otherServiceDescription"));
+  const notes = nullableText(formData.get("notes"));
+  if (!studentId) redirect("/dashboard");
+
+  const result = await prisma.$transaction(async (tx) => {
+    const profile = await tx.studentProfile.findUnique({
+      where: { userId: studentId },
+      select: {
+        id: true,
+        user: { select: { name: true, email: true } },
+      },
+    });
+    if (!profile) throw new Error("Student profile not found");
+
+    if (session.user.role === "INTERNAL_STAFF") {
+      const assignment = await tx.studentAssignment.findFirst({
+        where: {
+          studentProfileId: profile.id,
+          assignedToId: session.user.id,
+          isActive: true,
+        },
+        select: { id: true },
+      });
+      if (!assignment) throw new Error("Not assigned to this client");
+    }
+
+    const newCase = await startNewVisaCaseForProfile(tx, {
+      studentProfileId: profile.id,
+      visaServiceType,
+      otherServiceDescription,
+      notes,
+    });
+
+    const template = await tx.questionnaireTemplate.findFirst({
+      where: { isActive: true },
+      orderBy: { updatedAt: "desc" },
+      select: { id: true },
+    });
+    let submissionId: string | null = null;
+    if (template) {
+      const submission = await tx.questionnaireSubmission.create({
+        data: {
+          studentId,
+          templateId: template.id,
+          assignedToId: session.user.role === "SUB_ADMIN" ? session.user.id : null,
+          answers: {
+            visaServiceType: visaServiceType ?? "",
+            otherServiceDescription: otherServiceDescription ?? "",
+            notes: notes ?? "",
+            source: "Started from existing client profile",
+          },
+        },
+        select: { id: true },
+      });
+      submissionId = submission.id;
+    }
+
+    await tx.activityLog.create({
+      data: {
+        actorId: session.user.id,
+        targetStudentProfileId: profile.id,
+        entityType: "CASE_STAGE",
+        entityId: profile.id,
+        action: `Started new visa case ${newCase.caseReference}`,
+        metadata: {
+          caseReference: newCase.caseReference,
+          visaServiceType,
+          previousStatus: newCase.previousStatus,
+          submissionId,
+        },
+      },
+    });
+
+    return newCase;
+  });
+
+  revalidatePath(`/dashboard/students/${studentId}`);
+  revalidatePath("/dashboard/admin");
+  revalidatePath("/dashboard/sub-admin");
+  revalidatePath("/dashboard/internal-staff");
+  redirect(`/dashboard/students/${studentId}?tab=overview#case-stage`);
 }
 
 async function saveStudentProfileAction(formData: FormData) {
@@ -2080,7 +2340,21 @@ async function saveStudentProfileAction(formData: FormData) {
       nextFollowUpDate,
       followUpNotes: nullableText(formData.get("followUpNotes")),
     },
-    select: { id: true },
+    select: {
+      id: true,
+      caseReference: true,
+      visaServiceType: true,
+      otherServiceDescription: true,
+      caseStage: true,
+      visaStatus: true,
+      courseStartDate: true,
+      courseEndDate: true,
+      visaExpiryDate: true,
+    },
+  });
+
+  await prisma.$transaction(async (tx) => {
+    await syncActiveVisaCaseFromProfile(tx, profile);
   });
 
   await prisma.activityLog.create({
@@ -2663,8 +2937,14 @@ async function updateCaseStageAction(formData: FormData) {
     where: { userId: studentId },
     select: {
       id: true,
+      caseReference: true,
       caseStage: true,
+      visaStatus: true,
       visaServiceType: true,
+      otherServiceDescription: true,
+      courseStartDate: true,
+      courseEndDate: true,
+      visaExpiryDate: true,
       assignments: {
         where: { isActive: true },
         select: { assignedToId: true },
@@ -2700,12 +2980,49 @@ async function updateCaseStageAction(formData: FormData) {
     redirect(studentOverviewCaseStageUrl(studentId));
   }
 
-  await prisma.studentProfile.update({
-    where: { id: profile.id },
-    data: {
-      caseStage: stageRaw,
-      caseStageUpdatedAt: new Date(),
-    },
+  const stageUpdatedAt = new Date();
+  const latestSubmission =
+    stageRaw === "VISA_GRANTED"
+      ? await prisma.questionnaireSubmission.findFirst({
+          where: { studentId },
+          orderBy: { submittedAt: "desc" },
+          select: { id: true },
+        })
+      : null;
+
+  await prisma.$transaction(async (tx) => {
+    const updatedProfile = await tx.studentProfile.update({
+      where: { id: profile.id },
+      data: {
+        caseStage: stageRaw,
+        caseStageUpdatedAt: stageUpdatedAt,
+        ...(stageRaw === "VISA_GRANTED" ? { visaStatus: "APPROVED" } : {}),
+      },
+      select: {
+        id: true,
+        caseReference: true,
+        visaServiceType: true,
+        otherServiceDescription: true,
+        caseStage: true,
+        visaStatus: true,
+        courseStartDate: true,
+        courseEndDate: true,
+        visaExpiryDate: true,
+      },
+    });
+    await syncActiveVisaCaseFromProfile(tx, updatedProfile);
+    if (stageRaw === "VISA_GRANTED") {
+      await tx.visaCase.updateMany({
+        where: { studentProfileId: profile.id, status: "ACTIVE" },
+        data: { status: "COMPLETED", completedAt: stageUpdatedAt },
+      });
+    }
+    if (latestSubmission) {
+      await tx.questionnaireSubmission.update({
+        where: { id: latestSubmission.id },
+        data: { status: "VISA_GRANTED" },
+      });
+    }
   });
 
   await prisma.activityLog.create({
@@ -2715,7 +3032,16 @@ async function updateCaseStageAction(formData: FormData) {
       entityType: "CASE_STAGE",
       entityId: profile.id,
       action: `Moved case stage: ${caseStageLabel(previous)} → ${caseStageLabel(stageRaw)}`,
-      metadata: { from: previous, to: stageRaw },
+      metadata: {
+        from: previous,
+        to: stageRaw,
+        ...(stageRaw === "VISA_GRANTED"
+          ? {
+              syncedVisaStatus: "APPROVED",
+              syncedSubmissionStatus: latestSubmission ? "VISA_GRANTED" : null,
+            }
+          : {}),
+      },
     },
   });
 
@@ -2799,6 +3125,8 @@ async function uploadStudentDocumentAction(formData: FormData) {
     "TRANSCRIPT",
     "SOP",
     "OFFER_LETTER",
+    "COE",
+    "HEALTH_INSURANCE",
     "VISA",
     "FINANCIAL",
     "IDENTITY",
