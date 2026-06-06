@@ -1,6 +1,7 @@
 import { DeleteWithConfirm } from "@/components/delete-with-confirm";
 import { FileSizeLimitedForm } from "@/components/file-size-limited-form";
 import type { TaskAssigneeOption } from "@/lib/task-assignment";
+import { taskStatusCardClass } from "@/lib/task-status-styles";
 import { MAX_STUDENT_DOCUMENT_UPLOAD_MB } from "@/lib/upload-limits";
 
 type TaskRow = {
@@ -67,6 +68,8 @@ const DOCUMENT_CATEGORY_ORDER = [
   "TRANSCRIPT",
   "SOP",
   "OFFER_LETTER",
+  "COE",
+  "HEALTH_INSURANCE",
   "VISA",
   "FINANCIAL",
   "OTHER",
@@ -78,6 +81,8 @@ const DOCUMENT_CATEGORY_LABELS: Record<string, string> = {
   TRANSCRIPT: "Transcripts",
   SOP: "Statement of Purpose",
   OFFER_LETTER: "Offer Letters",
+  COE: "COE",
+  HEALTH_INSURANCE: "Health Insurance",
   VISA: "Visa",
   FINANCIAL: "Financial",
   OTHER: "Other",
@@ -89,6 +94,8 @@ const DOCUMENT_CATEGORY_BADGE_CLASSES: Record<string, string> = {
   TRANSCRIPT: "bg-emerald-50 text-emerald-700 border-emerald-200",
   SOP: "bg-purple-50 text-purple-700 border-purple-200",
   OFFER_LETTER: "bg-blue-50 text-blue-700 border-blue-200",
+  COE: "bg-teal-50 text-teal-700 border-teal-200",
+  HEALTH_INSURANCE: "bg-pink-50 text-pink-700 border-pink-200",
   VISA: "bg-cyan-50 text-cyan-700 border-cyan-200",
   FINANCIAL: "bg-rose-50 text-rose-700 border-rose-200",
   OTHER: "bg-slate-100 text-slate-700 border-slate-200",
@@ -302,7 +309,7 @@ export function TasksDocumentsTab({
           ) : (
             <div className="max-h-72 space-y-3 overflow-y-auto pr-1">
               {tasks.map((task) => (
-                <article key={task.id} className="rounded-lg border border-slate-200 bg-slate-50/50 p-4">
+                <article key={task.id} className={`rounded-lg border p-4 ${taskStatusCardClass(task.status)}`}>
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-start gap-3">
                       <input

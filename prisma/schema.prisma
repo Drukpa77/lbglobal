@@ -66,6 +66,8 @@ enum DocumentCategory {
   TRANSCRIPT
   SOP
   OFFER_LETTER
+  COE
+  HEALTH_INSURANCE
   VISA
   FINANCIAL
   IDENTITY
@@ -76,6 +78,13 @@ enum DocumentVerificationStatus {
   PENDING
   VERIFIED
   REJECTED
+}
+
+enum VisaCaseStatus {
+  ACTIVE
+  COMPLETED
+  SUPERSEDED
+  WITHDRAWN
 }
 
 enum WorkflowNotificationType {
@@ -296,9 +305,33 @@ model StudentProfile {
   tasks                   Task[]
   conversations           Conversation[]         @relation("StudentConversation")
   assignments             StudentAssignment[]
+  visaCases               VisaCase[]
   activities              ActivityLog[]          @relation("ActivityTargetStudent")
   workflowNotifications   WorkflowNotification[]
   leads                   Lead[]
+}
+
+model VisaCase {
+  id                      String         @id @default(cuid())
+  studentProfileId        String
+  caseReference           String         @unique
+  visaServiceType         String?
+  otherServiceDescription String?        @db.Text
+  caseStage               CaseStage      @default(CONSULTATION_AND_DOCUMENTATION)
+  visaStatus              VisaStatus     @default(NOT_STARTED)
+  status                  VisaCaseStatus @default(ACTIVE)
+  courseStartDate         DateTime?
+  courseEndDate           DateTime?
+  visaExpiryDate          DateTime?
+  startedAt               DateTime       @default(now())
+  completedAt             DateTime?
+  notes                   String?        @db.Text
+  createdAt               DateTime       @default(now())
+  updatedAt               DateTime       @updatedAt
+  studentProfile          StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+
+  @@index([studentProfileId, status])
+  @@index([startedAt])
 }
 
 model QuestionnaireTemplate {
