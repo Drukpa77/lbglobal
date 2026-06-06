@@ -3603,14 +3603,14 @@ async function createContractPreviewAction(formData: FormData) {
     if (!assigned) redirect(studentFinancialsUrl(studentId));
   }
 
-  const student = await prisma.user.findUnique({
-    where: { id: studentId },
-    include: { studentProfile: true },
-  });
+  const [student, companySettings] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: studentId },
+      include: { studentProfile: true },
+    }),
+    getCompanySettings(),
+  ]);
   if (!student?.studentProfile) redirect(studentFinancialsUrl(studentId));
-
-  const { getCompanySettings } = await import("@/lib/company-settings");
-  const companySettings = await getCompanySettings();
 
   const contractNumber = `CTR-${Date.now().toString().slice(-8)}`;
   const studentName = student.name ?? student.email;
