@@ -95,8 +95,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
   const isOverviewTab = tab === "overview";
   const isQueueTab = tab === "queue";
   const isTasksTab = tab === "tasks";
-  const isStudentsTab = tab === "students";
-  const needsAssignments = isOverviewTab || isQueueTab || isStudentsTab || tab === "visa-outcomes";
+  const needsAssignments = true;
   const needsTasks = isOverviewTab || isQueueTab || isTasksTab;
   const needsPendingDocs = isOverviewTab || isQueueTab;
 
