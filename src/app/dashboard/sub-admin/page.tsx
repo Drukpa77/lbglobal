@@ -134,7 +134,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   const isTasksTab = tab === "tasks";
   const isTeamTab = tab === "team";
   const isAdminViewer = session.user.role === "ADMIN";
-  const needsSubmissions = isOverviewTab || isStudentsTab || tab === "visa-outcomes";
+  const needsSubmissions = true;
   const needsTeamData = isOverviewTab || isTeamTab;
   const needsApprovalData = isOverviewTab || isStudentsTab;
 
@@ -159,7 +159,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     subAdminScope: session.user.role === "SUB_ADMIN" ? "all" : undefined,
     includeUnassignedForSubAdmin: session.user.role === "ADMIN",
   });
-  const activeSubmissionWhere = isStudentsTab || tab === "visa-outcomes" ? studentsSubmissionWhere : overviewSubmissionWhere;
+  const activeSubmissionWhere = isStudentsTab ? studentsSubmissionWhere : overviewSubmissionWhere;
 
   const today = new Date();
   const trendWindowStart = new Date(today);
@@ -170,6 +170,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   const [
     reminders,
     submissions,
+    studentsTabSubmissions,
     trendSubmissions,
     pendingReviews,
     offersInProgress,
@@ -215,6 +216,34 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
         orderBy: { submittedAt: "desc" },
         take: isStudentsTab ? 100 : 50,
       }) : Promise.resolve([]),
+      needsSubmissions && !isStudentsTab
+        ? prisma.questionnaireSubmission.findMany({
+            where: studentsSubmissionWhere,
+            include: {
+              student: {
+                include: {
+                  studentProfile: {
+                    include: {
+                      assignments: {
+                        where: { isActive: true },
+                        orderBy: { createdAt: "desc" },
+                        select: {
+                          id: true,
+                          assignedToId: true,
+                          assignedTo: { select: { name: true, email: true, role: true } },
+                          assignedBy: { select: { name: true, email: true } },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              assignedSubAdmin: { select: { id: true, name: true, email: true } },
+            },
+            orderBy: { submittedAt: "desc" },
+            take: 100,
+          })
+        : Promise.resolve([]),
       // trendSubmissions (500 rows) only needed for the overview trend chart
       isOverviewTab ? prisma.questionnaireSubmission.findMany({
         where: {
@@ -382,11 +411,16 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   }));
   const stageTotal = stageCounts.reduce((sum, item) => sum + item.count, 0);
 
+  const countSubmissionSource = isStudentsTab ? submissions : studentsTabSubmissions;
   const latestSubmissionPerStudent = dedupeLatestSubmissionPerStudent(submissions);
+  const latestStudentsTabSubmissionPerStudent = dedupeLatestSubmissionPerStudent(countSubmissionSource);
+  const activeStudentsTabItems = latestStudentsTabSubmissionPerStudent.filter(
+    (item) => !item.student.studentProfile || !caseStageTerminals.includes(item.student.studentProfile.caseStage),
+  );
   const activeSubmissionItems = latestSubmissionPerStudent.filter(
     (item) => !item.student.studentProfile || !caseStageTerminals.includes(item.student.studentProfile.caseStage),
   );
-  const assignedStudents = activeSubmissionItems.length;
+  const assignedStudents = activeStudentsTabItems.length;
   const myCaseCount = activeSubmissionItems.filter(
     (item) => item.assignedToId === session.user.id,
   ).length;
