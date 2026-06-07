@@ -5,11 +5,18 @@ import {
   formatVisaServiceDisplay,
 } from "@/lib/visa-services";
 
+type SendEmailAttachment = {
+  filename: string;
+  contentBase64: string;
+  contentType: string;
+};
+
 type SendEmailInput = {
   to: string;
   subject: string;
   html: string;
   replyTo?: string;
+  attachments?: SendEmailAttachment[];
 };
 
 type SendEmailResult =
@@ -46,6 +53,11 @@ function getGoogleSmtpConfig() {
   };
 }
 
+/** True when Google Workspace SMTP credentials are present (usable as a fallback). */
+export function isGoogleWorkspaceConfigured() {
+  return getGoogleSmtpConfig() !== null;
+}
+
 export async function sendGoogleWorkspaceEmail(
   input: SendEmailInput,
 ): Promise<SendEmailResult> {
@@ -76,6 +88,12 @@ export async function sendGoogleWorkspaceEmail(
       subject: input.subject,
       html: input.html,
       replyTo: input.replyTo,
+      attachments: input.attachments?.map((file) => ({
+        filename: file.filename,
+        content: file.contentBase64,
+        encoding: "base64",
+        contentType: file.contentType,
+      })),
     });
 
     return { ok: true, id: info.messageId };

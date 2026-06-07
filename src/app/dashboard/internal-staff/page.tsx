@@ -19,8 +19,10 @@ import { blobOpensThroughAuthenticatedApi } from "@/lib/blob-access";
 import { RemindersWidget } from "@/components/reminders-widget";
 import { StaffDashboardTasks } from "@/components/staff-dashboard-tasks";
 import { StudentClientIntakeForm } from "@/components/student-client-intake-form";
+import { VisaOutcomesPanel } from "@/components/visa-outcomes-panel";
 import { queueDevEmail } from "@/lib/email-outbox";
 import { generateNextCaseReference } from "@/lib/case-reference";
+import { startNewVisaCaseForProfile } from "@/lib/visa-cases";
 import {
   buildManualIntakeAnswers,
   buildManualIntakeProfileData,
@@ -66,6 +68,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
     | "queue"
     | "tasks"
     | "students"
+    | "visa-outcomes"
     | "contributions"
     | "deleted-clients";
   const isDeletedClientsTab = tab === "deleted-clients";
@@ -75,7 +78,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
   const inquiryLocation = normalizeInquiryLocationFilter(searchParams.inquiryLocation);
   const manualStudentError =
     searchParams.manualError === "duplicate"
-      ? "A client or staff account already exists with that email."
+      ? "A non-client account already exists with that email."
       : searchParams.manualError === "validation"
         ? "Please complete all required fields with valid details."
         : searchParams.manualError === "template"
@@ -93,11 +96,11 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
   const isQueueTab = tab === "queue";
   const isTasksTab = tab === "tasks";
   const isStudentsTab = tab === "students";
-  const needsAssignments = isOverviewTab || isQueueTab || isStudentsTab;
+  const needsAssignments = isOverviewTab || isQueueTab || isStudentsTab || tab === "visa-outcomes";
   const needsTasks = isOverviewTab || isQueueTab || isTasksTab;
   const needsPendingDocs = isOverviewTab || isQueueTab;
 
-  const [reminders, assignments, stagePipelineCounts, tasks, taskAssigneeOptions, conversations, followUps, pendingDocuments, deletedClientsCount, deletedClients] = await Promise.all([
+  const [reminders, assignments, stagePipelineCounts, tasks, taskAssigneeOptions, conversations, followUps, pendingDocuments, deletedClientsCount, deletedClients, visaOutcomes] = await Promise.all([
     isOverviewTab ? getRemindersForUser(session.user.role as "ADMIN" | "INTERNAL_STAFF", session.user.id) : Promise.resolve([]),
     needsAssignments ? prisma.studentAssignment.findMany({
       where: isAdmin
@@ -214,6 +217,25 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
     }) : Promise.resolve([]),
     prisma.user.count({ where: deletedClientUserWhere }),
     isDeletedClientsTab ? listDeletedClients() : Promise.resolve([]),
+    prisma.visaCase.findMany({
+          where: {
+            status: { not: "ACTIVE" },
+            caseStage: { in: caseStageTerminals },
+            studentProfile: {
+              user: { deletedAt: null },
+              ...(isAdmin ? {} : { assignments: { some: { assignedToId: session.user.id, isActive: true } } }),
+            },
+          },
+          include: {
+            studentProfile: {
+              select: {
+                user: { select: { id: true, name: true, email: true } },
+              },
+            },
+          },
+          orderBy: [{ completedAt: "desc" }, { startedAt: "desc" }],
+          take: 100,
+        }),
   ]);
 
   const openTasks = tasks.filter((task) => task.status !== "DONE");
@@ -237,8 +259,10 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
       latestInvoice: assignment.studentProfile.invoices[0],
     };
   });
-  const caseRows = allCaseRows.filter((row) =>
-    countryMatchesInquiryLocation(row.sourceCountry, inquiryLocation),
+  const caseRows = allCaseRows.filter(
+    (row) =>
+      countryMatchesInquiryLocation(row.sourceCountry, inquiryLocation) &&
+      !caseStageTerminals.includes(row.stage),
   );
   const activeCasePreview = caseRows.slice(0, 2).map((row) => {
     const studentName = row.assignment.studentProfile.user.name ?? row.assignment.studentProfile.user.email;
@@ -350,6 +374,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
           { id: "queue", label: "Work Queue", count: filteredOpenTasks.length },
           { id: "tasks", label: "Tasks & Docs", count: tasks.length + filteredPendingDocuments.length },
           { id: "students", label: "Cases", count: caseRows.length },
+          { id: "visa-outcomes", label: "Visa Outcomes", count: visaOutcomes.length },
           { id: "contributions", label: "Contributions" },
           { id: "deleted-clients", label: "Deleted Clients", count: deletedClientsCount },
         ]}
@@ -791,6 +816,8 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
         </div>
       )}
 
+      {tab === "visa-outcomes" && <VisaOutcomesPanel outcomes={visaOutcomes} />}
+
       {/* ── CONTRIBUTIONS TAB ──────────────────────────────────── */}
       {tab === "deleted-clients" && (
         <DeletedClientsTab
@@ -831,7 +858,16 @@ async function createManualStudentAction(formData: FormData) {
   if (!actor) redirect("/login");
 
   const [existingUser, template] = await Promise.all([
-    prisma.user.findUnique({ where: { email: intake.email }, select: { id: true } }),
+    prisma.user.findUnique({
+      where: { email: intake.email },
+      select: {
+        id: true,
+        role: true,
+        email: true,
+        name: true,
+        studentProfile: { select: { id: true } },
+      },
+    }),
     prisma.questionnaireTemplate.findFirst({
       where: { isActive: true },
       orderBy: { updatedAt: "desc" },
@@ -839,12 +875,90 @@ async function createManualStudentAction(formData: FormData) {
     }),
   ]);
 
-  if (existingUser) redirect("/dashboard/internal-staff?tab=students&manualError=duplicate");
+  if (existingUser && (existingUser.role !== "USER" || !existingUser.studentProfile)) {
+    redirect("/dashboard/internal-staff?tab=students&manualError=duplicate");
+  }
   if (!template) redirect("/dashboard/internal-staff?tab=students&manualError=template");
 
   const answers = buildManualIntakeAnswers(intake, { source: "Internal staff" });
 
   const created = await prisma.$transaction(async (tx) => {
+    if (existingUser?.studentProfile) {
+      await tx.user.update({
+        where: { id: existingUser.id },
+        data: { name: intake.name },
+      });
+
+      const newCase = await startNewVisaCaseForProfile(tx, {
+        studentProfileId: existingUser.studentProfile.id,
+        visaServiceType: intake.visaServiceType,
+        otherServiceDescription: intake.otherServiceDescription,
+        notes: intake.notes || "Started from internal staff intake for existing client",
+      });
+
+      const submission = await tx.questionnaireSubmission.create({
+        data: {
+          studentId: existingUser.id,
+          templateId: template.id,
+          assignedToId: null,
+          sourceCity: intake.city,
+          sourceCountry: intake.country,
+          intendedCourse: intake.isStudentVisa ? intake.course : null,
+          intendedIntake: intake.isStudentVisa ? intake.intake : null,
+          answers,
+        },
+        select: { id: true },
+      });
+
+      await tx.studentAssignment.upsert({
+        where: {
+          studentProfileId_assignedToId: {
+            studentProfileId: existingUser.studentProfile.id,
+            assignedToId: actor.id,
+          },
+        },
+        update: {
+          assignedById: actor.id,
+          notes: intake.notes || "New case started by internal staff",
+          isActive: true,
+          endedAt: null,
+        },
+        create: {
+          studentProfileId: existingUser.studentProfile.id,
+          assignedToId: actor.id,
+          assignedById: actor.id,
+          notes: intake.notes || "New case started by internal staff",
+          isActive: true,
+        },
+      });
+
+      await tx.activityLog.create({
+        data: {
+          actorId: actor.id,
+          targetUserId: existingUser.id,
+          targetStudentProfileId: existingUser.studentProfile.id,
+          entityType: "STUDENT",
+          entityId: existingUser.id,
+          action: `Started new case ${newCase.caseReference} through internal staff intake`,
+          metadata: {
+            visaServiceType: intake.visaServiceType,
+            source: "internal_staff_repeat",
+            submissionId: submission.id,
+            assignedToId: actor.id,
+            caseReference: newCase.caseReference,
+          },
+        },
+      });
+
+      return {
+        studentUserId: existingUser.id,
+        studentProfileId: existingUser.studentProfile.id,
+        submissionId: submission.id,
+        studentEmail: existingUser.email,
+        studentName: intake.name || existingUser.name || existingUser.email,
+      };
+    }
+
     const studentUser = await tx.user.create({
       data: {
         name: intake.name,

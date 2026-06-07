@@ -22,8 +22,10 @@ import { NewInquiriesCard } from "@/components/new-inquiries-card";
 import { RemindersWidget } from "@/components/reminders-widget";
 import { StaffDashboardTasks } from "@/components/staff-dashboard-tasks";
 import { StudentClientIntakeForm } from "@/components/student-client-intake-form";
+import { VisaOutcomesPanel } from "@/components/visa-outcomes-panel";
 import { queueDevEmail } from "@/lib/email-outbox";
 import { generateNextCaseReference } from "@/lib/case-reference";
+import { startNewVisaCaseForProfile } from "@/lib/visa-cases";
 import {
   buildManualIntakeAnswers,
   buildManualIntakeProfileData,
@@ -82,6 +84,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   const tab = (searchParams.tab ?? "overview") as
     | "overview"
     | "students"
+    | "visa-outcomes"
     | "tasks"
     | "team"
     | "contributions"
@@ -117,7 +120,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     stageRaw && (allCaseStages as string[]).includes(stageRaw) ? stageRaw : "";
   const manualStudentError =
     searchParams.manualError === "duplicate"
-      ? "A client or staff account already exists with that email."
+      ? "A non-client account already exists with that email."
       : searchParams.manualError === "validation"
         ? "Please complete all required fields with valid details."
         : searchParams.manualError === "template"
@@ -131,7 +134,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   const isTasksTab = tab === "tasks";
   const isTeamTab = tab === "team";
   const isAdminViewer = session.user.role === "ADMIN";
-  const needsSubmissions = isOverviewTab || isStudentsTab;
+  const needsSubmissions = isOverviewTab || isStudentsTab || tab === "visa-outcomes";
   const needsTeamData = isOverviewTab || isTeamTab;
   const needsApprovalData = isOverviewTab || isStudentsTab;
 
@@ -156,7 +159,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     subAdminScope: session.user.role === "SUB_ADMIN" ? "all" : undefined,
     includeUnassignedForSubAdmin: session.user.role === "ADMIN",
   });
-  const activeSubmissionWhere = isStudentsTab ? studentsSubmissionWhere : overviewSubmissionWhere;
+  const activeSubmissionWhere = isStudentsTab || tab === "visa-outcomes" ? studentsSubmissionWhere : overviewSubmissionWhere;
 
   const today = new Date();
   const trendWindowStart = new Date(today);
@@ -182,6 +185,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     newInquiriesLast24hCount,
     deletedClientsCount,
     deletedClients,
+    visaOutcomes,
   ] =
     await Promise.all([
       isOverviewTab ? getRemindersForUser(session.user.role as "ADMIN" | "SUB_ADMIN", session.user.id) : Promise.resolve([]),
@@ -349,9 +353,25 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
           ...(inquiryLocationWhere ?? {}),
         },
       }) : Promise.resolve(0),
-      prisma.user.count({ where: deletedClientUserWhere }),
-      isDeletedClientsTab ? listDeletedClients() : Promise.resolve([]),
-    ]);
+    prisma.user.count({ where: deletedClientUserWhere }),
+    isDeletedClientsTab ? listDeletedClients() : Promise.resolve([]),
+    prisma.visaCase.findMany({
+          where: {
+            status: { not: "ACTIVE" },
+            caseStage: { in: caseStageTerminals },
+            studentProfile: { user: { deletedAt: null } },
+          },
+          include: {
+            studentProfile: {
+              select: {
+                user: { select: { id: true, name: true, email: true } },
+              },
+            },
+          },
+          orderBy: [{ completedAt: "desc" }, { startedAt: "desc" }],
+          take: 100,
+        }),
+  ]);
 
   const stageCountMap = new Map<string, number>(
     stagePipelineCounts.map((row) => [row.caseStage, row._count._all]),
@@ -363,11 +383,14 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   const stageTotal = stageCounts.reduce((sum, item) => sum + item.count, 0);
 
   const latestSubmissionPerStudent = dedupeLatestSubmissionPerStudent(submissions);
-  const assignedStudents = latestSubmissionPerStudent.length;
-  const myCaseCount = latestSubmissionPerStudent.filter(
+  const activeSubmissionItems = latestSubmissionPerStudent.filter(
+    (item) => !item.student.studentProfile || !caseStageTerminals.includes(item.student.studentProfile.caseStage),
+  );
+  const assignedStudents = activeSubmissionItems.length;
+  const myCaseCount = activeSubmissionItems.filter(
     (item) => item.assignedToId === session.user.id,
   ).length;
-  const delegatedCaseCount = latestSubmissionPerStudent.filter((item) => {
+  const delegatedCaseCount = activeSubmissionItems.filter((item) => {
     const staffDelegations =
       item.student.studentProfile?.assignments.filter(
         (assignment) => assignment.assignedTo.role === "INTERNAL_STAFF",
@@ -442,13 +465,13 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   }).length;
   const locationQuery = inquiryLocation === "all" ? "" : `&inquiryLocation=${encodeURIComponent(inquiryLocation)}`;
   const exportUrl = `/api/submissions/export?search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}&country=${encodeURIComponent(country)}&course=${encodeURIComponent(course)}${locationQuery}`;
-  const visaExpiringSoonItems = latestSubmissionPerStudent.filter((item) => {
+  const visaExpiringSoonItems = activeSubmissionItems.filter((item) => {
     const visaExpiryDate = item.student.studentProfile?.visaExpiryDate;
     if (!visaExpiryDate) return false;
     const days = daysUntilDate(visaExpiryDate, today);
     return days >= 0 && days <= 90;
   });
-  const autoFollowUpItems = latestSubmissionPerStudent.filter((item) => {
+  const autoFollowUpItems = activeSubmissionItems.filter((item) => {
     const visaExpiryDate = item.student.studentProfile?.visaExpiryDate;
     const nextFollowUpDate = item.student.studentProfile?.nextFollowUpDate;
     const visaDays = visaExpiryDate ? daysUntilDate(visaExpiryDate, today) : null;
@@ -457,16 +480,15 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     const followUpWindow = followUpDays !== null && followUpDays >= 120 && followUpDays <= 150;
     return visaWindow || followUpWindow;
   });
-  const pendingItems = latestSubmissionPerStudent.filter((item) =>
+  const pendingItems = activeSubmissionItems.filter((item) =>
     ["SUBMITTED", "UNDER_REVIEW", "DOCS_REQUESTED"].includes(item.status),
   );
-  const offerInProgressItems = latestSubmissionPerStudent.filter((item) => item.status === "OFFER_RECEIVED");
-  const visaGrantedItems = latestSubmissionPerStudent.filter((item) => item.status === "VISA_GRANTED");
-  const enrolledItems = latestSubmissionPerStudent.filter((item) => item.status === "ENROLLED");
-  const rejectedItems = latestSubmissionPerStudent.filter((item) => item.status === "REJECTED");
-  const unassignedItems = latestSubmissionPerStudent.filter((item) => item.assignedToId === null);
+  const offerInProgressItems = activeSubmissionItems.filter((item) => item.status === "OFFER_RECEIVED");
+  const enrolledItems = activeSubmissionItems.filter((item) => item.status === "ENROLLED");
+  const rejectedItems = activeSubmissionItems.filter((item) => item.status === "REJECTED");
+  const unassignedItems = activeSubmissionItems.filter((item) => item.assignedToId === null);
   const pendingApprovalsCount = draftContractsCount + draftInvoicesCount + pendingDocumentsCount;
-  const overdueFollowUpsCount = latestSubmissionPerStudent.filter((item) => {
+  const overdueFollowUpsCount = activeSubmissionItems.filter((item) => {
     const next = item.student.studentProfile?.nextFollowUpDate;
     return next ? daysUntilDate(next, today) < 0 : false;
   }).length;
@@ -495,7 +517,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     ...draftInvoiceProfiles.map((item) => item.studentProfileId),
     ...pendingDocumentProfiles.map((item) => item.studentProfileId),
   ]);
-  const filteredSubmissions = latestSubmissionPerStudent.filter((submission) => {
+  const filteredSubmissions = activeSubmissionItems.filter((submission) => {
     if (stageFilter && submission.student.studentProfile?.caseStage !== stageFilter) {
       return false;
     }
@@ -545,18 +567,18 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   const conversionRate =
     submissions.length > 0 ? Math.round((enrolledItems.length / submissions.length) * 100) : 0;
   const pendingRatio = submissions.length > 0 ? Math.round((pendingItems.length / submissions.length) * 100) : 0;
-  const highVisaRiskItems = latestSubmissionPerStudent.filter((item) => {
+  const highVisaRiskItems = activeSubmissionItems.filter((item) => {
     const visaExpiryDate = item.student.studentProfile?.visaExpiryDate;
     if (!visaExpiryDate) return false;
     const days = daysUntilDate(visaExpiryDate, today);
     return days >= 0 && days <= 30;
   });
-  const missingFollowUpItems = latestSubmissionPerStudent.filter((item) => {
+  const missingFollowUpItems = activeSubmissionItems.filter((item) => {
     const needsFollowUp = ["SUBMITTED", "UNDER_REVIEW", "DOCS_REQUESTED", "OFFER_RECEIVED"].includes(item.status);
     if (!needsFollowUp) return false;
     return !item.student.studentProfile?.nextFollowUpDate;
   });
-  const pendingDocRiskItems = latestSubmissionPerStudent.filter((item) => {
+  const pendingDocRiskItems = activeSubmissionItems.filter((item) => {
     const profileId = item.student.studentProfile?.id;
     return profileId ? approvalProfileSet.has(profileId) : false;
   });
@@ -570,7 +592,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     .filter((staff) => staff.openTasks >= 8 || staff.activeCases >= 15)
     .slice(0, 2)
     .map((staff) => `${staff.name} - ${staff.openTasks} tasks / ${staff.activeCases} cases`);
-  const overdueFollowUpsPreview = latestSubmissionPerStudent
+  const overdueFollowUpsPreview = activeSubmissionItems
     .filter((item) => {
       const next = item.student.studentProfile?.nextFollowUpDate;
       return next ? daysUntilDate(next, today) < 0 : false;
@@ -592,6 +614,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
         tabs={[
           { id: "overview", label: "Overview" },
           { id: "students", label: "Cases", count: assignedStudents },
+          { id: "visa-outcomes", label: "Visa Outcomes", count: visaOutcomes.length },
           { id: "tasks", label: "Tasks", count: openTaskCount },
           { id: "team", label: "Team & Operations" },
           { id: "contributions", label: "Contributions" },
@@ -793,6 +816,8 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
         />
       )}
 
+      {tab === "visa-outcomes" && <VisaOutcomesPanel outcomes={visaOutcomes} />}
+
       {/* ── STUDENTS TAB ───────────────────────────────────────── */}
       {tab === "students" && (
         <div className="space-y-6">
@@ -858,16 +883,6 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                   locationFilter={inquiryLocation}
                 />
               ))}
-              {caseStageTerminals.map((stage) => (
-                <StageFilterChip
-                  key={stage}
-                  label={caseStageLabel(stage)}
-                  stage={stage}
-                  current={stageFilter}
-                  queue={queueFilter}
-                  locationFilter={inquiryLocation}
-                />
-              ))}
             </div>
           </section>
 
@@ -897,11 +912,6 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                   title="Offer In Progress"
                   items={offerInProgressItems}
                   emptyLabel="No clients in offer processing stage."
-                />
-                <CategoryCard
-                  title="Visa Granted"
-                  items={visaGrantedItems}
-                  emptyLabel="No visa granted clients in this view."
                 />
                 <CategoryCard
                   title="Enrolled"
@@ -2207,7 +2217,16 @@ async function createManualStudentAction(formData: FormData) {
   if (!actor) redirect("/login");
 
   const [existingUser, template] = await Promise.all([
-    prisma.user.findUnique({ where: { email: intake.email }, select: { id: true } }),
+    prisma.user.findUnique({
+      where: { email: intake.email },
+      select: {
+        id: true,
+        role: true,
+        email: true,
+        name: true,
+        studentProfile: { select: { id: true } },
+      },
+    }),
     prisma.questionnaireTemplate.findFirst({
       where: { isActive: true },
       orderBy: { updatedAt: "desc" },
@@ -2215,12 +2234,68 @@ async function createManualStudentAction(formData: FormData) {
     }),
   ]);
 
-  if (existingUser) redirect("/dashboard/sub-admin?tab=students&manualError=duplicate");
+  if (existingUser && (existingUser.role !== "USER" || !existingUser.studentProfile)) {
+    redirect("/dashboard/sub-admin?tab=students&manualError=duplicate");
+  }
   if (!template) redirect("/dashboard/sub-admin?tab=students&manualError=template");
 
   const answers = buildManualIntakeAnswers(intake, { source: "Agent" });
 
   const created = await prisma.$transaction(async (tx) => {
+    if (existingUser?.studentProfile) {
+      await tx.user.update({
+        where: { id: existingUser.id },
+        data: { name: intake.name },
+      });
+
+      const newCase = await startNewVisaCaseForProfile(tx, {
+        studentProfileId: existingUser.studentProfile.id,
+        visaServiceType: intake.visaServiceType,
+        otherServiceDescription: intake.otherServiceDescription,
+        notes: intake.notes || "Started from agent intake for existing client",
+      });
+
+      const submission = await tx.questionnaireSubmission.create({
+        data: {
+          studentId: existingUser.id,
+          templateId: template.id,
+          assignedToId: actor.id,
+          sourceCity: intake.city,
+          sourceCountry: intake.country,
+          intendedCourse: intake.isStudentVisa ? intake.course : null,
+          intendedIntake: intake.isStudentVisa ? intake.intake : null,
+          answers,
+        },
+        select: { id: true },
+      });
+
+      await tx.activityLog.create({
+        data: {
+          actorId: actor.id,
+          targetUserId: existingUser.id,
+          targetStudentProfileId: existingUser.studentProfile.id,
+          entityType: "STUDENT",
+          entityId: existingUser.id,
+          action: `Started new case ${newCase.caseReference} through agent intake`,
+          metadata: {
+            visaServiceType: intake.visaServiceType,
+            source: "sub_admin_repeat",
+            submissionId: submission.id,
+            assignedToId: actor.id,
+            caseReference: newCase.caseReference,
+          },
+        },
+      });
+
+      return {
+        studentUserId: existingUser.id,
+        studentProfileId: existingUser.studentProfile.id,
+        submissionId: submission.id,
+        studentEmail: existingUser.email,
+        studentName: intake.name || existingUser.name || existingUser.email,
+      };
+    }
+
     const studentUser = await tx.user.create({
       data: {
         name: intake.name,

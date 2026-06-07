@@ -133,6 +133,7 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
     newInquiriesLast24hCount,
     deletedClientsCount,
     deletedClients,
+    failedEmailLast24hCount,
   ] = await Promise.all([
     isOverviewTab ? getRemindersForUser("ADMIN", session.user.id) : Promise.resolve([]),
     prisma.user.count({ where: activeClientUserWhere }),
@@ -272,6 +273,11 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
     }) : Promise.resolve(0),
     prisma.user.count({ where: deletedClientUserWhere }),
     isDeletedClientsTab ? listDeletedClients() : Promise.resolve([]),
+    isOverviewTab
+      ? prisma.outboundEmailLog.count({
+          where: { status: "FAILED", createdAt: { gte: oneDayAgoForFreshInquiries } },
+        })
+      : Promise.resolve(0),
   ]);
 
   const stageCountMap = new Map<string, number>(
@@ -457,6 +463,21 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
       {/* ── OVERVIEW TAB ───────────────────────────────────────── */}
       {tab === "overview" && (
         <div className="space-y-6">
+          {failedEmailLast24hCount > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+              <p>
+                <strong>{failedEmailLast24hCount}</strong> email{failedEmailLast24hCount === 1 ? "" : "s"} failed to send in
+                the last 24 hours. Recipients did not receive their notifications.
+              </p>
+              <Link
+                href="/dashboard/admin/email-logs?status=FAILED"
+                className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100"
+              >
+                View email logs
+              </Link>
+            </div>
+          )}
+
           {reminders.length > 0 && (
             <RemindersWidget reminders={reminders} title="Reminders" maxItems={8} />
           )}
@@ -963,6 +984,9 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
             </Link>
             <Link href="/dashboard/admin/templates" className="rounded-md border px-3 py-2 text-sm">
               Manage email templates
+            </Link>
+            <Link href="/dashboard/admin/email-logs" className="rounded-md border px-3 py-2 text-sm">
+              Email delivery logs
             </Link>
             <Link href="/dashboard/admin/settings" className="rounded-md border px-3 py-2 text-sm">
               Company / Invoice settings
