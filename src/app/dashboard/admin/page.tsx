@@ -815,27 +815,33 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
                           </button>
                         </form>
                         {submission.student.studentProfile && internalStaffUsers.length > 0 ? (
-                          <form action={delegateStudentFromAdminAction} className="min-w-64 rounded-md border border-gray-200 p-2">
+                          <form action={delegateStudentFromAdminAction} className="relative w-full sm:w-auto">
                             <input type="hidden" name="studentId" value={submission.studentId} />
                             <input type="hidden" name="anchorId" value={`submission-${submission.id}`} />
-                            <p className="mb-1 text-xs font-semibold text-gray-700">Delegate to staff</p>
-                            <div className="max-h-28 space-y-1 overflow-y-auto pr-1">
-                              {internalStaffUsers.map((staff) => (
-                                <label key={staff.id} className="flex items-center gap-2 text-xs text-gray-700">
-                                  <input
-                                    type="checkbox"
-                                    name="internalStaffIds"
-                                    value={staff.id}
-                                    defaultChecked={activeInternalDelegationIds.has(staff.id)}
-                                    className="h-4 w-4"
-                                  />
-                                  <span>{staff.name ?? staff.email}</span>
-                                </label>
-                              ))}
-                            </div>
-                            <button type="submit" className="mt-2 rounded-md border px-3 py-1 text-sm">
-                              Update delegation
-                            </button>
+                            <details className="relative">
+                              <summary className="w-full cursor-pointer list-none rounded-md border border-gray-300 bg-white px-3 py-1 text-sm text-gray-800 transition hover:bg-gray-50 sm:w-auto">
+                                Delegate to staff
+                              </summary>
+                              <div className="absolute left-0 right-0 z-20 mt-2 max-h-72 overflow-y-auto rounded-md border border-gray-200 bg-white p-3 shadow-lg sm:left-auto sm:w-72">
+                                <div className="space-y-1">
+                                  {internalStaffUsers.map((staff) => (
+                                    <label key={staff.id} className="flex items-center gap-2 rounded px-2 py-1.5 text-xs text-gray-700 hover:bg-gray-50">
+                                      <input
+                                        type="checkbox"
+                                        name="internalStaffIds"
+                                        value={staff.id}
+                                        defaultChecked={activeInternalDelegationIds.has(staff.id)}
+                                        className="h-4 w-4 shrink-0"
+                                      />
+                                      <span className="min-w-0 truncate">{staff.name ?? staff.email}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                                <button type="submit" className="mt-3 w-full rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-gray-50">
+                                  Update delegation
+                                </button>
+                              </div>
+                            </details>
                           </form>
                         ) : null}
                         <DeleteWithConfirm
@@ -1582,41 +1588,39 @@ async function delegateStudentFromAdminAction(formData: FormData) {
       .filter((assignment) => assignment.isActive)
       .map((assignment) => assignment.assignedToId),
   );
-  const existingAssignmentsByStaffId = new Map(
-    currentAssignments.map((assignment) => [assignment.assignedToId, assignment]),
-  );
-
   await prisma.$transaction(async (tx) => {
+    // Only deactivate internal-staff assignments; never touch agent (SUB_ADMIN)
+    // team membership from the internal-staff delegation form.
     await tx.studentAssignment.updateMany({
       where: {
         studentProfileId: studentProfile.id,
         isActive: true,
+        assignedTo: { role: "INTERNAL_STAFF" },
         assignedToId: { notIn: Array.from(validStaffIds) },
       },
       data: { isActive: false, endedAt: now },
     });
 
     for (const staffId of validStaffIds) {
-      const existing = existingAssignmentsByStaffId.get(staffId);
-      if (existing) {
-        await tx.studentAssignment.update({
-          where: { id: existing.id },
-          data: {
-            assignedById: session.user.id,
-            isActive: true,
-            endedAt: null,
-          },
-        });
-      } else {
-        await tx.studentAssignment.create({
-          data: {
+      await tx.studentAssignment.upsert({
+        where: {
+          studentProfileId_assignedToId: {
             studentProfileId: studentProfile.id,
             assignedToId: staffId,
-            assignedById: session.user.id,
-            isActive: true,
           },
-        });
-      }
+        },
+        update: {
+          assignedById: session.user.id,
+          isActive: true,
+          endedAt: null,
+        },
+        create: {
+          studentProfileId: studentProfile.id,
+          assignedToId: staffId,
+          assignedById: session.user.id,
+          isActive: true,
+        },
+      });
     }
   });
 

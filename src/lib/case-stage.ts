@@ -7,6 +7,7 @@ export const studentOnlyCaseStages: CaseStage[] = [
   CaseStage.ENROLMENT_PROCESS,
   CaseStage.CONDITIONAL_OFFER_LETTER,
   CaseStage.UNCONDITIONAL_OFFER_LETTER,
+  CaseStage.AWAITING_TUITION_PAYMENT,
   CaseStage.TUITION_FEE_AND_OSHC_PAID,
   CaseStage.COE_RECEIVED,
   CaseStage.GTE_PROCESS,
@@ -18,6 +19,7 @@ export const caseStageOrder: CaseStage[] = [
   CaseStage.ENROLMENT_PROCESS,
   CaseStage.CONDITIONAL_OFFER_LETTER,
   CaseStage.UNCONDITIONAL_OFFER_LETTER,
+  CaseStage.AWAITING_TUITION_PAYMENT,
   CaseStage.TUITION_FEE_AND_OSHC_PAID,
   CaseStage.COE_RECEIVED,
   CaseStage.GTE_PROCESS,
@@ -43,6 +45,7 @@ const labels: Record<CaseStage, string> = {
   ENROLMENT_PROCESS: "Enrolment Process",
   CONDITIONAL_OFFER_LETTER: "Conditional Offer Letter",
   UNCONDITIONAL_OFFER_LETTER: "Unconditional Offer Letter",
+  AWAITING_TUITION_PAYMENT: "Awaiting Tuition Payment",
   TUITION_FEE_AND_OSHC_PAID: "Tuition Fee and OSHC Paid",
   COE_RECEIVED: "COE Received",
   GTE_PROCESS: "GTE Process",
@@ -67,6 +70,7 @@ export function caseStageTone(stage: CaseStage): string {
     case CaseStage.CONDITIONAL_OFFER_LETTER:
     case CaseStage.UNCONDITIONAL_OFFER_LETTER:
       return "bg-blue-50 text-blue-700 border-blue-200";
+    case CaseStage.AWAITING_TUITION_PAYMENT:
     case CaseStage.TUITION_FEE_AND_OSHC_PAID:
     case CaseStage.COE_RECEIVED:
       return "bg-violet-50 text-violet-700 border-violet-200";

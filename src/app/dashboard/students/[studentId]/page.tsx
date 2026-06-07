@@ -461,6 +461,10 @@ export default async function StudentProfileManagementPage(props: { params: Para
   const agentsForDelegation = delegationTeamUsers.filter(
     (u) => u.role === "SUB_ADMIN" && !activeAssigneeIds.has(u.id),
   );
+  const availableDelegationMembers = [
+    ...caseManagersForDelegation,
+    ...agentsForDelegation,
+  ];
   const tabBase = `/dashboard/students/${studentId}`;
   const showDeleteStudentButton =
     session.user.role === "ADMIN" ||
@@ -867,37 +871,61 @@ export default async function StudentProfileManagementPage(props: { params: Para
         ) : (
           <form action={assignStudentDelegationAction} className="mt-4 flex flex-wrap items-end gap-4">
             <input type="hidden" name="studentId" value={studentId} />
-            <label className="block">
-              <span className="text-sm font-medium text-slate-700">Add case manager or agent</span>
-              <select
-                name="assigneeId"
-                required
-                className="mt-1.5 min-w-64 rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-                defaultValue=""
-              >
-                <option value="" disabled>
-                  Select case manager or agent
-                </option>
-                {caseManagersForDelegation.length > 0 ? (
-                  <optgroup label="Case managers">
-                    {caseManagersForDelegation.map((member) => (
-                      <option key={member.id} value={member.id}>
-                        {member.name ?? member.email}
-                      </option>
-                    ))}
-                  </optgroup>
-                ) : null}
-                {agentsForDelegation.length > 0 ? (
-                  <optgroup label="Agents">
-                    {agentsForDelegation.map((member) => (
-                      <option key={member.id} value={member.id}>
-                        {member.name ?? member.email}
-                      </option>
-                    ))}
-                  </optgroup>
-                ) : null}
-              </select>
-            </label>
+            <div className="block">
+              <span className="text-sm font-medium text-slate-700">Add case managers or agents</span>
+              <details className="relative mt-1.5 min-w-72">
+                <summary className="cursor-pointer list-none rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-base text-slate-900 transition hover:border-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400">
+                  Select one or more staff
+                </summary>
+                <div className="absolute z-20 mt-2 max-h-80 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white p-3 shadow-lg">
+                  {availableDelegationMembers.length === 0 ? (
+                    <p className="px-2 py-1 text-sm text-slate-500">All eligible staff are already assigned.</p>
+                  ) : null}
+                  {caseManagersForDelegation.length > 0 ? (
+                    <fieldset className="space-y-2">
+                      <legend className="px-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Case managers
+                      </legend>
+                      {caseManagersForDelegation.map((member) => (
+                        <label
+                          key={member.id}
+                          className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-800 transition hover:bg-slate-50"
+                        >
+                          <input
+                            type="checkbox"
+                            name="assigneeIds"
+                            value={member.id}
+                            className="h-4 w-4 rounded border-slate-300 text-rose-500 focus:ring-rose-400"
+                          />
+                          <span>{member.name ?? member.email}</span>
+                        </label>
+                      ))}
+                    </fieldset>
+                  ) : null}
+                  {agentsForDelegation.length > 0 ? (
+                    <fieldset className={caseManagersForDelegation.length > 0 ? "mt-3 space-y-2" : "space-y-2"}>
+                      <legend className="px-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Agents
+                      </legend>
+                      {agentsForDelegation.map((member) => (
+                        <label
+                          key={member.id}
+                          className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-800 transition hover:bg-slate-50"
+                        >
+                          <input
+                            type="checkbox"
+                            name="assigneeIds"
+                            value={member.id}
+                            className="h-4 w-4 rounded border-slate-300 text-rose-500 focus:ring-rose-400"
+                          />
+                          <span>{member.name ?? member.email}</span>
+                        </label>
+                      ))}
+                    </fieldset>
+                  ) : null}
+                </div>
+              </details>
+            </div>
             <label className="block">
               <span className="text-sm font-medium text-slate-700">Notes (optional)</span>
               <input
@@ -907,7 +935,8 @@ export default async function StudentProfileManagementPage(props: { params: Para
             </label>
             <button
               type="submit"
-              className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
+              disabled={availableDelegationMembers.length === 0}
+              className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Add to team
             </button>
@@ -2439,11 +2468,19 @@ async function assignStudentDelegationAction(formData: FormData) {
   const studentId = String(formData.get("studentId") ?? "");
   const returnToProfileTab = studentId ? studentProfileUrl(studentId) : "/dashboard";
 
-  const assigneeIdRaw =
-    String(formData.get("assigneeId") ?? "").trim() ||
-    String(formData.get("internalStaffId") ?? "").trim();
+  const assigneeIds = Array.from(
+    new Set(
+      [
+        ...formData.getAll("assigneeIds"),
+        formData.get("assigneeId"),
+        formData.get("internalStaffId"),
+      ]
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean),
+    ),
+  );
   const notes = nullableText(formData.get("notes"));
-  if (!studentId || !assigneeIdRaw) redirect(returnToProfileTab);
+  if (!studentId || assigneeIds.length === 0) redirect(returnToProfileTab);
 
   await assertStudentDelegationAccess(session, studentId);
 
@@ -2453,65 +2490,86 @@ async function assignStudentDelegationAction(formData: FormData) {
   });
   if (!studentProfile) redirect(returnToProfileTab);
 
-  const assignee = await prisma.user.findFirst({
-    where: { id: assigneeIdRaw, role: { in: ["INTERNAL_STAFF", "SUB_ADMIN"] } },
+  const assignees = await prisma.user.findMany({
+    where: { id: { in: assigneeIds }, role: { in: ["INTERNAL_STAFF", "SUB_ADMIN"] } },
     select: { id: true, role: true, name: true, email: true },
   });
-  if (!assignee) redirect(returnToProfileTab);
+  const assigneesById = new Map(assignees.map((assignee) => [assignee.id, assignee]));
+  const orderedAssignees = assigneeIds
+    .map((id) => assigneesById.get(id))
+    .filter((assignee): assignee is (typeof assignees)[number] => Boolean(assignee));
+  if (orderedAssignees.length === 0) redirect(returnToProfileTab);
 
-  const existingAssignment = await prisma.studentAssignment.findFirst({
-    where: {
-      studentProfileId: studentProfile.id,
-      assignedToId: assignee.id,
-    },
-    select: { id: true, isActive: true },
+  const existingAssignments = await prisma.studentAssignment.findMany({
+    where: { studentProfileId: studentProfile.id, assignedToId: { in: orderedAssignees.map((a) => a.id) } },
+    select: { id: true, assignedToId: true, isActive: true },
   });
-  const isNewTeamMember = !existingAssignment || !existingAssignment.isActive;
+  const existingAssignmentsByAssigneeId = new Map(
+    existingAssignments.map((assignment) => [assignment.assignedToId, assignment]),
+  );
+  const newTeamMembers: typeof orderedAssignees = [];
 
-  if (existingAssignment) {
-    await prisma.studentAssignment.update({
-      where: { id: existingAssignment.id },
-      data: {
-        assignedById: session.user.id,
-        notes,
-        isActive: true,
-        endedAt: null,
-      },
-    });
-  } else {
-    await prisma.studentAssignment.create({
-      data: {
-        studentProfileId: studentProfile.id,
-        assignedToId: assignee.id,
-        assignedById: session.user.id,
-        notes,
-        isActive: true,
-      },
-    });
-  }
+  const assignedAgent = [...orderedAssignees]
+    .reverse()
+    .find((assignee) => assignee.role === "SUB_ADMIN");
 
-  if (assignee.role === "SUB_ADMIN") {
-    await prisma.questionnaireSubmission.updateMany({
-      where: { studentId },
-      data: { assignedToId: assignee.id },
-    });
-  }
+  await prisma.$transaction(async (tx) => {
+    for (const assignee of orderedAssignees) {
+      const existingAssignment = existingAssignmentsByAssigneeId.get(assignee.id);
+      const isNewTeamMember = !existingAssignment || !existingAssignment.isActive;
 
-  await prisma.activityLog.create({
-    data: {
-      actorId: session.user.id,
-      targetStudentProfileId: studentProfile.id,
-      entityType: "ASSIGNMENT",
-      entityId: studentProfile.id,
-      action:
-        assignee.role === "SUB_ADMIN"
-          ? "Assigned client to agent"
-          : "Assigned client to case manager",
-      metadata: { assigneeId: assignee.id, assigneeRole: assignee.role, notes },
-    },
+      // Upsert on the (studentProfileId, assignedToId) unique key so concurrent
+      // delegations can't race into a duplicate-key error.
+      await tx.studentAssignment.upsert({
+        where: {
+          studentProfileId_assignedToId: {
+            studentProfileId: studentProfile.id,
+            assignedToId: assignee.id,
+          },
+        },
+        update: {
+          assignedById: session.user.id,
+          notes,
+          isActive: true,
+          endedAt: null,
+        },
+        create: {
+          studentProfileId: studentProfile.id,
+          assignedToId: assignee.id,
+          assignedById: session.user.id,
+          notes,
+          isActive: true,
+        },
+      });
+
+      await tx.activityLog.create({
+        data: {
+          actorId: session.user.id,
+          targetStudentProfileId: studentProfile.id,
+          entityType: "ASSIGNMENT",
+          entityId: studentProfile.id,
+          action:
+            assignee.role === "SUB_ADMIN"
+              ? "Assigned client to agent"
+              : "Assigned client to case manager",
+          metadata: { assigneeId: assignee.id, assigneeRole: assignee.role, notes },
+        },
+      });
+
+      if (isNewTeamMember) {
+        newTeamMembers.push(assignee);
+      }
+    }
+
+    if (assignedAgent) {
+      await tx.questionnaireSubmission.updateMany({
+        where: { studentId },
+        data: { assignedToId: assignedAgent.id },
+      });
+    }
   });
 
-  if (isNewTeamMember) {
+  for (const assignee of newTeamMembers) {
     await notifyStudentTeamDelegationChange({
       studentProfileId: studentProfile.id,
       studentUserId: studentId,
@@ -2526,6 +2584,10 @@ async function assignStudentDelegationAction(formData: FormData) {
     });
   }
 
+  revalidatePath("/dashboard/admin");
+  revalidatePath("/dashboard/sub-admin");
+  revalidatePath("/dashboard/internal-staff");
+  revalidatePath(`/dashboard/students/${studentId}`);
   revalidateContributionsCache(studentId);
   redirect(returnToProfileTab);
 }
@@ -2603,6 +2665,10 @@ async function removeStudentDelegationAction(formData: FormData) {
     source: "student_profile",
   });
 
+  revalidatePath("/dashboard/admin");
+  revalidatePath("/dashboard/sub-admin");
+  revalidatePath("/dashboard/internal-staff");
+  revalidatePath(`/dashboard/students/${studentId}`);
   revalidateContributionsCache(studentId);
   redirect(returnToProfileTab);
 }
