@@ -2,7 +2,7 @@ import type { MetadataRoute } from "next";
 
 import { prisma } from "@/lib/prisma";
 
-const BASE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+const BASE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://lbglobal.com.au";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // Static public pages
