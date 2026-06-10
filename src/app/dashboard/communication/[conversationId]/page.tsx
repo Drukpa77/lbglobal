@@ -87,7 +87,7 @@ export default async function ConversationPage(props: { params: Params }) {
   }
 
   const canManageTeam = conversation.type === "TEAM";
-  const canDeleteThread = conversation.type === "TEAM" || conversation.type === "DIRECT";
+  const canDeleteThread = ["TEAM", "DIRECT", "STUDENT_THREAD"].includes(conversation.type);
   const participantIds = new Set(conversation.participants.map((p) => p.userId));
   const availableToAdd = allStaff.filter((u) => !participantIds.has(u.id));
 
@@ -414,7 +414,7 @@ async function deleteConversationAction(formData: FormData) {
     select: { type: true, participants: { select: { userId: true } } },
   });
   if (!conversation) redirect("/dashboard/communication");
-  if (conversation.type === "STUDENT_THREAD") redirect("/dashboard/communication");
+  // STUDENT_THREAD deletion is allowed for admins and staff participants
 
   if (session.user.role !== "ADMIN") {
     const isParticipant = conversation.participants.some((p) => p.userId === session.user.id);
