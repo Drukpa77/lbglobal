@@ -71,7 +71,15 @@ export function InvoiceBuilder({ initial }: { initial: InvoiceBuilderInitial }) 
   const [taxRate, setTaxRate] = useState<number>(initial.taxRate);
   const [shippingAmount, setShippingAmount] = useState<number>(initial.shippingAmount);
 
-  const [companyName, setCompanyName] = useState(initial.companyName);
+  // Company preset tabs
+  const [companyPreset, setCompanyPreset] = useState<"lbglobal" | "lucky7">("lbglobal");
+  const [lbglobalName, setLbglobalName] = useState(initial.companyName);
+  const [lucky7Name, setLucky7Name] = useState("Lucky7 ECPF");
+
+  const companyName = companyPreset === "lucky7" ? lucky7Name : lbglobalName;
+  const setCompanyName = companyPreset === "lucky7" ? setLucky7Name : setLbglobalName;
+  const effectiveLogoUrl = companyPreset === "lucky7" ? "/lucky7.png" : (initial.companyLogoUrl ?? "");
+
   const [legalName, setLegalName] = useState(initial.legalName ?? "");
   const [abn, setAbn] = useState(initial.abn ?? "");
   const [companyAddress, setCompanyAddress] = useState(initial.companyAddress ?? "");
@@ -171,6 +179,7 @@ export function InvoiceBuilder({ initial }: { initial: InvoiceBuilderInitial }) 
       taxRate,
       shippingAmount,
       companyName,
+      companyLogoUrl: effectiveLogoUrl || null,
       legalName: legalName || null,
       abn: abn || null,
       companyAddress: companyAddress || null,
@@ -258,6 +267,36 @@ export function InvoiceBuilder({ initial }: { initial: InvoiceBuilderInitial }) 
     <div className="grid gap-6 lg:grid-cols-[minmax(0,460px)_minmax(0,1fr)]">
       {/* ── Left: form ─────────────────────────────────────────── */}
       <div className="space-y-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        {/* Company preset tabs */}
+        <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-1 gap-1">
+          <button
+            type="button"
+            onClick={() => setCompanyPreset("lbglobal")}
+            className={`flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-all ${
+              companyPreset === "lbglobal"
+                ? "bg-white shadow-sm text-slate-900"
+                : "text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            {initial.companyLogoUrl && <img src={initial.companyLogoUrl} alt="" className="h-5 w-5 object-contain" />}
+            L&B Global
+          </button>
+          <button
+            type="button"
+            onClick={() => setCompanyPreset("lucky7")}
+            className={`flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-all ${
+              companyPreset === "lucky7"
+                ? "bg-white shadow-sm text-slate-900"
+                : "text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/lucky7.png" alt="" className="h-5 w-5 object-contain" />
+            Lucky 7
+          </button>
+        </div>
+
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-base font-semibold text-slate-900">Invoice Details</h2>
@@ -330,7 +369,7 @@ export function InvoiceBuilder({ initial }: { initial: InvoiceBuilderInitial }) 
             Company block (override)
           </summary>
           <div className="mt-3 space-y-3">
-            <Field label="Trading name">
+            <Field label={`Trading name (${companyPreset === "lucky7" ? "Lucky 7" : "L&B Global"})`}>
               <input value={companyName} onChange={(e) => setCompanyName(e.target.value)} disabled={isReadOnly} className={inputCls} />
             </Field>
             <Field label="Legal name (Payment Advice header)">
@@ -447,7 +486,10 @@ export function InvoiceBuilder({ initial }: { initial: InvoiceBuilderInitial }) 
 
       {/* ── Right: live preview (this is what becomes the PDF) ── */}
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 p-4">
-        <div className="mx-auto" style={{ maxWidth: 794 }}>
+        {/* Scale wrapper: shrinks 794×1123 A4 to 90% so it fits the ~716px container without scrolling.
+            The inner previewRef stays at full size so PDF export is pixel-perfect. */}
+        <div style={{ width: Math.round(794 * 0.9), height: Math.round(1123 * 0.9), margin: "0 auto", overflow: "hidden" }}>
+          <div style={{ transform: "scale(0.9)", transformOrigin: "top left", width: 794 }}>
           <div
             ref={previewRef}
             className="bg-white text-slate-900 shadow-lg"
@@ -458,10 +500,10 @@ export function InvoiceBuilder({ initial }: { initial: InvoiceBuilderInitial }) 
               <div className="flex items-start justify-between gap-6 border-b border-slate-300 pb-4">
                 <div className="flex-1">
                   <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-700">Payment Advice</p>
-                  {initial.companyLogoUrl ? (
+                  {effectiveLogoUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
-                      src={initial.companyLogoUrl}
+                      src={effectiveLogoUrl}
                       alt={companyName}
                       style={{ maxHeight: 64, marginTop: 12, display: "block" }}
                       crossOrigin="anonymous"
@@ -579,6 +621,7 @@ export function InvoiceBuilder({ initial }: { initial: InvoiceBuilderInitial }) 
             <div className="mt-12 text-center text-[10px] text-slate-500">
               {initial.invoiceFooter || "-- 1 of 1 --"}
             </div>
+          </div>
           </div>
         </div>
       </div>
