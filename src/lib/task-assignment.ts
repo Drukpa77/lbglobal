@@ -1,4 +1,4 @@
-import type { TaskStatus } from "@prisma/client";
+import type { Prisma, TaskStatus } from "@prisma/client";
 
 import { revalidatePath } from "next/cache";
 
@@ -81,6 +81,35 @@ export function taskDashboardWhereForStaff(userId: string, isAdmin: boolean) {
 
 export function openTaskStatusFilter() {
   return { status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] as TaskStatus[] } };
+}
+
+/** How far back the "Completed" task view reaches. Older completions stay in the DB and activity log. */
+export const COMPLETED_TASK_WINDOW_DAYS = 60;
+
+export type TaskListView = "open" | "completed";
+
+export function normalizeTaskListView(raw: string | undefined): TaskListView {
+  return raw === "completed" ? "completed" : "open";
+}
+
+/**
+ * DONE tasks completed within the recent window. Tasks marked DONE before
+ * completion attribution existed (null completedAt) are kept visible so they
+ * don't silently disappear.
+ */
+export function completedTaskStatusFilter() {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - COMPLETED_TASK_WINDOW_DAYS);
+  return {
+    status: "DONE" as TaskStatus,
+    OR: [{ completedAt: { gte: cutoff } }, { completedAt: null }],
+  };
+}
+
+export function taskListOrderBy(view: TaskListView): Prisma.TaskOrderByWithRelationInput[] {
+  return view === "completed"
+    ? [{ completedAt: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }]
+    : [{ dueDate: "asc" }, { status: "asc" }, { createdAt: "desc" }];
 }
 
 export function taskDashboardListWhereForAgent(userId: string, isAdmin: boolean) {

@@ -33,10 +33,14 @@ import {
 } from "@/lib/manual-client-intake";
 import { prisma } from "@/lib/prisma";
 import {
+  completedTaskStatusFilter,
   executeTaskReassignment,
   listTaskAssigneeOptions,
+  normalizeTaskListView,
+  openTaskStatusFilter,
   taskDashboardListWhereForAgent,
   taskDashboardWhereForAgent,
+  taskListOrderBy,
   userCanManageTask,
 } from "@/lib/task-assignment";
 import {
@@ -75,6 +79,7 @@ type SearchParams = Promise<{
   queue?: string;
   stage?: string;
   tab?: string;
+  taskView?: string;
   manualError?: string;
   manualSuccess?: string;
 }>;
@@ -132,6 +137,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   const isOverviewTab = tab === "overview";
   const isStudentsTab = tab === "students";
   const isTasksTab = tab === "tasks";
+  const taskView = normalizeTaskListView(searchParams.taskView);
   const isTeamTab = tab === "team";
   const isAdminViewer = session.user.role === "ADMIN";
   const needsSubmissions = true;
@@ -178,6 +184,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     teamMembers,
     activeAssignments,
     openTaskCount,
+    completedTaskCount,
     agentTasks,
     taskAssigneeOptions,
     allInternalStaff,
@@ -315,19 +322,34 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
       orderBy: { createdAt: "desc" },
       take: 8,
     }) : Promise.resolve([]),
-      isOverviewTab || isTasksTab
+      // Unconditional: powers the Tasks tab badge on every tab (cheap COUNT)
+      prisma.task.count({
+        where: taskDashboardWhereForAgent(session.user.id, isAdminViewer),
+      }),
+      isTasksTab
         ? prisma.task.count({
-            where: taskDashboardWhereForAgent(session.user.id, isAdminViewer),
+            where: {
+              AND: [
+                taskDashboardListWhereForAgent(session.user.id, isAdminViewer),
+                completedTaskStatusFilter(),
+              ],
+            },
           })
         : Promise.resolve(0),
       isTasksTab
         ? prisma.task.findMany({
-            where: taskDashboardListWhereForAgent(session.user.id, isAdminViewer),
+            where: {
+              AND: [
+                taskDashboardListWhereForAgent(session.user.id, isAdminViewer),
+                taskView === "completed" ? completedTaskStatusFilter() : openTaskStatusFilter(),
+              ],
+            },
             include: {
               assignee: { select: { id: true, name: true, email: true } },
+              completedBy: { select: { name: true, email: true } },
               studentProfile: { include: { user: { select: { id: true, name: true, email: true } } } },
             },
-            orderBy: [{ dueDate: "asc" }, { status: "asc" }, { createdAt: "desc" }],
+            orderBy: taskListOrderBy(taskView),
             take: 100,
           })
         : Promise.resolve([]),
@@ -847,6 +869,10 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
           reassignTaskAction={reassignTaskFromSubAdminDashboardAction}
           updateTaskStatusAction={updateTaskStatusFromSubAdminDashboardAction}
           returnTab="tasks"
+          taskView={taskView}
+          openCount={openTaskCount}
+          completedCount={completedTaskCount}
+          viewHrefBase="/dashboard/sub-admin?tab=tasks"
         />
       )}
 
@@ -1681,8 +1707,8 @@ function StageFilterChip({
   );
 }
 
-function subAdminDashboardPath(tab = "tasks") {
-  return `/dashboard/sub-admin?tab=${tab}`;
+function subAdminDashboardPath(tab = "tasks", taskView?: string) {
+  return `/dashboard/sub-admin?tab=${tab}${taskView === "completed" ? "&taskView=completed" : ""}`;
 }
 
 async function updateTaskStatusFromSubAdminDashboardAction(formData: FormData) {
@@ -1699,7 +1725,8 @@ async function updateTaskStatusFromSubAdminDashboardAction(formData: FormData) {
     ? statusRaw
     : "TODO";
   const returnTab = String(formData.get("returnTab") ?? "tasks");
-  if (!taskId) redirect(subAdminDashboardPath(returnTab));
+  const returnView = String(formData.get("returnView") ?? "");
+  if (!taskId) redirect(subAdminDashboardPath(returnTab, returnView));
 
   const task = await prisma.task.findUnique({
     where: { id: taskId },
@@ -1716,7 +1743,7 @@ async function updateTaskStatusFromSubAdminDashboardAction(formData: FormData) {
       },
     },
   });
-  if (!task) redirect(subAdminDashboardPath(returnTab));
+  if (!task) redirect(subAdminDashboardPath(returnTab, returnView));
 
   if (
     !userCanManageTask(
@@ -1728,7 +1755,7 @@ async function updateTaskStatusFromSubAdminDashboardAction(formData: FormData) {
       },
     )
   ) {
-    redirect(subAdminDashboardPath(returnTab));
+    redirect(subAdminDashboardPath(returnTab, returnView));
   }
 
   await prisma.task.update({
@@ -1752,7 +1779,7 @@ async function updateTaskStatusFromSubAdminDashboardAction(formData: FormData) {
   revalidatePath("/dashboard/sub-admin");
   revalidatePath("/dashboard/internal-staff");
   revalidatePath(`/dashboard/students/${task.studentProfile.userId}`);
-  redirect(subAdminDashboardPath(returnTab));
+  redirect(subAdminDashboardPath(returnTab, returnView));
 }
 
 async function reassignTaskFromSubAdminDashboardAction(formData: FormData) {
@@ -1766,7 +1793,8 @@ async function reassignTaskFromSubAdminDashboardAction(formData: FormData) {
   const taskId = String(formData.get("taskId") ?? "");
   const assigneeId = String(formData.get("assigneeId") ?? "");
   const returnTab = String(formData.get("returnTab") ?? "tasks");
-  if (!taskId || !assigneeId) redirect(subAdminDashboardPath(returnTab));
+  const returnView = String(formData.get("returnView") ?? "");
+  if (!taskId || !assigneeId) redirect(subAdminDashboardPath(returnTab, returnView));
 
   const result = await executeTaskReassignment({
     taskId,
@@ -1780,7 +1808,7 @@ async function reassignTaskFromSubAdminDashboardAction(formData: FormData) {
     revalidatePath(`/dashboard/students/${result.studentUserId}`);
   }
   redirect(
-    `${subAdminDashboardPath(returnTab)}${result.ok && result.changed ? "&taskReassigned=1" : ""}`,
+    `${subAdminDashboardPath(returnTab, returnView)}${result.ok && result.changed ? "&taskReassigned=1" : ""}`,
   );
 }
 
@@ -1801,7 +1829,8 @@ async function bulkUpdateTasksFromSubAdminDashboardAction(formData: FormData) {
     ? statusRaw
     : "TODO";
   const returnTab = String(formData.get("returnTab") ?? "tasks");
-  if (taskIds.length === 0) redirect(subAdminDashboardPath(returnTab));
+  const returnView = String(formData.get("returnView") ?? "");
+  if (taskIds.length === 0) redirect(subAdminDashboardPath(returnTab, returnView));
 
   const tasks = await prisma.task.findMany({
     where: { id: { in: taskIds } },
@@ -1817,7 +1846,7 @@ async function bulkUpdateTasksFromSubAdminDashboardAction(formData: FormData) {
       },
     },
   });
-  if (tasks.length === 0) redirect(subAdminDashboardPath(returnTab));
+  if (tasks.length === 0) redirect(subAdminDashboardPath(returnTab, returnView));
 
   const allowedTasks = tasks.filter((task) =>
     userCanManageTask(
@@ -1829,7 +1858,7 @@ async function bulkUpdateTasksFromSubAdminDashboardAction(formData: FormData) {
       },
     ),
   );
-  if (allowedTasks.length === 0) redirect(subAdminDashboardPath(returnTab));
+  if (allowedTasks.length === 0) redirect(subAdminDashboardPath(returnTab, returnView));
 
   const allowedTaskIds = allowedTasks.map((task) => task.id);
   await prisma.task.updateMany({
@@ -1856,7 +1885,7 @@ async function bulkUpdateTasksFromSubAdminDashboardAction(formData: FormData) {
   }
   revalidatePath("/dashboard/sub-admin");
   revalidatePath("/dashboard/internal-staff");
-  redirect(subAdminDashboardPath(returnTab));
+  redirect(subAdminDashboardPath(returnTab, returnView));
 }
 
 async function updateSubmissionStatusAction(formData: FormData) {

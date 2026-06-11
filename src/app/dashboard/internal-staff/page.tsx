@@ -39,9 +39,13 @@ import {
   normalizeInquiryLocationFilter,
 } from "@/lib/submission-filters";
 import {
+  completedTaskStatusFilter,
   executeTaskReassignment,
   listTaskAssigneeOptions,
+  normalizeTaskListView,
+  openTaskStatusFilter,
   taskDashboardWhereForStaff,
+  taskListOrderBy,
   userCanManageTask,
 } from "@/lib/task-assignment";
 import { taskStatusCardClass, taskStatusTone } from "@/lib/task-status-styles";
@@ -54,7 +58,7 @@ import {
   caseStageTone,
 } from "@/lib/case-stage";
 
-type SearchParams = Promise<{ filter?: string; tab?: string; inquiryLocation?: string; manualError?: string; manualSuccess?: string }>;
+type SearchParams = Promise<{ filter?: string; tab?: string; taskView?: string; inquiryLocation?: string; manualError?: string; manualSuccess?: string }>;
 
 export default async function InternalStaffDashboardPage(props: { searchParams: SearchParams }) {
   const session = await auth();
@@ -95,11 +99,12 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
   const isOverviewTab = tab === "overview";
   const isQueueTab = tab === "queue";
   const isTasksTab = tab === "tasks";
+  const taskView = normalizeTaskListView(searchParams.taskView);
   const needsAssignments = true;
   const needsTasks = isOverviewTab || isQueueTab || isTasksTab;
   const needsPendingDocs = isOverviewTab || isQueueTab;
 
-  const [reminders, assignments, stagePipelineCounts, tasks, taskAssigneeOptions, conversations, followUps, pendingDocuments, deletedClientsCount, deletedClients, visaOutcomes] = await Promise.all([
+  const [reminders, assignments, stagePipelineCounts, tasks, taskAssigneeOptions, conversations, followUps, pendingDocuments, deletedClientsCount, deletedClients, visaOutcomes, completedTasks, completedTaskCount, openTaskCount] = await Promise.all([
     isOverviewTab ? getRemindersForUser(session.user.role as "ADMIN" | "INTERNAL_STAFF", session.user.id) : Promise.resolve([]),
     needsAssignments ? prisma.studentAssignment.findMany({
       where: isAdmin
@@ -159,12 +164,16 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
       _count: { _all: true },
     }) : Promise.resolve([]),
     needsTasks ? prisma.task.findMany({
-      where: taskDashboardWhereForStaff(session.user.id, isAdmin),
+      where: {
+        ...taskDashboardWhereForStaff(session.user.id, isAdmin),
+        ...openTaskStatusFilter(),
+      },
       include: {
         assignee: { select: { id: true, name: true, email: true } },
+        completedBy: { select: { name: true, email: true } },
         studentProfile: { include: { user: { select: { id: true, name: true, email: true } } } },
       },
-      orderBy: [{ dueDate: "asc" }, { status: "asc" }, { createdAt: "desc" }],
+      orderBy: taskListOrderBy("open"),
       take: 100,
     }) : Promise.resolve([]),
     needsTasks ? listTaskAssigneeOptions() : Promise.resolve([]),
@@ -235,6 +244,34 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
           orderBy: [{ completedAt: "desc" }, { startedAt: "desc" }],
           take: 100,
         }),
+    isTasksTab && taskView === "completed"
+      ? prisma.task.findMany({
+          where: {
+            AND: [taskDashboardWhereForStaff(session.user.id, isAdmin), completedTaskStatusFilter()],
+          },
+          include: {
+            assignee: { select: { id: true, name: true, email: true } },
+            completedBy: { select: { name: true, email: true } },
+            studentProfile: { include: { user: { select: { id: true, name: true, email: true } } } },
+          },
+          orderBy: taskListOrderBy("completed"),
+          take: 100,
+        })
+      : Promise.resolve([]),
+    isTasksTab
+      ? prisma.task.count({
+          where: {
+            AND: [taskDashboardWhereForStaff(session.user.id, isAdmin), completedTaskStatusFilter()],
+          },
+        })
+      : Promise.resolve(0),
+    // Unconditional: powers the Tasks & Docs tab badge on every tab (cheap COUNT)
+    prisma.task.count({
+      where: {
+        ...taskDashboardWhereForStaff(session.user.id, isAdmin),
+        ...openTaskStatusFilter(),
+      },
+    }),
   ]);
 
   const openTasks = tasks.filter((task) => task.status !== "DONE");
@@ -371,7 +408,7 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
         tabs={[
           { id: "overview", label: "Overview" },
           { id: "queue", label: "Work Queue", count: filteredOpenTasks.length },
-          { id: "tasks", label: "Tasks & Docs", count: tasks.length + filteredPendingDocuments.length },
+          { id: "tasks", label: "Tasks & Docs", count: openTaskCount + filteredPendingDocuments.length },
           { id: "students", label: "Cases", count: caseRows.length },
           { id: "visa-outcomes", label: "Visa Outcomes", count: visaOutcomes.length },
           { id: "contributions", label: "Contributions" },
@@ -635,12 +672,16 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
       {tab === "tasks" && (
         <div className="space-y-6">
           <StaffDashboardTasks
-            tasks={tasks}
+            tasks={taskView === "completed" ? completedTasks : tasks}
             assigneeOptions={taskAssigneeOptions}
             bulkUpdateTasksAction={bulkUpdateTasksAction}
             reassignTaskAction={reassignTaskFromInternalStaffDashboardAction}
             updateTaskStatusAction={updateTaskStatusFromDashboardAction}
             returnTab="tasks"
+            taskView={taskView}
+            openCount={openTaskCount}
+            completedCount={completedTaskCount}
+            viewHrefBase="/dashboard/internal-staff?tab=tasks"
           />
 
           <section className="rounded-lg border bg-white p-4">
@@ -1194,6 +1235,10 @@ function filterPendingDocuments<T>(docs: T[]) {
   return docs;
 }
 
+function internalStaffDashboardPath(tab: string, taskView?: string) {
+  return `/dashboard/internal-staff?tab=${tab}${taskView === "completed" ? "&taskView=completed" : ""}`;
+}
+
 async function updateTaskStatusFromDashboardAction(formData: FormData) {
   "use server";
   const session = await auth();
@@ -1258,7 +1303,8 @@ async function updateTaskStatusFromDashboardAction(formData: FormData) {
   revalidatePath("/dashboard/sub-admin");
   revalidatePath(`/dashboard/students/${task.studentProfile.userId}`);
   const returnTab = String(formData.get("returnTab") ?? "tasks");
-  redirect(`/dashboard/internal-staff?tab=${returnTab}`);
+  const returnView = String(formData.get("returnView") ?? "");
+  redirect(internalStaffDashboardPath(returnTab, returnView));
 }
 
 async function reassignTaskFromInternalStaffDashboardAction(formData: FormData) {
@@ -1272,7 +1318,8 @@ async function reassignTaskFromInternalStaffDashboardAction(formData: FormData) 
   const taskId = String(formData.get("taskId") ?? "");
   const assigneeId = String(formData.get("assigneeId") ?? "");
   const returnTab = String(formData.get("returnTab") ?? "tasks");
-  if (!taskId || !assigneeId) redirect(`/dashboard/internal-staff?tab=${returnTab}`);
+  const returnView = String(formData.get("returnView") ?? "");
+  if (!taskId || !assigneeId) redirect(internalStaffDashboardPath(returnTab, returnView));
 
   const result = await executeTaskReassignment({
     taskId,
@@ -1285,7 +1332,7 @@ async function reassignTaskFromInternalStaffDashboardAction(formData: FormData) 
   if (result.ok) {
     revalidatePath(`/dashboard/students/${result.studentUserId}`);
   }
-  redirect(`/dashboard/internal-staff?tab=${returnTab}${result.ok && result.changed ? "&taskReassigned=1" : ""}`);
+  redirect(`${internalStaffDashboardPath(returnTab, returnView)}${result.ok && result.changed ? "&taskReassigned=1" : ""}`);
 }
 
 async function bulkVerifyDocumentsAction(formData: FormData) {
@@ -1455,7 +1502,8 @@ async function bulkUpdateTasksAction(formData: FormData) {
   revalidatePath("/dashboard/internal-staff");
   revalidatePath("/dashboard/sub-admin");
   const returnTab = String(formData.get("returnTab") ?? "tasks");
-  redirect(`/dashboard/internal-staff?tab=${returnTab}`);
+  const returnView = String(formData.get("returnView") ?? "");
+  redirect(internalStaffDashboardPath(returnTab, returnView));
 }
 
 function FilterButton({

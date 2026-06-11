@@ -45,10 +45,14 @@ import { renderTemplate } from "@/lib/template-renderer";
 import { MAX_STUDENT_DOCUMENT_UPLOAD_BYTES } from "@/lib/upload-limits";
 import {
   buildOverviewAssignedTeam,
+  completedTaskStatusFilter,
   ensureStaffOnCaseTeam,
   listTaskAssigneeOptions,
+  normalizeTaskListView,
+  openTaskStatusFilter,
   resolveTaskAssignee,
   executeTaskReassignment,
+  taskListOrderBy,
 } from "@/lib/task-assignment";
 import { softDeleteClient } from "@/lib/deleted-clients";
 import { notifyTaskAssignment } from "@/lib/task-notifications";
@@ -83,6 +87,7 @@ import {
 type Params = Promise<{ studentId: string }>;
 type SearchParams = Promise<{
   tab?: string;
+  taskView?: string;
   taskCreated?: string;
   taskError?: string;
   uploadError?: string;
@@ -217,6 +222,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
       ? tabRaw
       : "overview";
   const studentProfileId = student.studentProfile?.id ?? "__none__";
+  const taskView = normalizeTaskListView(searchParams.taskView);
   const needsOverviewData = activeTab === "overview";
   const needsProfileData = activeTab === "profile";
   const needsTasksData = activeTab === "tasks";
@@ -253,6 +259,8 @@ export default async function StudentProfileManagementPage(props: { params: Para
     currentAssignments,
     internalStaffAssignedForTasks,
     tasks,
+    openStudentTaskCount,
+    completedStudentTaskCount,
     allDocuments,
     templates,
     contracts,
@@ -299,15 +307,26 @@ export default async function StudentProfileManagementPage(props: { params: Para
       : Promise.resolve(null),
     needsTasksData
       ? prisma.task.findMany({
-          where: { studentProfileId },
+          where: {
+            studentProfileId,
+            AND: [taskView === "completed" ? completedTaskStatusFilter() : openTaskStatusFilter()],
+          },
           include: {
             assignee: { select: { id: true, name: true, email: true } },
             completedBy: { select: { id: true, name: true, email: true } },
           },
-          orderBy: [{ status: "asc" }, { createdAt: "desc" }],
+          orderBy: taskListOrderBy(taskView),
           take: 30,
         })
       : Promise.resolve([]),
+    needsTasksData
+      ? prisma.task.count({ where: { studentProfileId, ...openTaskStatusFilter() } })
+      : Promise.resolve(0),
+    needsTasksData
+      ? prisma.task.count({
+          where: { studentProfileId, AND: [completedTaskStatusFilter()] },
+        })
+      : Promise.resolve(0),
     allDocumentsPromise,
     needsFinancialData
       ? prisma.emailTemplate.findMany({
@@ -1573,6 +1592,9 @@ export default async function StudentProfileManagementPage(props: { params: Para
           <TasksDocumentsTab
             studentId={studentId}
             tasks={tasks}
+            taskView={taskView}
+            openTaskCount={openStudentTaskCount}
+            completedTaskCount={completedStudentTaskCount}
             documents={documents}
             taskAssigneeOptions={taskAssigneeOptions}
             createTaskAction={createTaskAction}
@@ -2085,8 +2107,8 @@ function studentProfileUrl(studentId: string) {
   return `/dashboard/students/${studentId}?tab=profile`;
 }
 
-function studentTasksUrl(studentId: string) {
-  return `/dashboard/students/${studentId}?tab=tasks`;
+function studentTasksUrl(studentId: string, taskView?: string) {
+  return `/dashboard/students/${studentId}?tab=tasks${taskView === "completed" ? "&taskView=completed" : ""}`;
 }
 
 function studentFinancialsUrl(studentId: string) {
@@ -2689,6 +2711,9 @@ async function createTaskAction(formData: FormData) {
   const title = String(formData.get("title") ?? "").trim();
   const description = nullableText(formData.get("description"));
   const priority = String(formData.get("priority") ?? "MEDIUM") as TaskPriority;
+  const dueDateRaw = String(formData.get("dueDate") ?? "").trim();
+  const parsedDueDate = dueDateRaw ? new Date(`${dueDateRaw}T00:00:00`) : null;
+  const dueDate = parsedDueDate && !Number.isNaN(parsedDueDate.getTime()) ? parsedDueDate : null;
 
   if (!studentId) redirect("/dashboard");
 
@@ -2753,6 +2778,7 @@ async function createTaskAction(formData: FormData) {
       assigneeId: assignee.id,
       assignerId: session.user.id,
       priority: taskPriority,
+      dueDate,
     },
     select: { id: true },
   });
@@ -2831,6 +2857,7 @@ async function updateTaskStatusAction(formData: FormData) {
   if (!session?.user) redirect("/login");
   const taskId = String(formData.get("taskId") ?? "");
   const status = String(formData.get("status") ?? "TODO") as TaskStatus;
+  const returnView = String(formData.get("returnView") ?? "");
   const safeStatus: TaskStatus = ["TODO", "IN_PROGRESS", "BLOCKED", "DONE"].includes(status)
     ? status
     : "TODO";
@@ -2881,7 +2908,7 @@ async function updateTaskStatusAction(formData: FormData) {
   revalidateContributionsCache(task.studentProfile.userId);
   revalidatePath(`/dashboard/students/${task.studentProfile.userId}`);
   revalidatePath("/dashboard/internal-staff");
-  redirect(`/dashboard/students/${task.studentProfile.userId}?tab=tasks`);
+  redirect(studentTasksUrl(task.studentProfile.userId, returnView));
 }
 
 async function updateTaskChecklistAction(formData: FormData) {

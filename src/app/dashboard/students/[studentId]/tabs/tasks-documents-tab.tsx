@@ -1,6 +1,9 @@
+import Link from "next/link";
+
 import { DeleteWithConfirm } from "@/components/delete-with-confirm";
 import { FileSizeLimitedForm } from "@/components/file-size-limited-form";
-import type { TaskAssigneeOption } from "@/lib/task-assignment";
+import type { TaskAssigneeOption, TaskListView } from "@/lib/task-assignment";
+import { COMPLETED_TASK_WINDOW_DAYS } from "@/lib/task-assignment";
 import { taskStatusCardClass } from "@/lib/task-status-styles";
 import { MAX_STUDENT_DOCUMENT_UPLOAD_MB } from "@/lib/upload-limits";
 
@@ -141,6 +144,9 @@ function groupDocumentsByCategory(documents: DocumentRow[]) {
 type TasksDocumentsTabProps = {
   studentId: string;
   tasks: TaskRow[];
+  taskView: TaskListView;
+  openTaskCount: number;
+  completedTaskCount: number;
   documents: DocumentRow[];
   taskAssigneeOptions: TaskAssigneeOption[];
   createTaskAction: (formData: FormData) => Promise<void>;
@@ -222,6 +228,9 @@ function documentOpenHref(
 export function TasksDocumentsTab({
   studentId,
   tasks,
+  taskView,
+  openTaskCount,
+  completedTaskCount,
   documents,
   taskAssigneeOptions,
   createTaskAction,
@@ -237,6 +246,14 @@ export function TasksDocumentsTab({
   canCreateTasks,
   blobOpensThroughAuthenticatedApi,
 }: TasksDocumentsTabProps) {
+  const isCompletedView = taskView === "completed";
+  const viewToggleClass = (active: boolean) =>
+    `rounded-lg px-3 py-1.5 text-sm font-medium ${
+      active
+        ? "bg-slate-900 text-white"
+        : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+    }`;
+
   return (
     <>
       <section id="tasks" className="scroll-mt-24 rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
@@ -265,6 +282,13 @@ export function TasksDocumentsTab({
               <option value="HIGH">High priority</option>
               <option value="URGENT">Urgent</option>
             </select>
+            <input
+              name="dueDate"
+              type="date"
+              aria-label="Due date (optional)"
+              title="Due date (optional)"
+              className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+            />
             <TaskAssigneePicker options={taskAssigneeOptions} />
             <button
               type="submit"
@@ -279,46 +303,74 @@ export function TasksDocumentsTab({
           </p>
         ) : null}
         <div className="mt-4">
-          <form
-            id="task-checklist-form"
-            action={updateTaskChecklistAction}
-            className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3"
-          >
-            <input type="hidden" name="studentId" value={studentId} />
-            <p className="text-xs font-medium text-slate-600">Select tasks and apply status</p>
-            <select
-              name="status"
-              defaultValue="DONE"
-              className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <Link
+              href={`/dashboard/students/${studentId}?tab=tasks&taskView=open`}
+              className={viewToggleClass(!isCompletedView)}
             >
-              <option value="DONE">Mark selected as DONE</option>
-              <option value="IN_PROGRESS">Mark selected as IN_PROGRESS</option>
-              <option value="BLOCKED">Mark selected as BLOCKED</option>
-              <option value="TODO">Mark selected as TODO</option>
-            </select>
-            <button
-              type="submit"
-              className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100"
+              Open ({openTaskCount})
+            </Link>
+            <Link
+              href={`/dashboard/students/${studentId}?tab=tasks&taskView=completed`}
+              className={viewToggleClass(isCompletedView)}
             >
-              Apply to Selected Tasks
-            </button>
-          </form>
+              Completed ({completedTaskCount})
+            </Link>
+            {isCompletedView ? (
+              <span className="text-xs text-slate-500">
+                Showing tasks completed in the last {COMPLETED_TASK_WINDOW_DAYS} days.
+              </span>
+            ) : null}
+          </div>
+
+          {!isCompletedView ? (
+            <form
+              id="task-checklist-form"
+              action={updateTaskChecklistAction}
+              className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3"
+            >
+              <input type="hidden" name="studentId" value={studentId} />
+              <p className="text-xs font-medium text-slate-600">Select tasks and apply status</p>
+              <select
+                name="status"
+                defaultValue="DONE"
+                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+              >
+                <option value="DONE">Mark selected as DONE</option>
+                <option value="IN_PROGRESS">Mark selected as IN_PROGRESS</option>
+                <option value="BLOCKED">Mark selected as BLOCKED</option>
+                <option value="TODO">Mark selected as TODO</option>
+              </select>
+              <button
+                type="submit"
+                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100"
+              >
+                Apply to Selected Tasks
+              </button>
+            </form>
+          ) : null}
 
           {tasks.length === 0 ? (
-            <p className="text-base text-slate-600">No tasks yet.</p>
+            <p className="text-base text-slate-600">
+              {isCompletedView
+                ? `No tasks completed in the last ${COMPLETED_TASK_WINDOW_DAYS} days.`
+                : "No open tasks."}
+            </p>
           ) : (
             <div className="max-h-72 space-y-3 overflow-y-auto pr-1">
               {tasks.map((task) => (
                 <article key={task.id} className={`rounded-lg border p-4 ${taskStatusCardClass(task.status)}`}>
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-start gap-3">
-                      <input
-                        type="checkbox"
-                        name="taskIds"
-                        value={task.id}
-                        form="task-checklist-form"
-                        className="mt-1.5 h-4 w-4 rounded border-slate-300"
-                      />
+                      {!isCompletedView ? (
+                        <input
+                          type="checkbox"
+                          name="taskIds"
+                          value={task.id}
+                          form="task-checklist-form"
+                          className="mt-1.5 h-4 w-4 rounded border-slate-300"
+                        />
+                      ) : null}
                       <div>
                         <p className="font-medium text-slate-900">{task.title}</p>
                         <p className="mt-0.5 text-sm text-slate-600">
@@ -344,25 +396,40 @@ export function TasksDocumentsTab({
                     </div>
                     <form action={updateTaskStatusAction} className="flex items-center gap-2">
                       <input type="hidden" name="taskId" value={task.id} />
-                      <select
-                        name="status"
-                        defaultValue={task.status}
-                        className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-                      >
-                        <option value="TODO">To Do</option>
-                        <option value="IN_PROGRESS">In Progress</option>
-                        <option value="BLOCKED">Blocked</option>
-                        <option value="DONE">Done</option>
-                      </select>
-                      <button
-                        type="submit"
-                        className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                      >
-                        Update
-                      </button>
+                      <input type="hidden" name="returnView" value={taskView} />
+                      {isCompletedView ? (
+                        <>
+                          <input type="hidden" name="status" value="TODO" />
+                          <button
+                            type="submit"
+                            className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                          >
+                            Reopen
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <select
+                            name="status"
+                            defaultValue={task.status}
+                            className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                          >
+                            <option value="TODO">To Do</option>
+                            <option value="IN_PROGRESS">In Progress</option>
+                            <option value="BLOCKED">Blocked</option>
+                            <option value="DONE">Done</option>
+                          </select>
+                          <button
+                            type="submit"
+                            className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                          >
+                            Update
+                          </button>
+                        </>
+                      )}
                     </form>
                   </div>
-                  {canCreateTasks ? (
+                  {canCreateTasks && !isCompletedView ? (
                     <form action={reassignTaskAction} className="mt-3 flex flex-wrap items-center gap-2">
                       <input type="hidden" name="taskId" value={task.id} />
                       <span className="text-xs font-medium text-slate-600">Reassign to</span>
