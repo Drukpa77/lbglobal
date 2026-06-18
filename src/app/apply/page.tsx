@@ -6,7 +6,8 @@ import { after } from "next/server";
 import { redirect } from "next/navigation";
 
 import { prioritizedCountries } from "@/lib/countries";
-import { generateNextCaseReference } from "@/lib/case-reference";
+import { runWithUniqueCaseReference } from "@/lib/case-reference";
+import { getCurrentClaimOwnerId } from "@/lib/claims";
 import { parseTemplateQuestions } from "@/lib/questionnaire";
 import {
   isEnglishTestType,
@@ -292,6 +293,7 @@ async function submitQuestionnaireAction(formData: FormData) {
       id: true,
       role: true,
       name: true,
+      deletedAt: true,
       studentProfile: {
         select: {
           id: true,
@@ -345,6 +347,9 @@ async function submitQuestionnaireAction(formData: FormData) {
           data: {
             // Keep applicant record fresh in case they re-submit later.
             name: fullName,
+            // A previously-removed client re-engaging is a live lead again, so
+            // restore them rather than letting the new enquiry stay invisible.
+            ...(existingUser.deletedAt ? { deletedAt: null, deletedById: null } : {}),
           },
         })
       : await prisma.user.create({
@@ -354,6 +359,19 @@ async function submitQuestionnaireAction(formData: FormData) {
             role: "USER",
           },
         });
+
+    if (existingUser?.deletedAt && existingUser.studentProfile) {
+      await prisma.activityLog.create({
+        data: {
+          actorId: studentUser.id,
+          targetUserId: studentUser.id,
+          targetStudentProfileId: existingUser.studentProfile.id,
+          entityType: "STUDENT",
+          entityId: studentUser.id,
+          action: "Auto-restored deleted client after a new online enquiry",
+        },
+      });
+    }
 
     const city = answers.city?.trim() ?? answers.addressCity?.trim() ?? "";
     const country = answers.country?.trim() ?? answers.addressCountry?.trim() ?? "";
@@ -400,49 +418,57 @@ async function submitQuestionnaireAction(formData: FormData) {
       });
       studentProfile = { id: existing.id };
     } else {
-      const createdProfile = await prisma.studentProfile.create({
-        data: {
-          caseReference: await generateNextCaseReference(),
-          userId: studentUser.id,
-          phone: phone || null,
-          city: city || null,
-          nationality: country || null,
-          visaServiceType,
-          otherServiceDescription: isOtherVisaService(visaServiceType)
-            ? otherServiceDescription || null
-            : null,
-          currentEducationLevel: isStudentVisaService(visaServiceType)
-            ? currentEducationLevel || null
-            : null,
-          targetCourse: isStudentVisaService(visaServiceType) ? targetCourse || null : null,
-          preferredIntake: isStudentVisaService(visaServiceType) ? preferredIntake || null : null,
-          englishTestType: englishTestType || null,
-          englishTestScore: englishTestScore || null,
-          followUpNotes: null,
-        },
-        select: {
-          id: true,
-          caseReference: true,
-          visaServiceType: true,
-          otherServiceDescription: true,
-          caseStage: true,
-          visaStatus: true,
-          courseStartDate: true,
-          courseEndDate: true,
-          visaExpiryDate: true,
-        },
-      });
+      const createdProfile = await runWithUniqueCaseReference(prisma, (caseReference) =>
+        prisma.studentProfile.create({
+          data: {
+            caseReference,
+            userId: studentUser.id,
+            phone: phone || null,
+            city: city || null,
+            nationality: country || null,
+            visaServiceType,
+            otherServiceDescription: isOtherVisaService(visaServiceType)
+              ? otherServiceDescription || null
+              : null,
+            currentEducationLevel: isStudentVisaService(visaServiceType)
+              ? currentEducationLevel || null
+              : null,
+            targetCourse: isStudentVisaService(visaServiceType) ? targetCourse || null : null,
+            preferredIntake: isStudentVisaService(visaServiceType) ? preferredIntake || null : null,
+            englishTestType: englishTestType || null,
+            englishTestScore: englishTestScore || null,
+            followUpNotes: null,
+          },
+          select: {
+            id: true,
+            caseReference: true,
+            visaServiceType: true,
+            otherServiceDescription: true,
+            caseStage: true,
+            visaStatus: true,
+            courseStartDate: true,
+            courseEndDate: true,
+            visaExpiryDate: true,
+          },
+        }),
+      );
       await prisma.$transaction(async (tx) => {
         await syncActiveVisaCaseFromProfile(tx, createdProfile);
       });
       studentProfile = { id: createdProfile.id };
     }
 
+    // Per-client claim: a repeat enquiry from an already-owned client should
+    // stay with that owner instead of resetting the case to unclaimed.
+    const inheritedOwnerId = existingUser
+      ? await getCurrentClaimOwnerId(prisma, studentUser.id)
+      : null;
+
     const submission = await prisma.questionnaireSubmission.create({
       data: {
         studentId: studentUser.id,
         templateId: template.id,
-        assignedToId: null,
+        assignedToId: inheritedOwnerId,
         sourceCity: city,
         sourceCountry: country,
         answers: answers as object,
@@ -475,7 +501,15 @@ async function submitQuestionnaireAction(formData: FormData) {
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
     ) {
-      redirect("/apply?error=staff-email");
+      // Only the email unique constraint maps to the "staff email" message;
+      // other unique collisions (e.g. a concurrent caseReference) are transient
+      // server errors so we don't mislead the applicant.
+      const target = error.meta?.target;
+      const targetFields = Array.isArray(target) ? target.map(String) : [String(target ?? "")];
+      if (targetFields.some((field) => field.toLowerCase().includes("email"))) {
+        redirect("/apply?error=staff-email");
+      }
+      redirect("/apply?error=server");
     }
     console.error("submitQuestionnaireAction failed", error);
     redirect("/apply?error=server");

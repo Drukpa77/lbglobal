@@ -245,7 +245,7 @@ export async function notifyStudentTeamDelegationChange(
   input: NotifyStudentTeamDelegationChangeInput,
 ) {
   try {
-    const [actor, activeAssignments] = await Promise.all([
+    const [actor, activeAssignments, claimOwner] = await Promise.all([
       prisma.user.findUnique({
         where: { id: input.actorId },
         select: { id: true, name: true, email: true },
@@ -257,7 +257,26 @@ export async function notifyStudentTeamDelegationChange(
           assignedTo: { select: { id: true, name: true, email: true } },
         },
       }),
+      // The claiming agent is a soft owner (submission.assignedToId) and may not
+      // have a StudentAssignment row, so fetch them explicitly to keep them in
+      // the loop when another office helps delegate on their case.
+      prisma.questionnaireSubmission.findFirst({
+        where: { studentId: input.studentUserId, assignedToId: { not: null } },
+        orderBy: { submittedAt: "desc" },
+        select: { assignedToId: true },
+      }),
     ]);
+
+    // Deduped set of everyone who should hear about a team change: active
+    // assignees plus the claim owner.
+    const teamMemberIds = Array.from(
+      new Set(
+        [
+          ...activeAssignments.map((assignment) => assignment.assignedToId),
+          claimOwner?.assignedToId ?? null,
+        ].filter((id): id is string => Boolean(id)),
+      ),
+    );
 
     const actorLabel = actor?.name?.trim() || actor?.email || "A team member";
     const studentProfile = await prisma.studentProfile.findUnique({
@@ -292,8 +311,7 @@ export async function notifyStudentTeamDelegationChange(
         });
       }
 
-      for (const assignment of activeAssignments) {
-        const memberId = assignment.assignedToId;
+      for (const memberId of teamMemberIds) {
         if (memberId === input.actorId || memberId === input.assigneeId) continue;
 
         notifications.push({
@@ -324,9 +342,8 @@ export async function notifyStudentTeamDelegationChange(
         });
       }
 
-      for (const assignment of activeAssignments) {
-        const memberId = assignment.assignedToId;
-        if (memberId === input.actorId) continue;
+      for (const memberId of teamMemberIds) {
+        if (memberId === input.actorId || memberId === input.assigneeId) continue;
 
         notifications.push({
           recipientId: memberId,
@@ -388,7 +405,7 @@ type NotifyStaffOfNewApplicationInput = {
 export async function notifyStaffOfNewApplication(input: NotifyStaffOfNewApplicationInput) {
   try {
     const recipients = await prisma.user.findMany({
-      where: { role: { in: ["SUB_ADMIN", "ADMIN"] } },
+      where: { role: { in: ["SUB_ADMIN", "ADMIN"] }, deletedAt: null },
       select: { id: true, email: true },
     });
 

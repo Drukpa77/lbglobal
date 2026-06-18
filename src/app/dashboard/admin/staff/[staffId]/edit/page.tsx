@@ -218,14 +218,28 @@ async function deleteInternalStaffAction(formData: FormData) {
   if (!internalStaffId) redirect("/dashboard/admin");
 
   const staff = await prisma.user.findFirst({
-    where: { id: internalStaffId, role: "INTERNAL_STAFF" },
+    where: { id: internalStaffId, role: "INTERNAL_STAFF", deletedAt: null },
     select: { id: true },
   });
   if (!staff) redirect("/dashboard/admin");
 
-  await prisma.user.delete({
-    where: { id: internalStaffId },
-  });
+  const now = new Date();
+  // Soft-delete (deactivate) so the documents, tasks, contracts and invoices
+  // this case manager created are preserved. End active delegations and team
+  // memberships.
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: internalStaffId },
+      data: { deletedAt: now, deletedById: session.user.id },
+    }),
+    prisma.studentAssignment.updateMany({
+      where: { assignedToId: internalStaffId, isActive: true },
+      data: { isActive: false, endedAt: now },
+    }),
+    prisma.staffTeamMembership.deleteMany({
+      where: { internalStaffId },
+    }),
+  ]);
 
   const { revalidatePath } = await import("next/cache");
   revalidatePath("/dashboard/admin");

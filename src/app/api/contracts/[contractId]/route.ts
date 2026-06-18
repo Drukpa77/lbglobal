@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { staffCanAccessClientFinancialsByProfileId } from "@/lib/staff-client-access";
 
 type Params = Promise<{ contractId: string }>;
 
@@ -25,6 +26,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Params }) {
   if (!contract) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (contract.status !== "DRAFT") {
     return NextResponse.json({ error: "Only DRAFT contracts can be edited" }, { status: 400 });
+  }
+
+  const canAccess = await staffCanAccessClientFinancialsByProfileId(
+    session.user,
+    contract.studentProfileId,
+  );
+  if (!canAccess) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const body = (await req.json()) as {

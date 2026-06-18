@@ -174,14 +174,28 @@ async function deleteSubAdminAction(formData: FormData) {
   if (!subAdminId) redirect("/dashboard/admin?tab=staff");
 
   const subAdmin = await prisma.user.findFirst({
-    where: { id: subAdminId, role: "SUB_ADMIN" },
+    where: { id: subAdminId, role: "SUB_ADMIN", deletedAt: null },
     select: { id: true },
   });
   if (!subAdmin) redirect("/dashboard/admin?tab=staff");
 
-  await prisma.user.delete({
-    where: { id: subAdminId },
-  });
+  const now = new Date();
+  // Soft-delete (deactivate) so client data survives. Release owned cases back
+  // to the queue and end active delegations.
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: subAdminId },
+      data: { deletedAt: now, deletedById: session.user.id },
+    }),
+    prisma.questionnaireSubmission.updateMany({
+      where: { assignedToId: subAdminId },
+      data: { assignedToId: null },
+    }),
+    prisma.studentAssignment.updateMany({
+      where: { assignedToId: subAdminId, isActive: true },
+      data: { isActive: false, endedAt: now },
+    }),
+  ]);
 
   const { revalidatePath } = await import("next/cache");
   revalidatePath("/dashboard/admin");

@@ -3,7 +3,9 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { auth } from "@/auth";
+import { calculateInvoiceTotals, roundInvoiceAmount } from "@/lib/invoice-calculator";
 import { prisma } from "@/lib/prisma";
+import { staffCanAccessClientFinancialsByProfileId } from "@/lib/staff-client-access";
 
 const partySchema = z.object({
   name: z.string().trim().max(200).nullable().optional(),
@@ -95,7 +97,15 @@ export async function PATCH(request: Request, { params }: { params: Params }) {
     return NextResponse.json({ error: "Only DRAFT invoices can be edited." }, { status: 409 });
   }
 
-  const totals = calculateTotals(
+  const canAccess = await staffCanAccessClientFinancialsByProfileId(
+    session.user,
+    invoice.studentProfileId,
+  );
+  if (!canAccess) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const totals = calculateInvoiceTotals(
     parsed.data.lineItems,
     parsed.data.discountAmount,
     parsed.data.taxRate,
@@ -120,7 +130,7 @@ export async function PATCH(request: Request, { params }: { params: Params }) {
         taxAmount: totals.taxAmount,
         shippingAmount: totals.shipping,
         subtotal: totals.subtotal,
-        totalAmount: totals.balanceDue,
+        totalAmount: totals.totalAmount,
         companyName: parsed.data.companyName,
         companyAddress: parsed.data.companyAddress ?? null,
         companyContact: [parsed.data.companyContact, parsed.data.bankDetails]
@@ -140,9 +150,9 @@ export async function PATCH(request: Request, { params }: { params: Params }) {
         lineItems: {
           create: parsed.data.lineItems.map((item) => ({
             description: item.description,
-            quantity: round2(item.quantity),
-            unitPrice: round2(item.unitPrice),
-            amount: round2(item.quantity * item.unitPrice),
+            quantity: roundInvoiceAmount(item.quantity),
+            unitPrice: roundInvoiceAmount(item.unitPrice),
+            amount: roundInvoiceAmount(item.quantity * item.unitPrice),
             taxable: item.taxable,
           })),
         },
@@ -166,31 +176,4 @@ export async function PATCH(request: Request, { params }: { params: Params }) {
   }
 
   return NextResponse.json({ ok: true });
-}
-
-function calculateTotals(
-  items: Array<{ quantity: number; unitPrice: number; taxable: boolean }>,
-  discount: number,
-  taxRate: number,
-  shipping: number,
-) {
-  const subtotal = round2(
-    items.reduce((sum, item) => sum + (item.quantity || 0) * (item.unitPrice || 0), 0),
-  );
-  const taxableSubtotal = round2(
-    items.reduce(
-      (sum, item) => (item.taxable ? sum + (item.quantity || 0) * (item.unitPrice || 0) : sum),
-      0,
-    ),
-  );
-  const discountAmount = round2(Math.max(0, discount || 0));
-  const subtotalAfterDiscount = round2(Math.max(0, subtotal - discountAmount));
-  const taxAmount = round2(taxableSubtotal * (Math.max(0, taxRate || 0) / 100));
-  const shippingAmount = round2(Math.max(0, shipping || 0));
-  const balanceDue = round2(subtotalAfterDiscount + taxAmount + shippingAmount);
-  return { subtotal, discount: discountAmount, subtotalAfterDiscount, taxAmount, shipping: shippingAmount, balanceDue };
-}
-
-function round2(value: number) {
-  return Math.round(value * 100) / 100;
 }

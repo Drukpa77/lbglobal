@@ -8,6 +8,7 @@ import { DeleteWithConfirm } from "@/components/delete-with-confirm";
 import { InvoiceBuilder, type InvoiceBuilderInitial } from "@/components/invoice/invoice-builder";
 import { getCompanySettings } from "@/lib/company-settings";
 import { prisma } from "@/lib/prisma";
+import { staffCanAccessClientFinancials } from "@/lib/staff-client-access";
 
 type Params = Promise<{ invoiceId: string }>;
 
@@ -36,6 +37,9 @@ export default async function InvoiceBuilderPage(props: { params: Params }) {
     getCompanySettings(),
   ]);
   if (!invoice) redirect("/dashboard");
+
+  const canAccess = await staffCanAccessClientFinancials(session.user, invoice.studentProfile.user.id);
+  if (!canAccess) redirect("/dashboard");
 
   const student = invoice.studentProfile.user;
   const profile = invoice.studentProfile;
@@ -190,6 +194,9 @@ async function markInvoicePaidAction(formData: FormData) {
   });
   if (!invoice || invoice.status !== "SENT" || !invoice.studentProfile) redirect("/dashboard");
 
+  const canAccess = await staffCanAccessClientFinancials(session.user, invoice.studentProfile.userId);
+  if (!canAccess) redirect("/dashboard");
+
   const studentUserId = invoice.studentProfile.userId;
 
   await prisma.invoice.update({
@@ -232,6 +239,9 @@ async function deleteInvoiceAction(formData: FormData) {
     include: { studentProfile: { select: { userId: true } } },
   });
   if (!invoice) redirect("/dashboard");
+
+  const canAccess = await staffCanAccessClientFinancials(session.user, invoice.studentProfile.userId);
+  if (!canAccess) redirect("/dashboard");
 
   await prisma.outboundEmailLog.deleteMany({ where: { relatedInvoiceId: invoice.id } });
   await prisma.invoice.delete({ where: { id: invoice.id } });

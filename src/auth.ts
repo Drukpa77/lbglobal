@@ -38,6 +38,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           return null;
         }
 
+        // Soft-deleted (deactivated) staff accounts cannot sign in.
+        if (user?.deletedAt) {
+          return null;
+        }
+
         if (!user?.password) {
           return null;
         }

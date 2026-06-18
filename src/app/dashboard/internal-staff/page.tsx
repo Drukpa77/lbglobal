@@ -21,7 +21,7 @@ import { StaffDashboardTasks } from "@/components/staff-dashboard-tasks";
 import { StudentClientIntakeForm } from "@/components/student-client-intake-form";
 import { VisaOutcomesPanel } from "@/components/visa-outcomes-panel";
 import { queueDevEmail } from "@/lib/email-outbox";
-import { generateNextCaseReference } from "@/lib/case-reference";
+import { runWithUniqueCaseReference } from "@/lib/case-reference";
 import { startNewVisaCaseForProfile } from "@/lib/visa-cases";
 import {
   buildManualIntakeAnswers,
@@ -1008,14 +1008,16 @@ async function createManualStudentAction(formData: FormData) {
       select: { id: true, email: true, name: true },
     });
 
-    const studentProfile = await tx.studentProfile.create({
-      data: {
-        caseReference: await generateNextCaseReference(tx),
-        userId: studentUser.id,
-        ...buildManualIntakeProfileData(intake),
-      },
-      select: { id: true },
-    });
+    const studentProfile = await runWithUniqueCaseReference(tx, (caseReference) =>
+      tx.studentProfile.create({
+        data: {
+          caseReference,
+          userId: studentUser.id,
+          ...buildManualIntakeProfileData(intake),
+        },
+        select: { id: true },
+      }),
+    );
 
     const submission = await tx.questionnaireSubmission.create({
       data: {
@@ -1078,7 +1080,7 @@ async function createManualStudentAction(formData: FormData) {
     managers.length > 0
       ? []
       : await prisma.user.findMany({
-          where: { role: { in: ["SUB_ADMIN", "ADMIN"] } },
+          where: { role: { in: ["SUB_ADMIN", "ADMIN"] }, deletedAt: null },
           select: { id: true, email: true },
         });
   const recipients = managers.length > 0 ? managers.map((item) => item.manager) : fallbackRecipients;

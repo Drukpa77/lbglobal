@@ -14,6 +14,7 @@ export async function GET() {
       id: { not: session.user.id },
       role: { in: ["ADMIN", "SUB_ADMIN", "INTERNAL_STAFF"] },
       password: { not: null },
+      deletedAt: null,
     },
     select: { id: true, name: true, email: true, role: true },
     orderBy: [{ updatedAt: "desc" }],

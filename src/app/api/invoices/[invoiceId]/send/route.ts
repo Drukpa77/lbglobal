@@ -5,6 +5,7 @@ import { z } from "zod";
 import { auth } from "@/auth";
 import { queueDevEmail } from "@/lib/email-outbox";
 import { prisma } from "@/lib/prisma";
+import { staffCanAccessClientFinancialsByProfileId } from "@/lib/staff-client-access";
 
 const sendSchema = z.object({
   pdfBase64: z.string().min(100),
@@ -49,6 +50,14 @@ export async function POST(request: Request, { params }: { params: Params }) {
   }
   if (invoice.status !== "DRAFT") {
     return NextResponse.json({ error: "Only DRAFT invoices can be sent." }, { status: 409 });
+  }
+
+  const canAccess = await staffCanAccessClientFinancialsByProfileId(
+    session.user,
+    invoice.studentProfileId,
+  );
+  if (!canAccess) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const filename = parsed.data.pdfFilename.endsWith(".pdf")

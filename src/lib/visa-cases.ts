@@ -1,6 +1,6 @@
 import type { CaseStage, Prisma, VisaCaseStatus, VisaStatus } from "@prisma/client";
 
-import { generateNextCaseReference } from "@/lib/case-reference";
+import { runWithUniqueCaseReference } from "@/lib/case-reference";
 
 type DbClient = Prisma.TransactionClient;
 
@@ -113,51 +113,52 @@ export async function startNewVisaCaseForProfile(
     data: { status: previousStatus, completedAt: new Date() },
   });
 
-  const caseReference = await generateNextCaseReference(client);
   const nextVisaServiceType = input.visaServiceType?.trim() || profile.visaServiceType;
   const nextOtherServiceDescription = input.otherServiceDescription?.trim() || null;
 
-  const updatedProfile = await client.studentProfile.update({
-    where: { id: profile.id },
-    data: {
-      caseReference,
-      visaServiceType: nextVisaServiceType,
-      otherServiceDescription: nextOtherServiceDescription,
-      caseStage: "CONSULTATION_AND_DOCUMENTATION",
-      caseStageUpdatedAt: new Date(),
-      visaStatus: "NOT_STARTED",
-      courseStartDate: null,
-      courseEndDate: null,
-      visaExpiryDate: null,
-      nextFollowUpDate: null,
-      followUpNotes: input.notes?.trim() || null,
-    },
-    select: {
-      id: true,
-      caseReference: true,
-      visaServiceType: true,
-      otherServiceDescription: true,
-      caseStage: true,
-      visaStatus: true,
-      courseStartDate: true,
-      courseEndDate: true,
-      visaExpiryDate: true,
-    },
-  });
+  return runWithUniqueCaseReference(client, async (caseReference) => {
+    const updatedProfile = await client.studentProfile.update({
+      where: { id: profile.id },
+      data: {
+        caseReference,
+        visaServiceType: nextVisaServiceType,
+        otherServiceDescription: nextOtherServiceDescription,
+        caseStage: "CONSULTATION_AND_DOCUMENTATION",
+        caseStageUpdatedAt: new Date(),
+        visaStatus: "NOT_STARTED",
+        courseStartDate: null,
+        courseEndDate: null,
+        visaExpiryDate: null,
+        nextFollowUpDate: null,
+        followUpNotes: input.notes?.trim() || null,
+      },
+      select: {
+        id: true,
+        caseReference: true,
+        visaServiceType: true,
+        otherServiceDescription: true,
+        caseStage: true,
+        visaStatus: true,
+        courseStartDate: true,
+        courseEndDate: true,
+        visaExpiryDate: true,
+      },
+    });
 
-  const visaCase = await client.visaCase.create({
-    data: {
-      studentProfileId: updatedProfile.id,
-      caseReference: updatedProfile.caseReference,
-      visaServiceType: updatedProfile.visaServiceType,
-      otherServiceDescription: updatedProfile.otherServiceDescription,
-      caseStage: updatedProfile.caseStage,
-      visaStatus: updatedProfile.visaStatus,
-      status: "ACTIVE",
-      notes: input.notes?.trim() || null,
-    },
-    select: { id: true, caseReference: true },
-  });
+    const visaCase = await client.visaCase.create({
+      data: {
+        studentProfileId: updatedProfile.id,
+        caseReference: updatedProfile.caseReference,
+        visaServiceType: updatedProfile.visaServiceType,
+        otherServiceDescription: updatedProfile.otherServiceDescription,
+        caseStage: updatedProfile.caseStage,
+        visaStatus: updatedProfile.visaStatus,
+        status: "ACTIVE",
+        notes: input.notes?.trim() || null,
+      },
+      select: { id: true, caseReference: true },
+    });
 
-  return { previousStatus, caseReference: visaCase.caseReference };
+    return { previousStatus, caseReference: visaCase.caseReference };
+  });
 }

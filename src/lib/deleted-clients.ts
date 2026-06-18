@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { deleteStoredFile } from "@/lib/storage";
 import { formatVisaServiceDisplay, resolveVisaServiceType } from "@/lib/visa-services";
 
 export const activeClientUserWhere = {
@@ -18,6 +19,14 @@ export async function softDeleteClient(userId: string, deletedById: string) {
   await prisma.user.updateMany({
     where: { id: userId, role: "USER", deletedAt: null },
     data: { deletedAt: now, deletedById },
+  });
+
+  // Release the claim too so delete/restore stay symmetric: a deleted client is
+  // fully detached, and restoring requires an explicit re-claim. (The previous
+  // owner is notified separately before this runs.)
+  await prisma.questionnaireSubmission.updateMany({
+    where: { studentId: userId, assignedToId: { not: null } },
+    data: { assignedToId: null },
   });
 
   const profile = await prisma.studentProfile.findUnique({
@@ -72,9 +81,25 @@ export async function restoreDeletedClient(userId: string, actorId: string) {
 }
 
 export async function permanentDeleteClient(userId: string) {
-  await prisma.user.deleteMany({
+  // Only permanently remove an already soft-deleted client.
+  const user = await prisma.user.findFirst({
     where: { id: userId, role: "USER", deletedAt: { not: null } },
+    select: {
+      id: true,
+      studentProfile: {
+        select: { documents: { select: { storagePath: true } } },
+      },
+    },
   });
+  if (!user) return;
+
+  // Remove the underlying files first so blob/disk storage isn't orphaned when
+  // the cascade deletes the StudentDocument rows.
+  for (const document of user.studentProfile?.documents ?? []) {
+    await deleteStoredFile(document.storagePath).catch(() => undefined);
+  }
+
+  await prisma.user.delete({ where: { id: user.id } });
 }
 
 const deletedClientInclude = {

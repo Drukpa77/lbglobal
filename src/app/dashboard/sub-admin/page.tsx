@@ -24,7 +24,8 @@ import { StaffDashboardTasks } from "@/components/staff-dashboard-tasks";
 import { StudentClientIntakeForm } from "@/components/student-client-intake-form";
 import { VisaOutcomesPanel } from "@/components/visa-outcomes-panel";
 import { queueDevEmail } from "@/lib/email-outbox";
-import { generateNextCaseReference } from "@/lib/case-reference";
+import { runWithUniqueCaseReference } from "@/lib/case-reference";
+import { markNewApplicationNotificationsHandled } from "@/lib/claims";
 import { startNewVisaCaseForProfile } from "@/lib/visa-cases";
 import {
   buildManualIntakeAnswers,
@@ -82,6 +83,7 @@ type SearchParams = Promise<{
   taskView?: string;
   manualError?: string;
   manualSuccess?: string;
+  claimError?: string;
 }>;
 
 export default async function SubAdminDashboardPage(props: { searchParams: SearchParams }) {
@@ -133,6 +135,10 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
           : null;
   const manualStudentSuccess = searchParams.manualSuccess === "client";
   const manualStudentSuccessType = "client" as const;
+  const claimErrorMessage =
+    searchParams.claimError === "taken"
+      ? "That enquiry was just claimed by another team member."
+      : null;
 
   const isOverviewTab = tab === "overview";
   const isStudentsTab = tab === "students";
@@ -356,7 +362,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
       isTasksTab ? listTaskAssigneeOptions() : Promise.resolve([]),
       isStudentsTab || isTeamTab || isTasksTab
         ? prisma.user.findMany({
-            where: { role: "INTERNAL_STAFF" },
+            where: { role: "INTERNAL_STAFF", deletedAt: null },
             select: { id: true, name: true, email: true },
             orderBy: { name: "asc" },
           })
@@ -385,6 +391,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
         where: {
           assignedToId: null,
           submittedAt: { gte: sevenDaysAgo },
+          student: { role: "USER", deletedAt: null },
           ...(inquiryLocationWhere ?? {}),
         },
         select: {
@@ -401,6 +408,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
         where: {
           assignedToId: null,
           submittedAt: { gte: oneDayAgo },
+          student: { role: "USER", deletedAt: null },
           ...(inquiryLocationWhere ?? {}),
         },
       }) : Promise.resolve(0),
@@ -899,6 +907,12 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
             />
           ) : null}
 
+          {claimErrorMessage ? (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+              {claimErrorMessage}
+            </div>
+          ) : null}
+
           <div className="grid gap-4 md:grid-cols-5">
             <StatCard title="All Clients" value={String(assignedStudents)} />
             <StatCard title="My Cases" value={String(myCaseCount)} />
@@ -1084,8 +1098,9 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
                     activeInternalDelegationIds.size === 0 && Boolean(suggestedAssigneeId);
                   const isUnclaimed = submission.assignedToId === null;
                   const isMyCase = submission.assignedToId === session.user.id;
-                  const canManageCase =
-                    isAdminViewer || isMyCase || isUnclaimed;
+                  // Option A + open delegation: any sub-admin (or admin) can
+                  // manage any case so offices can help each other.
+                  const canManageCase = isAdminViewer || session.user.role === "SUB_ADMIN";
 
                   return (
                   <article id={`submission-${submission.id}`} key={submission.id} className="rounded-md border border-gray-200 p-3">
@@ -1916,12 +1931,8 @@ async function updateSubmissionStatusAction(formData: FormData) {
     redirect(returnToStudentsTab);
   }
 
-  if (session.user.role === "SUB_ADMIN" && submission.assignedToId !== session.user.id) {
-    if (submission.assignedToId !== null) {
-      redirect(returnToStudentsTab);
-    }
-  }
-
+  // Option A: any sub-admin may update any case status. Acting on a still
+  // unclaimed case claims it for the actor (claim-on-action).
   await prisma.questionnaireSubmission.update({
     where: { id: submissionId },
     data:
@@ -1978,10 +1989,9 @@ async function bulkUpdateSubmissionStatusAction(formData: FormData) {
   });
   if (submissions.length === 0) redirect(returnToStudentsTab);
 
-  const allowed = submissions.filter((submission) => {
-    if (session.user.role === "ADMIN") return true;
-    return submission.assignedToId === session.user.id || submission.assignedToId === null;
-  });
+  // Option A: any sub-admin may bulk-update any case. Acting on still-unclaimed
+  // cases claims them for the actor (claim-on-action, handled per row below).
+  const allowed = submissions;
   if (allowed.length === 0) redirect(returnToStudentsTab);
 
   for (const submission of allowed) {
@@ -2046,7 +2056,7 @@ async function delegateStudentToInternalStaffAction(formData: FormData) {
   if (!studentProfile) redirect(returnToStudentsTab);
 
   const staffMembers = await prisma.user.findMany({
-    where: { id: { in: selectedStaffIds }, role: "INTERNAL_STAFF" },
+    where: { id: { in: selectedStaffIds }, role: "INTERNAL_STAFF", deletedAt: null },
     select: { id: true, name: true, email: true },
   });
   if (selectedStaffIds.length > 0 && staffMembers.length === 0) redirect(returnToStudentsTab);
@@ -2185,25 +2195,99 @@ async function claimSubmissionAction(formData: FormData) {
 
   const submission = await prisma.questionnaireSubmission.findUnique({
     where: { id: submissionId },
-    select: { id: true, assignedToId: true, studentId: true },
+    select: {
+      id: true,
+      assignedToId: true,
+      studentId: true,
+      student: {
+        select: {
+          deletedAt: true,
+          studentProfile: { select: { id: true } },
+        },
+      },
+    },
   });
   if (!submission) redirect(returnToStudentsTab);
 
-  if (session.user.role === "SUB_ADMIN" && submission.assignedToId && submission.assignedToId !== session.user.id) {
-    redirect(returnToStudentsTab);
+  // Never claim an enquiry from a soft-deleted client (defence-in-depth; the
+  // inquiry cards already filter these out).
+  if (submission.student.deletedAt) redirect(returnToStudentsTab);
+
+  const previousOwnerId = submission.assignedToId;
+  const isAdmin = session.user.role === "ADMIN";
+
+  // Atomic claim: only succeed if the case is unclaimed or already ours. Admins
+  // may take over an owned case. This closes the read-then-write race where two
+  // agents could both "win" the same enquiry.
+  const claimResult = await prisma.questionnaireSubmission.updateMany({
+    where: isAdmin
+      ? { id: submission.id }
+      : { id: submission.id, OR: [{ assignedToId: null }, { assignedToId: session.user.id }] },
+    data: { assignedToId: session.user.id },
+  });
+  if (claimResult.count === 0) {
+    // Someone else already owns it (claim is a soft marker; changing the owner
+    // is a separate, explicit action reserved for admins).
+    redirect(`${returnToStudentsTab}&claimError=taken`);
   }
 
-  await prisma.questionnaireSubmission.update({
-    where: { id: submission.id },
-    data: {
-      assignedToId: session.user.id,
-      status: submission.assignedToId ? undefined : "UNDER_REVIEW",
-    },
+  // Per-client claim: take ownership of the client's other submissions so a
+  // repeat enquiry can't split the case across owners. Admins sweep every
+  // submission; agents only adopt the still-unclaimed ones.
+  await prisma.questionnaireSubmission.updateMany({
+    where: isAdmin
+      ? { studentId: submission.studentId }
+      : { studentId: submission.studentId, assignedToId: null },
+    data: { assignedToId: session.user.id },
   });
+
+  // Accepting a brand-new enquiry moves it into review without downgrading
+  // submissions that already progressed further.
+  if (previousOwnerId === null) {
+    await prisma.questionnaireSubmission.updateMany({
+      where: { studentId: submission.studentId, status: "SUBMITTED" },
+      data: { status: "UNDER_REVIEW" },
+    });
+  }
+
+  const studentProfileId = submission.student.studentProfile?.id ?? null;
+  if (studentProfileId) {
+    await prisma.activityLog.create({
+      data: {
+        actorId: session.user.id,
+        targetStudentProfileId: studentProfileId,
+        targetUserId: submission.studentId,
+        entityType: "ASSIGNMENT",
+        entityId: submission.id,
+        action: previousOwnerId && previousOwnerId !== session.user.id
+          ? "Reassigned case ownership (claimed)"
+          : "Claimed case",
+        metadata: { submissionId: submission.id, previousOwnerId },
+      },
+    });
+    // Clear the "new enquiry" action item for the rest of the team.
+    await markNewApplicationNotificationsHandled(prisma, studentProfileId);
+  }
+
+  // If an admin took the case from another owner, let that owner know.
+  if (previousOwnerId && previousOwnerId !== session.user.id && studentProfileId) {
+    await createWorkflowNotification({
+      recipientId: previousOwnerId,
+      actorId: session.user.id,
+      studentProfileId,
+      type: "STUDENT_DELEGATED",
+      title: "Case ownership changed",
+      message: "Your claimed case was reassigned to another team member.",
+      link: `/dashboard/students/${submission.studentId}?tab=overview`,
+      actionRequired: false,
+      metadata: { teamNotice: "change_by_actor", reason: "claim_reassigned" },
+    });
+  }
 
   revalidatePath("/dashboard/sub-admin");
   revalidatePath("/dashboard/admin");
   revalidatePath(`/dashboard/students/${submission.studentId}`);
+  revalidateContributionsCache(submission.studentId);
   redirect(returnToStudentsTab);
 }
 async function escalateSubmissionAction(formData: FormData) {
@@ -2372,14 +2456,16 @@ async function createManualStudentAction(formData: FormData) {
       select: { id: true, email: true, name: true },
     });
 
-    const studentProfile = await tx.studentProfile.create({
-      data: {
-        caseReference: await generateNextCaseReference(tx),
-        userId: studentUser.id,
-        ...buildManualIntakeProfileData(intake),
-      },
-      select: { id: true },
-    });
+    const studentProfile = await runWithUniqueCaseReference(tx, (caseReference) =>
+      tx.studentProfile.create({
+        data: {
+          caseReference,
+          userId: studentUser.id,
+          ...buildManualIntakeProfileData(intake),
+        },
+        select: { id: true },
+      }),
+    );
 
     const submission = await tx.questionnaireSubmission.create({
       data: {
@@ -2423,7 +2509,7 @@ async function createManualStudentAction(formData: FormData) {
 
   const creatorLabel = actor.name ?? actor.email ?? "Agent";
   const admins = await prisma.user.findMany({
-    where: { role: "ADMIN" },
+    where: { role: "ADMIN", deletedAt: null },
     select: { id: true, email: true },
   });
 

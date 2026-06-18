@@ -27,6 +27,7 @@ import {
   softDeleteClient,
 } from "@/lib/deleted-clients";
 import { blobOpensThroughAuthenticatedApi } from "@/lib/blob-access";
+import { markNewApplicationNotificationsHandled, notifyClaimOwnerOfClientDeletion } from "@/lib/claims";
 import {
   restoreDeletedClientAction,
   permanentDeleteDeletedClientAction,
@@ -137,10 +138,15 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
   ] = await Promise.all([
     isOverviewTab ? getRemindersForUser("ADMIN", session.user.id) : Promise.resolve([]),
     prisma.user.count({ where: activeClientUserWhere }),
-    isOverviewTab ? prisma.questionnaireSubmission.count() : Promise.resolve(0),
-    isOverviewTab ? prisma.user.count({ where: { role: "SUB_ADMIN" } }) : Promise.resolve(0),
     isOverviewTab ? prisma.questionnaireSubmission.count({
-      where: { status: { in: ["OFFER_RECEIVED", "VISA_GRANTED", "ENROLLED"] } },
+      where: { student: { role: "USER", deletedAt: null } },
+    }) : Promise.resolve(0),
+    isOverviewTab ? prisma.user.count({ where: { role: "SUB_ADMIN", deletedAt: null } }) : Promise.resolve(0),
+    isOverviewTab ? prisma.questionnaireSubmission.count({
+      where: {
+        status: { in: ["OFFER_RECEIVED", "VISA_GRANTED", "ENROLLED"] },
+        student: { role: "USER", deletedAt: null },
+      },
     }) : Promise.resolve(0),
     isAnalyticsTab ? prisma.questionnaireSubmission.groupBy({
       by: ["sourceCountry"],
@@ -200,12 +206,12 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
       take: 50,
     }) : Promise.resolve([]),
     isStaffTab ? prisma.user.findMany({
-      where: { role: "ADMIN" },
+      where: { role: "ADMIN", deletedAt: null },
       select: { id: true, name: true, email: true, jobTitle: true },
       orderBy: { createdAt: "asc" },
     }) : Promise.resolve([]),
     needsSubAdmins ? prisma.user.findMany({
-      where: { role: "SUB_ADMIN" },
+      where: { role: "SUB_ADMIN", deletedAt: null },
       select: { id: true, name: true, email: true, jobTitle: true },
       orderBy: { createdAt: "asc" },
     }) : Promise.resolve([]),
@@ -219,7 +225,7 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
       take: 8,
     }) : Promise.resolve([]),
     needsInternalStaff ? prisma.user.findMany({
-      where: { role: "INTERNAL_STAFF" },
+      where: { role: "INTERNAL_STAFF", deletedAt: null },
       select: { id: true, name: true, email: true, jobTitle: true },
       orderBy: { createdAt: "asc" },
     }) : Promise.resolve([]),
@@ -246,12 +252,14 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
     }) : Promise.resolve(0),
     isOverviewTab ? prisma.studentProfile.groupBy({
       by: ["caseStage"],
+      where: { user: { deletedAt: null } },
       _count: { _all: true },
     }) : Promise.resolve([]),
     isOverviewTab ? prisma.questionnaireSubmission.findMany({
       where: {
         assignedToId: null,
         submittedAt: { gte: sevenDaysAgoForFreshInquiries },
+        student: { role: "USER", deletedAt: null },
         ...(inquiryLocationWhere ?? {}),
       },
       select: {
@@ -268,6 +276,7 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
       where: {
         assignedToId: null,
         submittedAt: { gte: oneDayAgoForFreshInquiries },
+        student: { role: "USER", deletedAt: null },
         ...(inquiryLocationWhere ?? {}),
       },
     }) : Promise.resolve(0),
@@ -1503,25 +1512,106 @@ async function assignSubAdminAction(formData: FormData) {
   const submissionId = String(formData.get("submissionId") ?? "");
   const subAdminIdRaw = String(formData.get("subAdminId") ?? "");
   const subAdminId = subAdminIdRaw || null;
+  if (!submissionId) redirect("/dashboard/admin");
 
+  const submission = await prisma.questionnaireSubmission.findUnique({
+    where: { id: submissionId },
+    select: {
+      id: true,
+      assignedToId: true,
+      studentId: true,
+      student: {
+        select: {
+          deletedAt: true,
+          name: true,
+          email: true,
+          studentProfile: { select: { id: true } },
+        },
+      },
+    },
+  });
+  if (!submission) redirect("/dashboard/admin");
+  if (submission.student.deletedAt) redirect("/dashboard/admin");
+
+  let assignedAgent: { id: string; name: string | null; email: string } | null = null;
   if (subAdminId) {
-    const subAdmin = await prisma.user.findFirst({
-      where: { id: subAdminId, role: "SUB_ADMIN" },
-      select: { id: true },
+    assignedAgent = await prisma.user.findFirst({
+      where: { id: subAdminId, role: "SUB_ADMIN", deletedAt: null },
+      select: { id: true, name: true, email: true },
     });
-    if (!subAdmin) {
-      redirect("/dashboard/admin");
+    if (!assignedAgent) redirect("/dashboard/admin");
+  }
+
+  const previousOwnerId = submission.assignedToId;
+  const newOwnerId = assignedAgent?.id ?? null;
+
+  // Per-client: keep every one of the client's submissions under one owner so a
+  // repeat enquiry can't split ownership.
+  await prisma.questionnaireSubmission.updateMany({
+    where: { studentId: submission.studentId },
+    data: { assignedToId: newOwnerId },
+  });
+  // Promote a brand-new enquiry into review when it is first assigned.
+  if (newOwnerId && previousOwnerId === null) {
+    await prisma.questionnaireSubmission.updateMany({
+      where: { studentId: submission.studentId, status: "SUBMITTED" },
+      data: { status: "UNDER_REVIEW" },
+    });
+  }
+
+  const studentProfileId = submission.student.studentProfile?.id ?? null;
+  if (studentProfileId) {
+    await prisma.activityLog.create({
+      data: {
+        actorId: session.user.id,
+        targetStudentProfileId: studentProfileId,
+        targetUserId: submission.studentId,
+        entityType: "ASSIGNMENT",
+        entityId: submission.id,
+        action: newOwnerId ? "Assigned case to agent" : "Unassigned case (returned to queue)",
+        metadata: { submissionId: submission.id, previousOwnerId, newOwnerId },
+      },
+    });
+    if (newOwnerId) {
+      await markNewApplicationNotificationsHandled(prisma, studentProfileId);
     }
   }
 
-  await prisma.questionnaireSubmission.update({
-    where: { id: submissionId },
-    data: { assignedToId: subAdminId },
-  });
+  const clientLabel = submission.student.name?.trim() || submission.student.email;
+  // Notify the newly assigned agent.
+  if (assignedAgent && assignedAgent.id !== session.user.id && studentProfileId) {
+    await createWorkflowNotification({
+      recipientId: assignedAgent.id,
+      actorId: session.user.id,
+      studentProfileId,
+      type: "STUDENT_DELEGATED",
+      title: "Case assigned to you",
+      message: `You were assigned the case for ${clientLabel}.`,
+      link: `/dashboard/students/${submission.studentId}?tab=overview`,
+      actionRequired: true,
+      metadata: { teamNotice: "added_to_team", reason: "admin_assigned" },
+    });
+  }
+  // Notify the previous owner that their case changed hands.
+  if (previousOwnerId && previousOwnerId !== newOwnerId && studentProfileId) {
+    await createWorkflowNotification({
+      recipientId: previousOwnerId,
+      actorId: session.user.id,
+      studentProfileId,
+      type: "STUDENT_DELEGATED",
+      title: "Case ownership changed",
+      message: "Your claimed case was reassigned by an administrator.",
+      link: `/dashboard/students/${submission.studentId}?tab=overview`,
+      actionRequired: false,
+      metadata: { teamNotice: "change_by_actor", reason: "claim_reassigned" },
+    });
+  }
 
   revalidatePath("/dashboard/admin");
   revalidatePath("/dashboard/sub-admin");
   revalidatePath("/dashboard/student");
+  revalidatePath(`/dashboard/students/${submission.studentId}`);
+  revalidateContributionsCache(submission.studentId);
   redirect("/dashboard/admin");
 }
 
@@ -1534,11 +1624,13 @@ async function deleteStudentFromAdminAction(formData: FormData) {
   const studentId = String(formData.get("studentId") ?? "");
   if (!studentId) redirect("/dashboard/admin");
 
+  await notifyClaimOwnerOfClientDeletion(studentId, session.user.id);
   await softDeleteClient(studentId, session.user.id);
 
   revalidatePath("/dashboard/admin");
   revalidatePath("/dashboard/sub-admin");
   revalidatePath("/dashboard/internal-staff");
+  revalidateContributionsCache(studentId);
   redirect("/dashboard/admin?tab=deleted-clients");
 }
 
@@ -1563,7 +1655,7 @@ async function delegateStudentFromAdminAction(formData: FormData) {
   if (!studentId) redirect("/dashboard/admin");
 
   const staffMembers = await prisma.user.findMany({
-    where: { id: { in: selectedStaffIds }, role: "INTERNAL_STAFF" },
+    where: { id: { in: selectedStaffIds }, role: "INTERNAL_STAFF", deletedAt: null },
     select: { id: true, name: true, email: true },
   });
   if (selectedStaffIds.length > 0 && staffMembers.length === 0) redirect("/dashboard/admin");
@@ -1717,27 +1809,42 @@ async function createInternalStaffAccountAction(formData: FormData) {
 
   const existing = await prisma.user.findUnique({
     where: { email },
-    select: { id: true },
+    select: { id: true, deletedAt: true },
   });
-  if (existing) {
+  // An active account already owns this email; only a deactivated one can be
+  // reactivated.
+  if (existing && !existing.deletedAt) {
     redirect("/dashboard/admin");
   }
 
   const passwordHash = await hash(password, 12);
-  const internalStaff = await prisma.user.create({
-    data: {
-      name,
-      email,
-      jobTitle,
-      password: passwordHash,
-      role: "INTERNAL_STAFF",
-    },
-    select: { id: true },
-  });
+  const internalStaff = existing
+    ? await prisma.user.update({
+        where: { id: existing.id },
+        data: {
+          name,
+          jobTitle,
+          password: passwordHash,
+          role: "INTERNAL_STAFF",
+          deletedAt: null,
+          deletedById: null,
+        },
+        select: { id: true },
+      })
+    : await prisma.user.create({
+        data: {
+          name,
+          email,
+          jobTitle,
+          password: passwordHash,
+          role: "INTERNAL_STAFF",
+        },
+        select: { id: true },
+      });
 
   if (subAdminId) {
     const subAdmin = await prisma.user.findFirst({
-      where: { id: subAdminId, role: "SUB_ADMIN" },
+      where: { id: subAdminId, role: "SUB_ADMIN", deletedAt: null },
       select: { id: true },
     });
     if (subAdmin) {
@@ -1774,22 +1881,36 @@ async function createSubAdminAccountAction(formData: FormData) {
 
   const existing = await prisma.user.findUnique({
     where: { email },
-    select: { id: true },
+    select: { id: true, deletedAt: true },
   });
-  if (existing) {
+  if (existing && !existing.deletedAt) {
     redirect("/dashboard/admin?tab=staff");
   }
 
   const passwordHash = await hash(password, 12);
-  await prisma.user.create({
-    data: {
-      name,
-      email,
-      jobTitle,
-      password: passwordHash,
-      role: "SUB_ADMIN",
-    },
-  });
+  if (existing) {
+    await prisma.user.update({
+      where: { id: existing.id },
+      data: {
+        name,
+        jobTitle,
+        password: passwordHash,
+        role: "SUB_ADMIN",
+        deletedAt: null,
+        deletedById: null,
+      },
+    });
+  } else {
+    await prisma.user.create({
+      data: {
+        name,
+        email,
+        jobTitle,
+        password: passwordHash,
+        role: "SUB_ADMIN",
+      },
+    });
+  }
 
   revalidatePath("/dashboard/admin");
   revalidatePath("/dashboard/sub-admin");
@@ -1815,22 +1936,36 @@ async function createAdminAccountAction(formData: FormData) {
 
   const existing = await prisma.user.findUnique({
     where: { email },
-    select: { id: true },
+    select: { id: true, deletedAt: true },
   });
-  if (existing) {
+  if (existing && !existing.deletedAt) {
     redirect("/dashboard/admin?tab=staff");
   }
 
   const passwordHash = await hash(password, 12);
-  await prisma.user.create({
-    data: {
-      name,
-      email,
-      jobTitle,
-      password: passwordHash,
-      role: "ADMIN",
-    },
-  });
+  if (existing) {
+    await prisma.user.update({
+      where: { id: existing.id },
+      data: {
+        name,
+        jobTitle,
+        password: passwordHash,
+        role: "ADMIN",
+        deletedAt: null,
+        deletedById: null,
+      },
+    });
+  } else {
+    await prisma.user.create({
+      data: {
+        name,
+        email,
+        jobTitle,
+        password: passwordHash,
+        role: "ADMIN",
+      },
+    });
+  }
 
   revalidatePath("/dashboard/admin");
   revalidatePath("/dashboard/sub-admin");
@@ -1849,18 +1984,20 @@ async function deleteAdminAccountAction(formData: FormData) {
   if (adminId === session.user.id) redirect("/dashboard/admin?tab=staff");
 
   const adminUser = await prisma.user.findFirst({
-    where: { id: adminId, role: "ADMIN" },
+    where: { id: adminId, role: "ADMIN", deletedAt: null },
     select: { id: true },
   });
   if (!adminUser) redirect("/dashboard/admin?tab=staff");
 
-  const adminCount = await prisma.user.count({ where: { role: "ADMIN" } });
+  const adminCount = await prisma.user.count({ where: { role: "ADMIN", deletedAt: null } });
   if (adminCount <= 1) {
     redirect("/dashboard/admin?tab=staff");
   }
 
-  await prisma.user.delete({
+  // Soft-delete (deactivate) so anything this admin authored is preserved.
+  await prisma.user.update({
     where: { id: adminId },
+    data: { deletedAt: new Date(), deletedById: session.user.id },
   });
 
   revalidatePath("/dashboard/admin");
@@ -1879,14 +2016,29 @@ async function deleteSubAdminAction(formData: FormData) {
   if (!subAdminId) redirect("/dashboard/admin?tab=staff");
 
   const subAdmin = await prisma.user.findFirst({
-    where: { id: subAdminId, role: "SUB_ADMIN" },
+    where: { id: subAdminId, role: "SUB_ADMIN", deletedAt: null },
     select: { id: true },
   });
   if (!subAdmin) redirect("/dashboard/admin?tab=staff");
 
-  await prisma.user.delete({
-    where: { id: subAdminId },
-  });
+  const now = new Date();
+  // Soft-delete (deactivate) the agent so client data they touched survives.
+  // Release any cases they currently own back into the unclaimed queue, and
+  // end their active delegations.
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: subAdminId },
+      data: { deletedAt: now, deletedById: session.user.id },
+    }),
+    prisma.questionnaireSubmission.updateMany({
+      where: { assignedToId: subAdminId },
+      data: { assignedToId: null },
+    }),
+    prisma.studentAssignment.updateMany({
+      where: { assignedToId: subAdminId, isActive: true },
+      data: { isActive: false, endedAt: now },
+    }),
+  ]);
 
   revalidatePath("/dashboard/admin");
   revalidatePath("/dashboard/sub-admin");
@@ -1904,14 +2056,28 @@ async function deleteInternalStaffAction(formData: FormData) {
   if (!internalStaffId) redirect("/dashboard/admin");
 
   const staff = await prisma.user.findFirst({
-    where: { id: internalStaffId, role: "INTERNAL_STAFF" },
+    where: { id: internalStaffId, role: "INTERNAL_STAFF", deletedAt: null },
     select: { id: true },
   });
   if (!staff) redirect("/dashboard/admin");
 
-  await prisma.user.delete({
-    where: { id: internalStaffId },
-  });
+  const now = new Date();
+  // Soft-delete (deactivate) the case manager so the client documents, tasks,
+  // contracts and invoices they created are preserved. End their active case
+  // delegations and team memberships.
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: internalStaffId },
+      data: { deletedAt: now, deletedById: session.user.id },
+    }),
+    prisma.studentAssignment.updateMany({
+      where: { assignedToId: internalStaffId, isActive: true },
+      data: { isActive: false, endedAt: now },
+    }),
+    prisma.staffTeamMembership.deleteMany({
+      where: { internalStaffId },
+    }),
+  ]);
 
   revalidatePath("/dashboard/admin");
   revalidatePath("/dashboard/sub-admin");
@@ -1932,21 +2098,73 @@ async function claimSubmissionAction(formData: FormData) {
 
   const submission = await prisma.questionnaireSubmission.findUnique({
     where: { id: submissionId },
-    select: { id: true, assignedToId: true, studentId: true },
-  });
-  if (!submission) redirect("/dashboard/admin");
-
-  await prisma.questionnaireSubmission.update({
-    where: { id: submission.id },
-    data: {
-      assignedToId: session.user.id,
-      status: submission.assignedToId ? undefined : "UNDER_REVIEW",
+    select: {
+      id: true,
+      assignedToId: true,
+      studentId: true,
+      student: {
+        select: {
+          deletedAt: true,
+          studentProfile: { select: { id: true } },
+        },
+      },
     },
   });
+  if (!submission) redirect("/dashboard/admin");
+  if (submission.student.deletedAt) redirect("/dashboard/admin");
+
+  const previousOwnerId = submission.assignedToId;
+
+  // Per-client claim: an admin takes ownership of every one of the client's
+  // submissions so a repeat enquiry can't split the case across owners.
+  await prisma.questionnaireSubmission.updateMany({
+    where: { studentId: submission.studentId },
+    data: { assignedToId: session.user.id },
+  });
+
+  if (previousOwnerId === null) {
+    await prisma.questionnaireSubmission.updateMany({
+      where: { studentId: submission.studentId, status: "SUBMITTED" },
+      data: { status: "UNDER_REVIEW" },
+    });
+  }
+
+  const studentProfileId = submission.student.studentProfile?.id ?? null;
+  if (studentProfileId) {
+    await prisma.activityLog.create({
+      data: {
+        actorId: session.user.id,
+        targetStudentProfileId: studentProfileId,
+        targetUserId: submission.studentId,
+        entityType: "ASSIGNMENT",
+        entityId: submission.id,
+        action: previousOwnerId && previousOwnerId !== session.user.id
+          ? "Reassigned case ownership (claimed)"
+          : "Claimed case",
+        metadata: { submissionId: submission.id, previousOwnerId },
+      },
+    });
+    await markNewApplicationNotificationsHandled(prisma, studentProfileId);
+  }
+
+  if (previousOwnerId && previousOwnerId !== session.user.id && studentProfileId) {
+    await createWorkflowNotification({
+      recipientId: previousOwnerId,
+      actorId: session.user.id,
+      studentProfileId,
+      type: "STUDENT_DELEGATED",
+      title: "Case ownership changed",
+      message: "Your claimed case was reassigned to another team member.",
+      link: `/dashboard/students/${submission.studentId}?tab=overview`,
+      actionRequired: false,
+      metadata: { teamNotice: "change_by_actor", reason: "claim_reassigned" },
+    });
+  }
 
   revalidatePath("/dashboard/admin");
   revalidatePath("/dashboard/sub-admin");
   revalidatePath(`/dashboard/students/${submission.studentId}`);
+  revalidateContributionsCache(submission.studentId);
   redirect("/dashboard/admin");
 }
 
@@ -1961,7 +2179,7 @@ async function assignInternalStaffManagerAction(formData: FormData) {
   if (!internalStaffId) redirect("/dashboard/admin");
 
   const internalStaff = await prisma.user.findFirst({
-    where: { id: internalStaffId, role: "INTERNAL_STAFF" },
+    where: { id: internalStaffId, role: "INTERNAL_STAFF", deletedAt: null },
     select: { id: true },
   });
   if (!internalStaff) redirect("/dashboard/admin");
@@ -1972,7 +2190,7 @@ async function assignInternalStaffManagerAction(formData: FormData) {
 
   if (subAdminId) {
     const subAdmin = await prisma.user.findFirst({
-      where: { id: subAdminId, role: "SUB_ADMIN" },
+      where: { id: subAdminId, role: "SUB_ADMIN", deletedAt: null },
       select: { id: true },
     });
     if (subAdmin) {

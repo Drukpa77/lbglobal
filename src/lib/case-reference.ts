@@ -1,11 +1,13 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
+import type { Prisma as PrismaTypes } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 
-type DbClient = Prisma.TransactionClient | typeof prisma;
+type DbClient = PrismaTypes.TransactionClient | typeof prisma;
 
 export function formatCaseReference(year: number, sequence: number): string {
-  return `LBG-${year}-${String(sequence).padStart(4, "0")}`;
+  const width = sequence > 9999 ? 5 : 4;
+  return `LBG-${year}-${String(sequence).padStart(width, "0")}`;
 }
 
 export async function generateNextCaseReference(client: DbClient = prisma): Promise<string> {
@@ -15,12 +17,10 @@ export async function generateNextCaseReference(client: DbClient = prisma): Prom
   const [latestProfile, latestVisaCase] = await Promise.all([
     client.studentProfile.findFirst({
       where: { caseReference: { startsWith: prefix } },
-      orderBy: { caseReference: "desc" },
       select: { caseReference: true },
     }),
     client.visaCase.findFirst({
       where: { caseReference: { startsWith: prefix } },
-      orderBy: { caseReference: "desc" },
       select: { caseReference: true },
     }),
   ]);
@@ -36,6 +36,40 @@ export async function generateNextCaseReference(client: DbClient = prisma): Prom
   }
 
   return formatCaseReference(year, nextSequence);
+}
+
+function isDuplicateCaseReferenceError(error: unknown) {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") {
+    return false;
+  }
+  const target = error.meta?.target;
+  const fields = Array.isArray(target) ? target.map(String) : [String(target ?? "")];
+  return fields.some((field) => field.toLowerCase().includes("casereference"));
+}
+
+/**
+ * Allocates a fresh case reference and runs `createFn`. Retries when two
+ * requests pick the same number at the same time.
+ */
+export async function runWithUniqueCaseReference<T>(
+  client: DbClient,
+  createFn: (caseReference: string) => Promise<T>,
+  maxAttempts = 5,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const caseReference = await generateNextCaseReference(client);
+    try {
+      return await createFn(caseReference);
+    } catch (error) {
+      if (isDuplicateCaseReferenceError(error)) {
+        lastError = error;
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError ?? new Error("Failed to allocate a unique case reference.");
 }
 
 export async function backfillMissingCaseReferences(client: DbClient = prisma): Promise<number> {
@@ -60,7 +94,6 @@ export async function backfillMissingCaseReferences(client: DbClient = prisma): 
     if (nextSequence === undefined) {
       const latest = await client.studentProfile.findFirst({
         where: { caseReference: { startsWith: prefix } },
-        orderBy: { caseReference: "desc" },
         select: { caseReference: true },
       });
 

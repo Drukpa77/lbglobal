@@ -16,7 +16,7 @@ export type TaskAssigneeOption = {
 
 export async function listTaskAssigneeOptions(): Promise<TaskAssigneeOption[]> {
   return prisma.user.findMany({
-    where: { role: { in: ["INTERNAL_STAFF", "SUB_ADMIN"] } },
+    where: { role: { in: ["INTERNAL_STAFF", "SUB_ADMIN"] }, deletedAt: null },
     select: { id: true, name: true, email: true, role: true },
     orderBy: [{ role: "asc" }, { name: "asc" }],
   });
@@ -26,7 +26,7 @@ export async function resolveTaskAssignee(assigneeIdRaw: string) {
   const assigneeId = assigneeIdRaw.trim();
   if (!assigneeId) return null;
   return prisma.user.findFirst({
-    where: { id: assigneeId, role: { in: ["INTERNAL_STAFF", "SUB_ADMIN"] } },
+    where: { id: assigneeId, role: { in: ["INTERNAL_STAFF", "SUB_ADMIN"] }, deletedAt: null },
     select: { id: true, name: true, email: true, role: true },
   });
 }

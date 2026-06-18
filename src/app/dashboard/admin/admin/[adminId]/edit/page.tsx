@@ -179,16 +179,18 @@ async function deleteAdminAction(formData: FormData) {
   if (!adminId || adminId === session.user.id) redirect("/dashboard/admin?tab=staff");
 
   const adminUser = await prisma.user.findFirst({
-    where: { id: adminId, role: "ADMIN" },
+    where: { id: adminId, role: "ADMIN", deletedAt: null },
     select: { id: true },
   });
   if (!adminUser) redirect("/dashboard/admin?tab=staff");
 
-  const adminCount = await prisma.user.count({ where: { role: "ADMIN" } });
+  const adminCount = await prisma.user.count({ where: { role: "ADMIN", deletedAt: null } });
   if (adminCount <= 1) redirect("/dashboard/admin?tab=staff");
 
-  await prisma.user.delete({
+  // Soft-delete (deactivate) so anything this admin authored is preserved.
+  await prisma.user.update({
     where: { id: adminId },
+    data: { deletedAt: new Date(), deletedById: session.user.id },
   });
 
   const { revalidatePath } = await import("next/cache");

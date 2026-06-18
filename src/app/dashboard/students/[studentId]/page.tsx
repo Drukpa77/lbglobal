@@ -35,7 +35,7 @@ import { AuditTab } from "@/app/dashboard/students/[studentId]/tabs/audit-tab";
 import { TasksDocumentsTab } from "@/app/dashboard/students/[studentId]/tabs/tasks-documents-tab";
 import { auth } from "@/auth";
 import { blobOpensThroughAuthenticatedApi } from "@/lib/blob-access";
-import { generateNextCaseReference } from "@/lib/case-reference";
+import { runWithUniqueCaseReference } from "@/lib/case-reference";
 import { getCompanySettings } from "@/lib/company-settings";
 import { revalidateContributionsCache } from "@/lib/contributions-cache";
 import { getContributions } from "@/lib/contributions";
@@ -55,6 +55,7 @@ import {
   taskListOrderBy,
 } from "@/lib/task-assignment";
 import { softDeleteClient } from "@/lib/deleted-clients";
+import { getCurrentClaimOwnerId, notifyClaimOwnerOfClientDeletion } from "@/lib/claims";
 import { notifyTaskAssignment } from "@/lib/task-notifications";
 import {
   createWorkflowNotification,
@@ -277,14 +278,14 @@ export default async function StudentProfileManagementPage(props: { params: Para
       : Promise.resolve(null),
     (needsProfileData || needsFinancialData)
       ? prisma.user.findMany({
-          where: { role: "INTERNAL_STAFF" },
+          where: { role: "INTERNAL_STAFF", deletedAt: null },
           select: { id: true, name: true, email: true },
           orderBy: { createdAt: "asc" },
         })
       : Promise.resolve([]),
     needsProfileData
       ? prisma.user.findMany({
-          where: { role: { in: ["INTERNAL_STAFF", "SUB_ADMIN"] } },
+          where: { role: { in: ["INTERNAL_STAFF", "SUB_ADMIN"] }, deletedAt: null },
           select: { id: true, name: true, email: true, role: true },
           orderBy: [{ role: "asc" }, { name: "asc" }],
         })
@@ -394,12 +395,9 @@ export default async function StudentProfileManagementPage(props: { params: Para
       : Promise.resolve([]),
   ]);
 
-  const isAgentCaseOwner =
-    session.user.role === "SUB_ADMIN" && latestSubmission?.assignedToId === session.user.id;
-
   const canCreateTasks =
     session.user.role === "ADMIN" ||
-    isAgentCaseOwner ||
+    session.user.role === "SUB_ADMIN" ||
     Boolean(internalStaffAssignedForTasks);
 
   const documentsById = new Map(allDocuments.map((doc) => [doc.id, doc]));
@@ -469,9 +467,12 @@ export default async function StudentProfileManagementPage(props: { params: Para
   const isAssignedCaseManager =
     session.user.role === "INTERNAL_STAFF" &&
     currentAssignments.some((assignment) => assignment.assignedTo.id === session.user.id);
+  // Option A + open delegation: any sub-admin may delegate any client so other
+  // offices can help when one is flooded. Internal staff need an active
+  // delegation. Admins always can.
   const canManageStudentDelegation =
     session.user.role === "ADMIN" ||
-    isAgentCaseOwner ||
+    session.user.role === "SUB_ADMIN" ||
     isAssignedCaseManager;
   const activeAssigneeIds = new Set(currentAssignments.map((assignment) => assignment.assignedTo.id));
   const caseManagersForDelegation = delegationTeamUsers.filter(
@@ -2179,11 +2180,16 @@ async function startNewVisaCaseAction(formData: FormData) {
     });
     let submissionId: string | null = null;
     if (template) {
+      // Per-client claim: keep the existing owner; only fall back to the acting
+      // agent (or unclaimed for internal staff) when nobody owns the client yet.
+      const inheritedOwnerId = await getCurrentClaimOwnerId(tx, studentId);
+      const submissionOwnerId =
+        inheritedOwnerId ?? (session.user.role === "SUB_ADMIN" ? session.user.id : null);
       const submission = await tx.questionnaireSubmission.create({
         data: {
           studentId,
           templateId: template.id,
-          assignedToId: session.user.role === "SUB_ADMIN" ? session.user.id : null,
+          assignedToId: submissionOwnerId,
           answers: {
             visaServiceType: visaServiceType ?? "",
             otherServiceDescription: otherServiceDescription ?? "",
@@ -2249,19 +2255,8 @@ async function saveStudentProfileAction(formData: FormData) {
     redirect("/dashboard");
   }
 
-  if (session.user.role === "SUB_ADMIN") {
-    const assigned = await prisma.questionnaireSubmission.findFirst({
-      where: {
-        studentId,
-        OR: [{ assignedToId: session.user.id }, { assignedToId: null }],
-      },
-      select: { id: true },
-    });
-    if (!assigned) {
-      redirect(studentProfileUrl(studentId));
-    }
-  }
-
+  // Option A: any sub-admin may edit any client (cross-office collaboration).
+  // Internal staff are still limited to clients delegated to them.
   if (session.user.role === "INTERNAL_STAFF") {
     const assigned = await prisma.studentAssignment.findFirst({
       where: {
@@ -2309,7 +2304,6 @@ async function saveStudentProfileAction(formData: FormData) {
   const nextFollowUpDate = parseOptionalDate(String(formData.get("nextFollowUpDate") ?? "").trim());
   const visaStatusRaw = String(formData.get("visaStatus") ?? "NOT_STARTED") as VisaStatus;
   const visaStatus = visaStatuses.includes(visaStatusRaw) ? visaStatusRaw : "NOT_STARTED";
-  const caseReference = await generateNextCaseReference();
   const visaServiceType = nullableText(formData.get("visaServiceType"));
   const isStudentVisa = isStudentVisaService(visaServiceType ?? "");
   const isOtherService = isOtherVisaService(visaServiceType ?? "");
@@ -2336,58 +2330,58 @@ async function saveStudentProfileAction(formData: FormData) {
     englishTestScore: nullableText(formData.get("englishTestScore")),
   };
 
-  const profile = await prisma.studentProfile.upsert({
+  const profileFields = {
+    dateOfBirth,
+    phone: nullableText(formData.get("phone")),
+    city: nullableText(formData.get("city")),
+    nationality: nullableText(formData.get("nationality")),
+    currentAddress: nullableText(formData.get("currentAddress")),
+    emergencyContactName: nullableText(formData.get("emergencyContactName")),
+    emergencyContactEmail: nullableText(formData.get("emergencyContactEmail")),
+    emergencyContactPhone: nullableText(formData.get("emergencyContactPhone")),
+    ...profileVisaFields,
+    visaStatus,
+    courseStartDate,
+    courseEndDate,
+    visaExpiryDate,
+    lastFollowUpDate,
+    nextFollowUpDate,
+    followUpNotes: nullableText(formData.get("followUpNotes")),
+  };
+
+  const profileSelect = {
+    id: true,
+    caseReference: true,
+    visaServiceType: true,
+    otherServiceDescription: true,
+    caseStage: true,
+    visaStatus: true,
+    courseStartDate: true,
+    courseEndDate: true,
+    visaExpiryDate: true,
+  } as const;
+
+  const existingProfile = await prisma.studentProfile.findUnique({
     where: { userId: studentId },
-    update: {
-      dateOfBirth,
-      phone: nullableText(formData.get("phone")),
-      city: nullableText(formData.get("city")),
-      nationality: nullableText(formData.get("nationality")),
-      currentAddress: nullableText(formData.get("currentAddress")),
-      emergencyContactName: nullableText(formData.get("emergencyContactName")),
-      emergencyContactEmail: nullableText(formData.get("emergencyContactEmail")),
-      emergencyContactPhone: nullableText(formData.get("emergencyContactPhone")),
-      ...profileVisaFields,
-      visaStatus,
-      courseStartDate,
-      courseEndDate,
-      visaExpiryDate,
-      lastFollowUpDate,
-      nextFollowUpDate,
-      followUpNotes: nullableText(formData.get("followUpNotes")),
-    },
-    create: {
-      caseReference,
-      userId: studentId,
-      dateOfBirth,
-      phone: nullableText(formData.get("phone")),
-      city: nullableText(formData.get("city")),
-      nationality: nullableText(formData.get("nationality")),
-      currentAddress: nullableText(formData.get("currentAddress")),
-      emergencyContactName: nullableText(formData.get("emergencyContactName")),
-      emergencyContactEmail: nullableText(formData.get("emergencyContactEmail")),
-      emergencyContactPhone: nullableText(formData.get("emergencyContactPhone")),
-      ...profileVisaFields,
-      visaStatus,
-      courseStartDate,
-      courseEndDate,
-      visaExpiryDate,
-      lastFollowUpDate,
-      nextFollowUpDate,
-      followUpNotes: nullableText(formData.get("followUpNotes")),
-    },
-    select: {
-      id: true,
-      caseReference: true,
-      visaServiceType: true,
-      otherServiceDescription: true,
-      caseStage: true,
-      visaStatus: true,
-      courseStartDate: true,
-      courseEndDate: true,
-      visaExpiryDate: true,
-    },
+    select: { id: true },
   });
+
+  const profile = existingProfile
+    ? await prisma.studentProfile.update({
+        where: { userId: studentId },
+        data: profileFields,
+        select: profileSelect,
+      })
+    : await runWithUniqueCaseReference(prisma, (caseReference) =>
+        prisma.studentProfile.create({
+          data: {
+            caseReference,
+            userId: studentId,
+            ...profileFields,
+          },
+          select: profileSelect,
+        }),
+      );
 
   await prisma.$transaction(async (tx) => {
     await syncActiveVisaCaseFromProfile(tx, profile);
@@ -2426,17 +2420,8 @@ async function deleteStudentAction(formData: FormData) {
   const studentId = String(formData.get("studentId") ?? "");
   if (!studentId) redirect("/dashboard");
 
-  if (role === "SUB_ADMIN") {
-    const assigned = await prisma.questionnaireSubmission.findFirst({
-      where: {
-        studentId,
-        OR: [{ assignedToId: session.user.id }, { assignedToId: null }],
-      },
-      select: { id: true },
-    });
-    if (!assigned) redirect("/dashboard/sub-admin");
-  }
-
+  // Option A: any sub-admin may soft-delete any client. Internal staff are
+  // still limited to clients delegated to them.
   if (role === "INTERNAL_STAFF") {
     const assigned = await prisma.studentAssignment.findFirst({
       where: {
@@ -2449,6 +2434,7 @@ async function deleteStudentAction(formData: FormData) {
     if (!assigned) redirect("/dashboard/internal-staff");
   }
 
+  await notifyClaimOwnerOfClientDeletion(studentId, session.user.id);
   await softDeleteClient(studentId, session.user.id);
   revalidatePath("/dashboard/admin");
   revalidatePath("/dashboard/sub-admin");
@@ -2513,7 +2499,7 @@ async function assignStudentDelegationAction(formData: FormData) {
   if (!studentProfile) redirect(returnToProfileTab);
 
   const assignees = await prisma.user.findMany({
-    where: { id: { in: assigneeIds }, role: { in: ["INTERNAL_STAFF", "SUB_ADMIN"] } },
+    where: { id: { in: assigneeIds }, role: { in: ["INTERNAL_STAFF", "SUB_ADMIN"] }, deletedAt: null },
     select: { id: true, role: true, name: true, email: true },
   });
   const assigneesById = new Map(assignees.map((assignee) => [assignee.id, assignee]));
@@ -2744,18 +2730,8 @@ async function createTaskAction(formData: FormData) {
     }
   }
 
-  if (session.user.role === "SUB_ADMIN") {
-    const allowed = await prisma.questionnaireSubmission.findFirst({
-      where: {
-        studentId,
-        OR: [{ assignedToId: session.user.id }, { assignedToId: null }],
-      },
-      select: { id: true },
-    });
-    if (!allowed) {
-      redirect(`/dashboard/students/${studentId}?tab=tasks&taskError=sub-admin-access`);
-    }
-  }
+  // Option A: any sub-admin may manage tasks for any client (collaborative,
+  // cross-office). Internal staff remain restricted to delegated clients above.
 
   const taskPriority: TaskPriority = ["LOW", "MEDIUM", "HIGH", "URGENT"].includes(priority)
     ? priority
@@ -3042,16 +3018,8 @@ async function updateCaseStageAction(formData: FormData) {
     if (!isAssigned) redirect(studentOverviewCaseStageUrl(studentId));
   }
 
-  if (session.user.role === "SUB_ADMIN") {
-    const allowed = await prisma.questionnaireSubmission.findFirst({
-      where: {
-        studentId,
-        OR: [{ assignedToId: session.user.id }, { assignedToId: null }],
-      },
-      select: { id: true },
-    });
-    if (!allowed) redirect(studentOverviewCaseStageUrl(studentId));
-  }
+  // Option A: any sub-admin may move the case stage for any client
+  // (collaborative, cross-office). Internal staff remain restricted above.
 
   const previous = profile.caseStage;
   if (previous === stageRaw) {
@@ -3673,17 +3641,8 @@ async function createContractPreviewAction(formData: FormData) {
   const studentId = String(formData.get("studentId") ?? "");
   if (!studentId) redirect("/dashboard");
 
-  if (session.user.role === "SUB_ADMIN") {
-    const assigned = await prisma.questionnaireSubmission.findFirst({
-      where: {
-        studentId,
-        OR: [{ assignedToId: session.user.id }, { assignedToId: null }],
-      },
-      select: { id: true },
-    });
-    if (!assigned) redirect(studentFinancialsUrl(studentId));
-  }
-
+  // Option A: any sub-admin may act on any client; internal staff are limited
+  // to clients delegated to them.
   if (session.user.role === "INTERNAL_STAFF") {
     const assigned = await prisma.studentAssignment.findFirst({
       where: {
@@ -3751,17 +3710,8 @@ async function createInvoiceDraftAction(formData: FormData) {
   const studentId = String(formData.get("studentId") ?? "");
   if (!studentId) redirect("/dashboard");
 
-  if (session.user.role === "SUB_ADMIN") {
-    const assigned = await prisma.questionnaireSubmission.findFirst({
-      where: {
-        studentId,
-        OR: [{ assignedToId: session.user.id }, { assignedToId: null }],
-      },
-      select: { id: true },
-    });
-    if (!assigned) redirect(studentFinancialsUrl(studentId));
-  }
-
+  // Option A: any sub-admin may act on any client; internal staff are limited
+  // to clients delegated to them.
   if (session.user.role === "INTERNAL_STAFF") {
     const assigned = await prisma.studentAssignment.findFirst({
       where: {
@@ -4024,13 +3974,8 @@ async function deleteContractAction(formData: FormData) {
   const studentId = String(formData.get("studentId") ?? "");
   if (!contractId || !studentId) redirect(studentId ? studentFinancialsUrl(studentId) : "/dashboard");
 
-  if (session.user.role === "SUB_ADMIN") {
-    const assigned = await prisma.questionnaireSubmission.findFirst({
-      where: { studentId, OR: [{ assignedToId: session.user.id }, { assignedToId: null }] },
-      select: { id: true },
-    });
-    if (!assigned) redirect(studentFinancialsUrl(studentId));
-  }
+  // Option A: any sub-admin may act on any client; internal staff are limited
+  // to clients delegated to them.
   if (session.user.role === "INTERNAL_STAFF") {
     const assigned = await prisma.studentAssignment.findFirst({
       where: {
@@ -4084,13 +4029,8 @@ async function deleteInvoiceAction(formData: FormData) {
   const studentId = String(formData.get("studentId") ?? "");
   if (!invoiceId || !studentId) redirect(studentId ? studentFinancialsUrl(studentId) : "/dashboard");
 
-  if (session.user.role === "SUB_ADMIN") {
-    const assigned = await prisma.questionnaireSubmission.findFirst({
-      where: { studentId, OR: [{ assignedToId: session.user.id }, { assignedToId: null }] },
-      select: { id: true },
-    });
-    if (!assigned) redirect(studentFinancialsUrl(studentId));
-  }
+  // Option A: any sub-admin may act on any client; internal staff are limited
+  // to clients delegated to them.
   if (session.user.role === "INTERNAL_STAFF") {
     const assigned = await prisma.studentAssignment.findFirst({
       where: {
@@ -4792,7 +4732,7 @@ async function updateCaseAction(formData: FormData) {
 
   if (assignedAgentId) {
     const assignedAgent = await prisma.user.findFirst({
-      where: { id: assignedAgentId, role: "INTERNAL_STAFF" },
+      where: { id: assignedAgentId, role: "INTERNAL_STAFF", deletedAt: null },
       select: { id: true },
     });
     if (!assignedAgent) redirect(`/dashboard/students/${studentId}`);
@@ -4838,17 +4778,8 @@ async function ensureLeadWorkflowAccess(
     redirect("/dashboard");
   }
 
-  if (user.role === "SUB_ADMIN") {
-    const assigned = await prisma.questionnaireSubmission.findFirst({
-      where: {
-        studentId,
-        OR: [{ assignedToId: user.id }, { assignedToId: null }],
-      },
-      select: { id: true },
-    });
-    if (!assigned) redirect(studentOverviewUrl(studentId));
-  }
-
+  // Option A: any sub-admin may act on any client; internal staff are limited
+  // to clients delegated to them.
   if (user.role === "INTERNAL_STAFF") {
     const assigned = await prisma.studentAssignment.findFirst({
       where: {
@@ -4868,13 +4799,15 @@ async function ensureLeadWorkflowAccess(
     redirect(studentOverviewUrl(studentId));
   }
 
-  const createdProfile = await prisma.studentProfile.create({
-    data: {
-      caseReference: await generateNextCaseReference(),
-      userId: studentId,
-    },
-    select: { id: true },
-  });
+  const createdProfile = await runWithUniqueCaseReference(prisma, (caseReference) =>
+    prisma.studentProfile.create({
+      data: {
+        caseReference,
+        userId: studentId,
+      },
+      select: { id: true },
+    }),
+  );
   return { studentProfileId: createdProfile.id };
 }
 

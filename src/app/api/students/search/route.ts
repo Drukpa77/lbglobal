@@ -3,6 +3,10 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { activeClientUserWhere } from "@/lib/deleted-clients";
 import { prisma } from "@/lib/prisma";
+import {
+  internalStaffClientDirectoryWhere,
+  staffHasFullClientDirectory,
+} from "@/lib/staff-client-access";
 
 export async function GET(request: Request) {
   const session = await auth();
@@ -20,13 +24,22 @@ export async function GET(request: Request) {
     return NextResponse.json({ students: [] }, { status: 200 });
   }
 
+  const searchMatch = {
+    OR: [
+      { name: { contains: q } },
+      { email: { contains: q } },
+      { studentProfile: { caseReference: { contains: q } } },
+    ],
+  };
+
   const students = await prisma.user.findMany({
     where: {
       ...activeClientUserWhere,
-      OR: [
-        { name: { contains: q } },
-        { email: { contains: q } },
-        { studentProfile: { caseReference: { contains: q } } },
+      AND: [
+        searchMatch,
+        ...(staffHasFullClientDirectory(role)
+          ? []
+          : [internalStaffClientDirectoryWhere(session.user.id)]),
       ],
     },
     select: {

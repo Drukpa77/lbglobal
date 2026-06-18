@@ -55,11 +55,8 @@ export default auth((req: NextAuthRequest) => {
     }
   }
 
-  const isStudentSelfDashboard =
-    pathname === "/dashboard/student" || pathname.startsWith("/dashboard/student/");
-
-  if (isStudentSelfDashboard) {
-    return NextResponse.redirect(new URL(getDashboardPath(role), req.nextUrl));
+  if (pathname === "/dashboard/student" || pathname.startsWith("/dashboard/student/")) {
+    return NextResponse.redirect(new URL("/apply", req.nextUrl));
   }
 
   return NextResponse.next();

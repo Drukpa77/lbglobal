@@ -1,5 +1,5 @@
 export const roleDashboardPath = {
-  USER: "/dashboard/student",
+  USER: "/apply",
   INTERNAL_STAFF: "/dashboard/internal-staff",
   SUB_ADMIN: "/dashboard/sub-admin",
   ADMIN: "/dashboard/admin",

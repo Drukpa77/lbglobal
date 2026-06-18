@@ -6,6 +6,7 @@ import { DeleteWithConfirm } from "@/components/delete-with-confirm";
 import { ContractBuilder, type ContractBuilderInitial } from "@/components/contract/contract-builder";
 import { getCompanySettings } from "@/lib/company-settings";
 import { prisma } from "@/lib/prisma";
+import { staffCanAccessClientFinancials } from "@/lib/staff-client-access";
 import { revalidatePath } from "next/cache";
 
 type Params = Promise<{ contractId: string }>;
@@ -35,6 +36,12 @@ export default async function ContractPreviewPage(props: { params: Params }) {
     getCompanySettings(),
   ]);
   if (!contract) redirect("/dashboard");
+
+  const canAccess = await staffCanAccessClientFinancials(
+    session.user,
+    contract.studentProfile.userId,
+  );
+  if (!canAccess) redirect("/dashboard");
 
   const studentName = contract.studentProfile.user.name ?? contract.studentProfile.user.email;
   const studentUserId = contract.studentProfile.userId;
@@ -129,6 +136,12 @@ async function deleteContractAction(formData: FormData) {
     include: { studentProfile: { select: { userId: true } } },
   });
   if (!contract) redirect("/dashboard");
+
+  const canAccess = await staffCanAccessClientFinancials(
+    session.user,
+    contract.studentProfile.userId,
+  );
+  if (!canAccess) redirect("/dashboard");
 
   await prisma.outboundEmailLog.deleteMany({ where: { relatedContractId: contract.id } });
   await prisma.contract.delete({ where: { id: contract.id } });

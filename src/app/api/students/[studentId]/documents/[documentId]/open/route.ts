@@ -7,6 +7,10 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { getBlobStoreAccess } from "@/lib/blob-access";
 import { prisma } from "@/lib/prisma";
+import {
+  internalStaffHasActiveAssignment,
+  staffHasFullClientDirectory,
+} from "@/lib/staff-client-access";
 
 export const runtime = "nodejs";
 
@@ -31,36 +35,12 @@ export async function GET(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  if (session.user.role === "SUB_ADMIN") {
-    const allowed = await prisma.questionnaireSubmission.findFirst({
-      where: {
-        studentId,
-        OR: [{ assignedToId: session.user.id }, { assignedToId: null }],
-      },
-      select: { id: true },
-    });
+  if (
+    !staffHasFullClientDirectory(session.user.role) &&
+    session.user.role === "INTERNAL_STAFF"
+  ) {
+    const allowed = await internalStaffHasActiveAssignment(session.user.id, studentId);
     if (!allowed) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-  }
-
-  if (session.user.role === "INTERNAL_STAFF") {
-    const profile = await prisma.studentProfile.findUnique({
-      where: { userId: studentId },
-      select: { id: true },
-    });
-    if (!profile) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
-    const assigned = await prisma.studentAssignment.findFirst({
-      where: {
-        studentProfileId: profile.id,
-        assignedToId: session.user.id,
-        isActive: true,
-      },
-      select: { id: true },
-    });
-    if (!assigned) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
   }
