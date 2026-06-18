@@ -1,4 +1,5 @@
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import type { DocumentCategory } from "@prisma/client";
@@ -60,10 +61,48 @@ type UploadPayload = {
   actorId?: string;
 };
 
+type CompleteUploadBody = {
+  action: "complete";
+  payload: UploadPayload;
+  blob: {
+    url: string;
+    pathname: string;
+    contentType?: string;
+  };
+};
+
 export async function POST(request: Request) {
-  const body = (await request.json()) as HandleUploadBody;
+  const body = (await request.json()) as HandleUploadBody | CompleteUploadBody;
 
   try {
+    if (isCompleteUploadBody(body)) {
+      const session = await auth();
+      if (
+        !session?.user ||
+        (session.user.role !== "ADMIN" &&
+          session.user.role !== "SUB_ADMIN" &&
+          session.user.role !== "INTERNAL_STAFF")
+      ) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
+
+      const payload = parseUploadPayload(JSON.stringify(body.payload));
+      validateUploadPayload(payload, body.blob.pathname);
+
+      if (payload.mode === "new") {
+        await assertNewDocumentAccess(payload.studentId, session.user);
+        await saveNewDocumentUpload({ ...payload, actorId: session.user.id }, body.blob.url);
+      } else {
+        await assertReplacementDocumentAccess(payload.studentId, payload.documentId, session.user);
+        await saveReplacementDocumentUpload(
+          { ...payload, actorId: session.user.id },
+          body.blob.url,
+        );
+      }
+
+      return NextResponse.json({ ok: true });
+    }
+
     const response = await handleUpload({
       request,
       body,
@@ -113,6 +152,15 @@ export async function POST(request: Request) {
     console.error("POST /api/student-documents/upload", error);
     return NextResponse.json({ error: "Upload could not be authorized." }, { status: 400 });
   }
+}
+
+function isCompleteUploadBody(body: HandleUploadBody | CompleteUploadBody): body is CompleteUploadBody {
+  return (
+    Boolean(body) &&
+    typeof body === "object" &&
+    "action" in body &&
+    body.action === "complete"
+  );
 }
 
 function parseUploadPayload(raw: string | null): UploadPayload {
@@ -225,7 +273,14 @@ async function assertReplacementDocumentAccess(
 }
 
 async function saveNewDocumentUpload(payload: UploadPayload, storagePath: string) {
+  const documentId = documentIdForStoragePath(storagePath);
   try {
+    const existing = await prisma.studentDocument.findFirst({
+      where: { OR: [{ storagePath }, { id: documentId }] },
+      select: { id: true },
+    });
+    if (existing) return;
+
     const studentProfile = await prisma.studentProfile.findUnique({
       where: { userId: payload.studentId },
       select: { id: true },
@@ -240,6 +295,7 @@ async function saveNewDocumentUpload(payload: UploadPayload, storagePath: string
 
     const document = await prisma.studentDocument.create({
       data: {
+        id: documentId,
         studentProfileId: studentProfile.id,
         uploadedById: payload.actorId!,
         category: safeCategory,
@@ -265,13 +321,26 @@ async function saveNewDocumentUpload(payload: UploadPayload, storagePath: string
     revalidateContributionsCache(payload.studentId);
     revalidatePath(`/dashboard/students/${payload.studentId}`);
   } catch (error) {
+    const existing = await prisma.studentDocument.findFirst({
+      where: { OR: [{ storagePath }, { id: documentId }] },
+      select: { id: true },
+    });
+    if (existing && isUniqueConstraintError(error)) return;
+
     await deleteStoredFile(storagePath).catch(() => undefined);
     throw error;
   }
 }
 
 async function saveReplacementDocumentUpload(payload: UploadPayload, storagePath: string) {
+  const documentId = documentIdForStoragePath(storagePath);
   try {
+    const existing = await prisma.studentDocument.findFirst({
+      where: { OR: [{ storagePath }, { id: documentId }] },
+      select: { id: true },
+    });
+    if (existing) return;
+
     const document = await prisma.studentDocument.findUnique({
       where: { id: payload.documentId },
       include: {
@@ -294,6 +363,7 @@ async function saveReplacementDocumentUpload(payload: UploadPayload, storagePath
     const title = payload.title?.trim() || `${document.title} (Revised)`;
     const replacement = await prisma.studentDocument.create({
       data: {
+        id: documentId,
         studentProfileId: document.studentProfileId,
         uploadedById: payload.actorId!,
         replacedDocumentId: document.id,
@@ -348,9 +418,28 @@ async function saveReplacementDocumentUpload(payload: UploadPayload, storagePath
     revalidatePath("/dashboard/sub-admin");
     revalidatePath("/dashboard/admin");
   } catch (error) {
+    const existing = await prisma.studentDocument.findFirst({
+      where: { OR: [{ storagePath }, { id: documentId }] },
+      select: { id: true },
+    });
+    if (existing && isUniqueConstraintError(error)) return;
+
     await deleteStoredFile(storagePath).catch(() => undefined);
     throw error;
   }
+}
+
+function documentIdForStoragePath(storagePath: string) {
+  return `doc_${createHash("sha256").update(storagePath).digest("hex").slice(0, 24)}`;
+}
+
+function isUniqueConstraintError(error: unknown) {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code?: unknown }).code === "P2002",
+  );
 }
 
 function uploadCallbackUrl() {

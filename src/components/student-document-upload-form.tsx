@@ -21,6 +21,23 @@ type UploadState =
   | { status: "success"; message: string; progress: number }
   | { status: "error"; message: string; progress: number };
 
+type UploadPayload = {
+  mode: "new" | "replacement";
+  studentId: string;
+  title?: string;
+  category?: string;
+  documentId?: string;
+  originalFileName: string;
+  sizeBytes: number;
+  mimeType: string;
+};
+
+type UploadedBlob = {
+  url: string;
+  pathname: string;
+  contentType?: string;
+};
+
 const ACCEPTED_EXTENSIONS = new Set([
   ".pdf",
   ".jpg",
@@ -58,6 +75,26 @@ function randomSuffix() {
 function uploadPath(studentId: string, file: File) {
   const ext = extensionFromName(file.name) || ".bin";
   return `student-docs/${studentId}/${Date.now()}-${randomSuffix()}${ext}`;
+}
+
+async function completeDocumentUpload(payload: UploadPayload, blob: UploadedBlob) {
+  const response = await fetch("/api/student-documents/upload", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "complete",
+      payload,
+      blob: {
+        url: blob.url,
+        pathname: blob.pathname,
+        contentType: blob.contentType,
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error("Document upload was not saved.");
+  }
 }
 
 type StudentDocumentUploadFormProps = {
@@ -119,20 +156,22 @@ export function StudentDocumentUploadForm({
 
         try {
           setState({ status: "uploading", message: "Uploading document...", progress: 0 });
-          await upload(uploadPath(studentId, file), file, {
+          const mimeType = file.type || mimeFromExtension(ext);
+          const payload: UploadPayload = {
+            mode: "new",
+            studentId,
+            title,
+            category,
+            originalFileName: file.name,
+            sizeBytes: file.size,
+            mimeType,
+          };
+          const blob = await upload(uploadPath(studentId, file), file, {
             access: blobAccess,
             handleUploadUrl: "/api/student-documents/upload",
-            contentType: file.type || mimeFromExtension(ext),
+            contentType: mimeType,
             multipart: file.size > 8 * 1024 * 1024,
-            clientPayload: JSON.stringify({
-              mode: "new",
-              studentId,
-              title,
-              category,
-              originalFileName: file.name,
-              sizeBytes: file.size,
-              mimeType: file.type || mimeFromExtension(ext),
-            }),
+            clientPayload: JSON.stringify(payload),
             onUploadProgress: ({ percentage }) => {
               setState({
                 status: "uploading",
@@ -141,6 +180,8 @@ export function StudentDocumentUploadForm({
               });
             },
           });
+          setState({ status: "uploading", message: "Saving document...", progress: 100 });
+          await completeDocumentUpload(payload, blob);
 
           form.reset();
           setState({
@@ -260,20 +301,22 @@ export function ReplacementDocumentUploadForm({
 
         try {
           setState({ status: "uploading", message: "Uploading replacement...", progress: 0 });
-          await upload(uploadPath(studentId, file), file, {
+          const mimeType = file.type || mimeFromExtension(ext);
+          const payload: UploadPayload = {
+            mode: "replacement",
+            studentId,
+            documentId,
+            title,
+            originalFileName: file.name,
+            sizeBytes: file.size,
+            mimeType,
+          };
+          const blob = await upload(uploadPath(studentId, file), file, {
             access: blobAccess,
             handleUploadUrl: "/api/student-documents/upload",
-            contentType: file.type || mimeFromExtension(ext),
+            contentType: mimeType,
             multipart: file.size > 8 * 1024 * 1024,
-            clientPayload: JSON.stringify({
-              mode: "replacement",
-              studentId,
-              documentId,
-              title,
-              originalFileName: file.name,
-              sizeBytes: file.size,
-              mimeType: file.type || mimeFromExtension(ext),
-            }),
+            clientPayload: JSON.stringify(payload),
             onUploadProgress: ({ percentage }) => {
               setState({
                 status: "uploading",
@@ -282,6 +325,8 @@ export function ReplacementDocumentUploadForm({
               });
             },
           });
+          setState({ status: "uploading", message: "Saving replacement...", progress: 100 });
+          await completeDocumentUpload(payload, blob);
 
           form.reset();
           setState({ status: "success", message: "Replacement uploaded.", progress: 100 });
