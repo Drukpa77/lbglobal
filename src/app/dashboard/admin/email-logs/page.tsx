@@ -23,10 +23,9 @@ export default async function AdminEmailLogsPage(props: { searchParams: SearchPa
 
   const statusFilter = isEmailLogStatus(searchParams.status) ? searchParams.status : null;
 
-  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const providerStatus = getEmailProviderStatus();
 
-  const [logs, failedLast24h, totalCount] = await Promise.all([
+  const [logs, failedLast24hRows, totalCount] = await Promise.all([
     prisma.outboundEmailLog.findMany({
       where: statusFilter ? { status: statusFilter } : undefined,
       orderBy: { createdAt: "desc" },
@@ -44,11 +43,15 @@ export default async function AdminEmailLogsPage(props: { searchParams: SearchPa
         sentAt: true,
       },
     }),
-    prisma.outboundEmailLog.count({
-      where: { status: "FAILED", createdAt: { gte: oneDayAgo } },
-    }),
+    prisma.$queryRaw<Array<{ failedCount: bigint | number }>>`
+      SELECT COUNT(*) AS failedCount
+      FROM OutboundEmailLog
+      WHERE status = 'FAILED'
+        AND createdAt >= DATE_SUB(NOW(), INTERVAL 1 DAY)
+    `,
     prisma.outboundEmailLog.count(),
   ]);
+  const failedLast24h = Number(failedLast24hRows[0]?.failedCount ?? 0);
 
   const testNotice =
     searchParams.test === "sent"

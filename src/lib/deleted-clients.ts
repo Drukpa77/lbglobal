@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { deleteStoredFile } from "@/lib/storage";
+import { enqueueStoredFileCleanup } from "@/lib/stored-file-cleanup";
 import { formatVisaServiceDisplay, resolveVisaServiceType } from "@/lib/visa-services";
 
 export const activeClientUserWhere = {
@@ -93,13 +93,20 @@ export async function permanentDeleteClient(userId: string) {
   });
   if (!user) return;
 
-  // Remove the underlying files first so blob/disk storage isn't orphaned when
-  // the cascade deletes the StudentDocument rows.
-  for (const document of user.studentProfile?.documents ?? []) {
-    await deleteStoredFile(document.storagePath).catch(() => undefined);
-  }
+  await prisma.$transaction(async (tx) => {
+    for (const document of user.studentProfile?.documents ?? []) {
+      await enqueueStoredFileCleanup(
+        {
+          storagePath: document.storagePath,
+          sourceType: "DeletedClient",
+          sourceId: user.id,
+        },
+        tx,
+      );
+    }
 
-  await prisma.user.delete({ where: { id: user.id } });
+    await tx.user.delete({ where: { id: user.id } });
+  });
 }
 
 const deletedClientInclude = {

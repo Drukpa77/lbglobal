@@ -83,6 +83,7 @@ export function StudentNoteItem({
             </button>
             <form
               action={deleteAction}
+              data-confirm-submit="true"
               onSubmit={(e) => {
                 if (!confirm("Delete this note?")) e.preventDefault();
               }}

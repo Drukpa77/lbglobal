@@ -121,8 +121,7 @@ export function ServicesSection() {
     const track = trackRef.current;
     if (!track) return;
     track.scrollLeft = services.length * getItemWidth();
-    syncActiveIndex();
-  }, [getItemWidth, syncActiveIndex]);
+  }, [getItemWidth]);
 
   useEffect(() => {
     const track = trackRef.current;

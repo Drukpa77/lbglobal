@@ -118,6 +118,7 @@ export function StudentDocumentUploadForm({
   return (
     <form
       className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+      data-skip-global-loading="true"
       onSubmit={async (event) => {
         event.preventDefault();
         const form = event.currentTarget;
@@ -268,6 +269,7 @@ export function ReplacementDocumentUploadForm({
   return (
     <form
       className="flex flex-wrap items-center gap-2"
+      data-skip-global-loading="true"
       onSubmit={async (event) => {
         event.preventDefault();
         const form = event.currentTarget;

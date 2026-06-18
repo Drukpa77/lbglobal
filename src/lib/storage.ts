@@ -122,7 +122,12 @@ export async function deleteStoredFile(storagePath: string) {
 
   if (/^https?:\/\//i.test(storagePath)) {
     if (!hasBlobToken()) return;
-    await del(storagePath, { token: process.env.BLOB_READ_WRITE_TOKEN?.trim() });
+    try {
+      await del(storagePath, { token: process.env.BLOB_READ_WRITE_TOKEN?.trim() });
+    } catch (error) {
+      if (error instanceof BlobNotFoundError) return;
+      throw error;
+    }
     return;
   }
 

@@ -80,6 +80,13 @@ enum DocumentVerificationStatus {
   REJECTED
 }
 
+enum StoredFileCleanupStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+}
+
 enum VisaCaseStatus {
   ACTIVE
   COMPLETED
@@ -506,6 +513,27 @@ model StudentDocument {
   @@index([replacedDocumentId])
   @@index([studentProfileId, verificationStatus])
   @@index([verificationStatus, createdAt])
+}
+
+model StoredFileCleanupJob {
+  id              String                  @id @default(cuid())
+  storagePath     String                  @db.Text
+  storagePathHash String                  @unique
+  sourceType      String?
+  sourceId        String?
+  status          StoredFileCleanupStatus @default(PENDING)
+  attempts        Int                     @default(0)
+  nextAttemptAt   DateTime                @default(now())
+  lockedAt        DateTime?
+  lockedBy        String?
+  lastError       String?                 @db.Text
+  completedAt     DateTime?
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+
+  @@index([status, nextAttemptAt])
+  @@index([lockedAt])
+  @@index([sourceType, sourceId])
 }
 
 model EmailTemplate {

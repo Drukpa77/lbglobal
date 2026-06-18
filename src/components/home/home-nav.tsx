@@ -14,16 +14,12 @@ export function HomeNav() {
   const [activeSection, setActiveSection] = useState<string | null>(null);
 
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 24);
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
-
-  useEffect(() => {
     const sectionIds = homeNavLinks.map((link) => link.href.replace("#", ""));
+    let frameId = 0;
 
-    const updateActiveSection = () => {
+    const updateNavState = () => {
+      frameId = 0;
+      const nextScrolled = window.scrollY > 24;
       const scrollMarker = window.scrollY + 120;
       let currentId = sectionIds[0] ?? null;
 
@@ -34,15 +30,22 @@ export function HomeNav() {
         }
       }
 
-      setActiveSection(currentId);
+      setScrolled((current) => (current === nextScrolled ? current : nextScrolled));
+      setActiveSection((current) => (current === currentId ? current : currentId));
     };
 
-    updateActiveSection();
-    window.addEventListener("scroll", updateActiveSection, { passive: true });
-    window.addEventListener("resize", updateActiveSection);
+    const requestUpdate = () => {
+      if (frameId) return;
+      frameId = window.requestAnimationFrame(updateNavState);
+    };
+
+    updateNavState();
+    window.addEventListener("scroll", requestUpdate, { passive: true });
+    window.addEventListener("resize", requestUpdate);
     return () => {
-      window.removeEventListener("scroll", updateActiveSection);
-      window.removeEventListener("resize", updateActiveSection);
+      if (frameId) window.cancelAnimationFrame(frameId);
+      window.removeEventListener("scroll", requestUpdate);
+      window.removeEventListener("resize", requestUpdate);
     };
   }, []);
 

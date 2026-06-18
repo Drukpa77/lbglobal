@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { BlobAccessType } from "@vercel/blob";
+import { Download } from "lucide-react";
 
 import { DeleteWithConfirm } from "@/components/delete-with-confirm";
 import {
@@ -226,6 +227,10 @@ function documentOpenHref(
     return `/api/students/${studentId}/documents/${documentId}/open`;
   }
   return storagePath;
+}
+
+function documentDownloadHref(studentId: string, documentId: string): string {
+  return `/api/students/${studentId}/documents/${documentId}/download`;
 }
 
 export function TasksDocumentsTab({
@@ -576,6 +581,14 @@ export function TasksDocumentsTab({
                                       >
                                         Open
                                       </a>
+                                      <a
+                                        href={documentDownloadHref(studentId, prev.id)}
+                                        download
+                                        className="inline-flex shrink-0 items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                                      >
+                                        <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                                        Download
+                                      </a>
                                     </div>
                                   </li>
                                 ))}
@@ -596,6 +609,14 @@ export function TasksDocumentsTab({
                             className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
                           >
                             Open
+                          </a>
+                          <a
+                            href={documentDownloadHref(studentId, doc.id)}
+                            download
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                          >
+                            <Download className="h-4 w-4" aria-hidden="true" />
+                            Download
                           </a>
                           {(viewerRole === "INTERNAL_STAFF" || viewerRole === "ADMIN") && (
                             <form action={updateStudentDocumentVerificationAction} className="flex items-center gap-2">

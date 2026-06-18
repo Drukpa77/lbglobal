@@ -9,7 +9,10 @@ export function useIsMobile() {
 
   useEffect(() => {
     const media = window.matchMedia(MOBILE_QUERY);
-    const update = () => setIsMobile(media.matches);
+    const update = () => {
+      const nextIsMobile = media.matches;
+      setIsMobile((current) => (current === nextIsMobile ? current : nextIsMobile));
+    };
     update();
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);

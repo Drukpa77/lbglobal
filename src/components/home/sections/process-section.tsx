@@ -42,7 +42,7 @@ export function ProcessSection() {
   const progressPercent = ((activeIndex + 1) / processSteps.length) * 100;
 
   const goToStep = useCallback((index: number) => {
-    setActiveIndex(index);
+    setActiveIndex((current) => (current === index ? current : index));
   }, []);
 
   const goNext = useCallback(() => {

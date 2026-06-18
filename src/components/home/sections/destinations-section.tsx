@@ -23,7 +23,6 @@ export function DestinationsSection() {
   const inView = useSectionInView(sectionRef, { threshold: 0.12 });
   const [activeIndex, setActiveIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
-  const [hasEntered, setHasEntered] = useState(false);
 
   const active = destinations[activeIndex];
 
@@ -31,9 +30,9 @@ export function DestinationsSection() {
     setActiveIndex((current) => (current + 1) % destinations.length);
   }, []);
 
-  useEffect(() => {
-    if (inView) setHasEntered(true);
-  }, [inView]);
+  const goToDestination = useCallback((index: number) => {
+    setActiveIndex((current) => (current === index ? current : index));
+  }, []);
 
   useEffect(() => {
     if (reduceMotion || isPaused || !inView || isMobile) return;
@@ -41,14 +40,13 @@ export function DestinationsSection() {
     return () => window.clearInterval(timer);
   }, [goNext, inView, isMobile, isPaused, reduceMotion]);
 
-  const showReveal = hasEntered || reduceMotion;
-
   const reveal = (delay = 0) =>
     reduceMotion
       ? {}
       : {
           initial: { opacity: 0, y: 22 },
-          animate: showReveal ? { opacity: 1, y: 0 } : { opacity: 0, y: 22 },
+          whileInView: { opacity: 1, y: 0 },
+          viewport: { once: true, margin: "-80px" },
           transition: { duration: 0.6, ease: revealEase, delay },
         };
 
@@ -93,7 +91,7 @@ export function DestinationsSection() {
             <button
               key={item.country}
               type="button"
-              onClick={() => setActiveIndex(index)}
+              onClick={() => goToDestination(index)}
               aria-pressed={index === activeIndex}
               className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${focusRing} ${
                 index === activeIndex

@@ -19,7 +19,10 @@ export function useSectionInView<T extends HTMLElement>(
     if (!element) return;
 
     const observer = new IntersectionObserver(
-      ([entry]) => setInView(entry.isIntersecting),
+      ([entry]) => {
+        const nextInView = entry.isIntersecting;
+        setInView((current) => (current === nextInView ? current : nextInView));
+      },
       { threshold, rootMargin },
     );
 
