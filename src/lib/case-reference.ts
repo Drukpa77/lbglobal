@@ -1,9 +1,11 @@
-import { Prisma } from "@prisma/client";
 import type { Prisma as PrismaTypes } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 
 type DbClient = PrismaTypes.TransactionClient | typeof prisma;
+type CaseReferenceRow = { caseReference: string };
+
+const CASE_REFERENCE_RE = /^LBG-(\d{4})-(\d+)$/;
 
 export function formatCaseReference(year: number, sequence: number): string {
   const width = sequence > 9999 ? 5 : 4;
@@ -14,37 +16,46 @@ export async function generateNextCaseReference(client: DbClient = prisma): Prom
   const year = new Date().getFullYear();
   const prefix = `LBG-${year}-`;
 
-  const [latestProfile, latestVisaCase] = await Promise.all([
-    client.studentProfile.findFirst({
+  const [profileReferences, visaCaseReferences] = await Promise.all([
+    client.studentProfile.findMany({
       where: { caseReference: { startsWith: prefix } },
       select: { caseReference: true },
     }),
-    client.visaCase.findFirst({
+    client.visaCase.findMany({
       where: { caseReference: { startsWith: prefix } },
       select: { caseReference: true },
     }),
   ]);
 
-  let nextSequence = 1;
-  for (const latest of [latestProfile, latestVisaCase]) {
-    if (latest?.caseReference) {
-      const match = latest.caseReference.match(/^LBG-\d{4}-(\d+)$/);
-      if (match) {
-        nextSequence = Math.max(nextSequence, Number.parseInt(match[1], 10) + 1);
-      }
-    }
-  }
-
-  return formatCaseReference(year, nextSequence);
+  return formatCaseReference(
+    year,
+    nextSequenceForYear(year, [...profileReferences, ...visaCaseReferences]),
+  );
 }
 
 function isDuplicateCaseReferenceError(error: unknown) {
-  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") {
+  if (!error || typeof error !== "object") {
     return false;
   }
-  const target = error.meta?.target;
+
+  const maybe = error as {
+    code?: unknown;
+    meta?: { target?: unknown };
+    message?: unknown;
+  };
+  if (maybe.code !== "P2002") {
+    return false;
+  }
+
+  const target = maybe.meta?.target;
   const fields = Array.isArray(target) ? target.map(String) : [String(target ?? "")];
-  return fields.some((field) => field.toLowerCase().includes("casereference"));
+  const message = typeof maybe.message === "string" ? maybe.message : "";
+  return (
+    fields.some((field) => field.toLowerCase().includes("casereference")) ||
+    message.includes("StudentProfile_caseReference_key") ||
+    message.includes("VisaCase_caseReference_key") ||
+    message.toLowerCase().includes("casereference")
+  );
 }
 
 /**
@@ -57,13 +68,21 @@ export async function runWithUniqueCaseReference<T>(
   maxAttempts = 5,
 ): Promise<T> {
   let lastError: unknown;
+  let nextSequenceOverride: number | null = null;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const caseReference = await generateNextCaseReference(client);
+    const year = new Date().getFullYear();
+    const caseReference =
+      nextSequenceOverride === null
+        ? await generateNextCaseReference(client)
+        : formatCaseReference(year, nextSequenceOverride);
     try {
       return await createFn(caseReference);
     } catch (error) {
       if (isDuplicateCaseReferenceError(error)) {
         lastError = error;
+        const failedSequence = sequenceFromCaseReference(caseReference);
+        nextSequenceOverride =
+          failedSequence === null ? nextSequenceOverride : failedSequence + 1;
         continue;
       }
       throw error;
@@ -92,18 +111,12 @@ export async function backfillMissingCaseReferences(client: DbClient = prisma): 
     let nextSequence = counters.get(year);
 
     if (nextSequence === undefined) {
-      const latest = await client.studentProfile.findFirst({
+      const existingReferences = await client.studentProfile.findMany({
         where: { caseReference: { startsWith: prefix } },
         select: { caseReference: true },
       });
 
-      nextSequence = 1;
-      if (latest?.caseReference) {
-        const match = latest.caseReference.match(/^LBG-\d{4}-(\d+)$/);
-        if (match) {
-          nextSequence = Number.parseInt(match[1], 10) + 1;
-        }
-      }
+      nextSequence = nextSequenceForYear(year, existingReferences);
     }
 
     await client.studentProfile.update({
@@ -115,4 +128,26 @@ export async function backfillMissingCaseReferences(client: DbClient = prisma): 
   }
 
   return profiles.length;
+}
+
+function nextSequenceForYear(year: number, references: CaseReferenceRow[]) {
+  let nextSequence = 1;
+  for (const { caseReference } of references) {
+    const match = caseReference.match(CASE_REFERENCE_RE);
+    if (!match || Number.parseInt(match[1], 10) !== year) continue;
+
+    const sequence = Number.parseInt(match[2], 10);
+    if (Number.isFinite(sequence)) {
+      nextSequence = Math.max(nextSequence, sequence + 1);
+    }
+  }
+  return nextSequence;
+}
+
+function sequenceFromCaseReference(caseReference: string) {
+  const match = caseReference.match(CASE_REFERENCE_RE);
+  if (!match) return null;
+
+  const sequence = Number.parseInt(match[2], 10);
+  return Number.isFinite(sequence) ? sequence : null;
 }

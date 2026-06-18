@@ -1,11 +1,8 @@
-import path from "node:path";
-
 import type {
   CaseStage,
   CaseStatus,
   CrmAccountType,
   DocumentVerificationStatus,
-  DocumentCategory,
   LeadStatus,
   OpportunityForecastCategory,
   OpportunityStage,
@@ -34,15 +31,14 @@ import { TaskActionToast } from "@/components/task-action-toast";
 import { AuditTab } from "@/app/dashboard/students/[studentId]/tabs/audit-tab";
 import { TasksDocumentsTab } from "@/app/dashboard/students/[studentId]/tabs/tasks-documents-tab";
 import { auth } from "@/auth";
-import { blobOpensThroughAuthenticatedApi } from "@/lib/blob-access";
+import { blobOpensThroughAuthenticatedApi, getBlobStoreAccess } from "@/lib/blob-access";
 import { runWithUniqueCaseReference } from "@/lib/case-reference";
 import { getCompanySettings } from "@/lib/company-settings";
 import { revalidateContributionsCache } from "@/lib/contributions-cache";
 import { getContributions } from "@/lib/contributions";
 import { prisma } from "@/lib/prisma";
-import { deleteStoredFile, studentDocumentUploadErrorParam, uploadBufferToStorage } from "@/lib/storage";
+import { deleteStoredFile } from "@/lib/storage";
 import { renderTemplate } from "@/lib/template-renderer";
-import { MAX_STUDENT_DOCUMENT_UPLOAD_BYTES } from "@/lib/upload-limits";
 import {
   buildOverviewAssignedTeam,
   completedTaskStatusFilter,
@@ -98,27 +94,6 @@ const studentAccountSchema = z.object({
   fullName: z.string().trim().min(2).max(100),
   email: z.string().trim().email().toLowerCase(),
 });
-
-const allowedDocumentMime = new Set([
-  "application/pdf",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/gif",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-]);
-
-const allowedDocumentExtensions = new Set([
-  ".pdf",
-  ".jpg",
-  ".jpeg",
-  ".png",
-  ".webp",
-  ".gif",
-  ".doc",
-  ".docx",
-]);
 
 export default async function StudentProfileManagementPage(props: { params: Params; searchParams: SearchParams }) {
   const { studentId } = await props.params;
@@ -1602,13 +1577,12 @@ export default async function StudentProfileManagementPage(props: { params: Para
             reassignTaskAction={reassignTaskAction}
             updateTaskStatusAction={updateTaskStatusAction}
             updateTaskChecklistAction={updateTaskChecklistAction}
-            uploadStudentDocumentAction={uploadStudentDocumentAction}
             updateStudentDocumentVerificationAction={updateStudentDocumentVerificationAction}
             disputeStudentDocumentReturnAction={disputeStudentDocumentReturnAction}
-            uploadReplacementDocumentAction={uploadReplacementDocumentAction}
             deleteStudentDocumentAction={deleteStudentDocumentAction}
             viewerRole={session.user.role as "ADMIN" | "SUB_ADMIN" | "INTERNAL_STAFF"}
             canCreateTasks={canCreateTasks}
+            blobAccess={getBlobStoreAccess()}
             blobOpensThroughAuthenticatedApi={blobOpensThroughAuthenticatedApi()}
           />
         </>
@@ -3100,253 +3074,6 @@ async function updateCaseStageAction(formData: FormData) {
   redirect(studentOverviewCaseStageUrl(studentId));
 }
 
-async function uploadStudentDocumentAction(formData: FormData) {
-  "use server";
-  const session = await auth();
-  if (
-    !session?.user ||
-    (session.user.role !== "ADMIN" &&
-      session.user.role !== "SUB_ADMIN" &&
-      session.user.role !== "INTERNAL_STAFF")
-  ) {
-    redirect("/login");
-  }
-  const studentId = String(formData.get("studentId") ?? "");
-  const title = String(formData.get("title") ?? "").trim();
-  const category = String(formData.get("category") ?? "OTHER") as DocumentCategory;
-  const file = formData.get("file");
-  if (!studentId || !title || !(file instanceof File) || file.size === 0) {
-    redirect(`/dashboard/students/${studentId}?tab=tasks`);
-  }
-  if (file.size > MAX_STUDENT_DOCUMENT_UPLOAD_BYTES) {
-    redirect(`/dashboard/students/${studentId}?tab=tasks&uploadError=file-too-large`);
-  }
-  const ext = documentUploadExtension(file);
-  if (!isAllowedDocumentUpload(file, ext)) {
-    redirect(`/dashboard/students/${studentId}?tab=tasks&uploadError=invalid-type`);
-  }
-  const mimeType = documentUploadMimeType(file, ext);
-
-  const studentProfile = await prisma.studentProfile.findUnique({
-    where: { userId: studentId },
-    select: { id: true },
-  });
-  if (!studentProfile) redirect(`/dashboard/students/${studentId}?tab=tasks`);
-
-  if (session.user.role === "INTERNAL_STAFF") {
-    const assigned = await prisma.studentAssignment.findFirst({
-      where: {
-        assignedToId: session.user.id,
-        isActive: true,
-        studentProfileId: studentProfile.id,
-      },
-      select: { id: true },
-    });
-    if (!assigned) {
-      redirect(studentTasksUrl(studentId));
-    }
-  }
-
-  const bytes = await file.arrayBuffer();
-  const buffer = Buffer.from(bytes);
-  const sanitizedName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
-  const relativePath = `student-docs/${studentId}/${sanitizedName}`;
-  let publicPath: string;
-  try {
-    publicPath = await uploadBufferToStorage({
-      buffer,
-      mimeType,
-      blobPath: relativePath,
-      localRelativePath: relativePath,
-    });
-  } catch (error) {
-    console.error("uploadStudentDocumentAction", error);
-    redirect(
-      `/dashboard/students/${studentId}?tab=tasks&uploadError=${studentDocumentUploadErrorParam(error)}`,
-    );
-  }
-
-  const safeCategory: DocumentCategory = [
-    "PASSPORT",
-    "TRANSCRIPT",
-    "SOP",
-    "OFFER_LETTER",
-    "COE",
-    "HEALTH_INSURANCE",
-    "VISA",
-    "FINANCIAL",
-    "IDENTITY",
-    "OTHER",
-  ].includes(category)
-    ? category
-    : "OTHER";
-  try {
-    await prisma.studentDocument.create({
-      data: {
-        studentProfileId: studentProfile.id,
-        uploadedById: session.user.id,
-        category: safeCategory,
-        title,
-        originalFileName: file.name,
-        storagePath: publicPath,
-        mimeType,
-        sizeBytes: file.size,
-      },
-    });
-
-    await prisma.activityLog.create({
-      data: {
-        actorId: session.user.id,
-        targetStudentProfileId: studentProfile.id,
-        entityType: "DOCUMENT",
-        entityId: studentProfile.id,
-        action: `Uploaded document: ${title}`,
-      },
-    });
-    revalidateContributionsCache(studentId);
-  } catch (error) {
-    console.error("uploadStudentDocumentAction db", error);
-    await deleteStoredFile(publicPath).catch(() => undefined);
-    redirect(`/dashboard/students/${studentId}?tab=tasks&uploadError=save-failed`);
-  }
-
-  revalidatePath(`/dashboard/students/${studentId}`);
-  redirect(`/dashboard/students/${studentId}?tab=tasks`);
-}
-
-async function uploadReplacementDocumentAction(formData: FormData) {
-  "use server";
-  const session = await auth();
-  if (!session?.user || (session.user.role !== "ADMIN" && session.user.role !== "INTERNAL_STAFF")) {
-    redirect("/login");
-  }
-
-  const studentId = String(formData.get("studentId") ?? "");
-  const documentId = String(formData.get("documentId") ?? "");
-  const replacementTitle = String(formData.get("title") ?? "").trim();
-  const file = formData.get("file");
-  if (!studentId || !documentId || !(file instanceof File) || file.size === 0) {
-    redirect(`/dashboard/students/${studentId}?tab=tasks`);
-  }
-  if (file.size > MAX_STUDENT_DOCUMENT_UPLOAD_BYTES) {
-    redirect(`/dashboard/students/${studentId}?tab=tasks&uploadError=file-too-large`);
-  }
-  const ext = documentUploadExtension(file);
-  if (!isAllowedDocumentUpload(file, ext)) {
-    redirect(`/dashboard/students/${studentId}?tab=tasks&uploadError=invalid-type`);
-  }
-  const mimeType = documentUploadMimeType(file, ext);
-
-  const document = await prisma.studentDocument.findUnique({
-    where: { id: documentId },
-    include: {
-      studentProfile: {
-        select: {
-          id: true,
-          userId: true,
-          assignments: { where: { isActive: true }, select: { assignedToId: true } },
-          user: { select: { id: true, name: true, email: true } },
-        },
-      },
-    },
-  });
-  if (!document || document.studentProfile.userId !== studentId) {
-    redirect(`/dashboard/students/${studentId}?tab=tasks`);
-  }
-  if (!document.returnedAt || !document.returnedById || document.returnResolvedAt) {
-    redirect(`/dashboard/students/${studentId}?tab=tasks`);
-  }
-
-  if (session.user.role === "INTERNAL_STAFF") {
-    const isAssigned = document.studentProfile.assignments.some(
-      (assignment) => assignment.assignedToId === session.user.id,
-    );
-    if (!isAssigned) redirect(studentTasksUrl(studentId));
-  }
-
-  const bytes = await file.arrayBuffer();
-  const buffer = Buffer.from(bytes);
-  const sanitizedName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
-  const relativePath = `student-docs/${studentId}/${sanitizedName}`;
-  let publicPath: string;
-  try {
-    publicPath = await uploadBufferToStorage({
-      buffer,
-      mimeType,
-      blobPath: relativePath,
-      localRelativePath: relativePath,
-    });
-  } catch (error) {
-    console.error("uploadReplacementDocumentAction", error);
-    redirect(
-      `/dashboard/students/${studentId}?tab=tasks&uploadError=${studentDocumentUploadErrorParam(error)}`,
-    );
-  }
-
-  const title = replacementTitle || `${document.title} (Revised)`;
-  try {
-    const replacement = await prisma.studentDocument.create({
-      data: {
-        studentProfileId: document.studentProfileId,
-        uploadedById: session.user.id,
-        replacedDocumentId: document.id,
-        category: document.category,
-        title,
-        originalFileName: file.name,
-        storagePath: publicPath,
-        mimeType,
-        sizeBytes: file.size,
-        verificationStatus: "PENDING",
-        notes: document.returnedNote
-          ? `Replacement uploaded for returned document. Return reason: ${document.returnedNote}`
-          : "Replacement uploaded for returned document.",
-      },
-    });
-
-    await prisma.studentDocument.update({
-      where: { id: document.id },
-      data: { returnResolvedAt: new Date() },
-    });
-
-    await createWorkflowNotification({
-      recipientId: document.returnedById,
-      actorId: session.user.id,
-      studentProfileId: document.studentProfileId,
-      documentId: replacement.id,
-      type: "DOCUMENT_REPLACEMENT_UPLOADED",
-      title: "Replacement document uploaded",
-      message: `${document.studentProfile.user.name ?? document.studentProfile.user.email} - ${title}`,
-      note: document.returnedNote,
-      link: `/dashboard/students/${studentId}?tab=tasks`,
-      actionRequired: true,
-      metadata: { originalDocumentId: document.id, replacementDocumentId: replacement.id },
-    });
-
-    await prisma.activityLog.create({
-      data: {
-        actorId: session.user.id,
-        targetStudentProfileId: document.studentProfileId,
-        targetUserId: document.returnedById,
-        entityType: "DOCUMENT",
-        entityId: replacement.id,
-        action: "Uploaded replacement document for returned file",
-        metadata: { originalDocumentId: document.id, replacementDocumentId: replacement.id },
-      },
-    });
-    revalidateContributionsCache(studentId);
-  } catch (error) {
-    console.error("uploadReplacementDocumentAction db", error);
-    await deleteStoredFile(publicPath).catch(() => undefined);
-    redirect(`/dashboard/students/${studentId}?tab=tasks&uploadError=save-failed`);
-  }
-
-  revalidatePath(`/dashboard/students/${studentId}`);
-  revalidatePath("/dashboard/internal-staff");
-  revalidatePath("/dashboard/sub-admin");
-  revalidatePath("/dashboard/admin");
-  redirect(`/dashboard/students/${studentId}?tab=tasks`);
-}
-
 async function updateStudentDocumentVerificationAction(formData: FormData) {
   "use server";
   const session = await auth();
@@ -4820,40 +4547,6 @@ function parseOptionalDate(value: string) {
   if (!value) return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function mimeToExt(mime: string) {
-  if (mime.includes("pdf")) return ".pdf";
-  if (mime.includes("officedocument.wordprocessingml.document")) return ".docx";
-  if (mime.includes("msword")) return ".doc";
-  if (mime.includes("png")) return ".png";
-  if (mime.includes("jpeg") || mime.includes("jpg")) return ".jpg";
-  if (mime.includes("webp")) return ".webp";
-  if (mime.includes("gif")) return ".gif";
-  return ".bin";
-}
-
-function documentUploadExtension(file: File) {
-  const ext = path.extname(file.name).toLowerCase();
-  return ext || mimeToExt(file.type);
-}
-
-function isAllowedDocumentUpload(file: File, ext = documentUploadExtension(file)) {
-  return allowedDocumentMime.has(file.type) || allowedDocumentExtensions.has(ext);
-}
-
-function documentUploadMimeType(file: File, ext = documentUploadExtension(file)) {
-  if (file.type) return file.type;
-  if (ext === ".doc") return "application/msword";
-  if (ext === ".docx") {
-    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-  }
-  if (ext === ".pdf") return "application/pdf";
-  if (ext === ".png") return "image/png";
-  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
-  if (ext === ".webp") return "image/webp";
-  if (ext === ".gif") return "image/gif";
-  return "application/octet-stream";
 }
 
 function sanitizeLeadStatus(status: LeadStatus): LeadStatus {
