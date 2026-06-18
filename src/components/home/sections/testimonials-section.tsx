@@ -23,7 +23,7 @@ export function TestimonialsSection() {
   const active = testimonials[activeIndex];
 
   const goTo = useCallback((index: number) => {
-    setActiveIndex(index);
+    setActiveIndex((current) => (current === index ? current : index));
   }, []);
 
   const goNext = useCallback(() => {

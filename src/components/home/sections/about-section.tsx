@@ -61,6 +61,10 @@ export function AboutSection() {
     setActiveIndex((current) => (current + 1) % PROOF_PILLARS.length);
   }, []);
 
+  const goToPillar = useCallback((index: number) => {
+    setActiveIndex((current) => (current === index ? current : index));
+  }, []);
+
   useEffect(() => {
     if (reduceMotion || isPaused || !inView) return;
     const timer = window.setInterval(goNext, AUTO_ADVANCE_MS);
@@ -192,7 +196,7 @@ export function AboutSection() {
                     <button
                       key={pillar.title}
                       type="button"
-                      onClick={() => setActiveIndex(index)}
+                      onClick={() => goToPillar(index)}
                       aria-pressed={isActive}
                       className={`relative flex flex-col items-start gap-2 rounded-xl border p-4 text-left transition ${
                         isActive
@@ -228,7 +232,7 @@ export function AboutSection() {
                     <button
                       key={PROOF_PILLARS[index].title}
                       type="button"
-                      onClick={() => setActiveIndex(index)}
+                      onClick={() => goToPillar(index)}
                       aria-label={`Show ${PROOF_PILLARS[index].title}`}
                       className={`h-2 rounded-full transition-all ${
                         index === activeIndex

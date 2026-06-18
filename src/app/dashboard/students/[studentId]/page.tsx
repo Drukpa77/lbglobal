@@ -15,6 +15,7 @@ import type {
 import { revalidatePath } from "next/cache";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import type { Session } from "next-auth";
 import { Suspense } from "react";
 import { z } from "zod";
@@ -37,7 +38,10 @@ import { getCompanySettings } from "@/lib/company-settings";
 import { revalidateContributionsCache } from "@/lib/contributions-cache";
 import { getContributions } from "@/lib/contributions";
 import { prisma } from "@/lib/prisma";
-import { deleteStoredFile } from "@/lib/storage";
+import {
+  enqueueStoredFileCleanup,
+  processStoredFileCleanupQueue,
+} from "@/lib/stored-file-cleanup";
 import { renderTemplate } from "@/lib/template-renderer";
 import {
   buildOverviewAssignedTeam,
@@ -3338,16 +3342,29 @@ async function deleteStudentDocumentAction(formData: FormData) {
     }
   }
 
-  await deleteStoredFile(doc.storagePath);
-  await prisma.studentDocument.delete({ where: { id: doc.id } });
-  await prisma.activityLog.create({
-    data: {
-      actorId: session.user.id,
-      targetStudentProfileId: doc.studentProfileId,
-      entityType: "DOCUMENT",
-      entityId: doc.id,
-      action: "Deleted student document",
-    },
+  await prisma.$transaction(async (tx) => {
+    await tx.studentDocument.delete({ where: { id: doc.id } });
+    await tx.activityLog.create({
+      data: {
+        actorId: session.user.id,
+        targetStudentProfileId: doc.studentProfileId,
+        entityType: "DOCUMENT",
+        entityId: doc.id,
+        action: "Deleted student document",
+      },
+    });
+    await enqueueStoredFileCleanup(
+      {
+        storagePath: doc.storagePath,
+        sourceType: "StudentDocument",
+        sourceId: doc.id,
+      },
+      tx,
+    );
+  });
+
+  after(async () => {
+    await processStoredFileCleanupQueue({ batchSize: 1 });
   });
 
   revalidatePath(`/dashboard/students/${studentId}`);

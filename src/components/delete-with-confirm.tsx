@@ -27,6 +27,7 @@ export function DeleteWithConfirm({
         ref={formRef}
         action={formAction}
         className="inline"
+        data-confirm-submit="true"
         onSubmit={(e) => {
           if (skipConfirm.current) return;
           e.preventDefault();
@@ -62,7 +63,9 @@ export function DeleteWithConfirm({
                 onClick={() => {
                   skipConfirm.current = true;
                   setIsOpen(false);
-                  formRef.current?.requestSubmit();
+                  const form = formRef.current;
+                  form?.removeAttribute("data-confirm-submit");
+                  form?.requestSubmit();
                 }}
                 className="rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700"
               >

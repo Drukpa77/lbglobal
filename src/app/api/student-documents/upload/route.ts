@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
 
 import { auth } from "@/auth";
 import { deleteStoredFile } from "@/lib/storage";
+import { enqueueStoredFileCleanup } from "@/lib/stored-file-cleanup";
 import { prisma } from "@/lib/prisma";
 import { revalidateContributionsCache } from "@/lib/contributions-cache";
 import { createWorkflowNotification } from "@/lib/workflow-notifications";
@@ -327,7 +328,7 @@ async function saveNewDocumentUpload(payload: UploadPayload, storagePath: string
     });
     if (existing && isUniqueConstraintError(error)) return;
 
-    await deleteStoredFile(storagePath).catch(() => undefined);
+    await cleanupUploadedStorage(storagePath, "StudentDocumentUploadRollback", documentId);
     throw error;
   }
 }
@@ -424,8 +425,26 @@ async function saveReplacementDocumentUpload(payload: UploadPayload, storagePath
     });
     if (existing && isUniqueConstraintError(error)) return;
 
-    await deleteStoredFile(storagePath).catch(() => undefined);
+    await cleanupUploadedStorage(storagePath, "StudentDocumentReplacementRollback", documentId);
     throw error;
+  }
+}
+
+async function cleanupUploadedStorage(storagePath: string, sourceType: string, sourceId: string) {
+  try {
+    await deleteStoredFile(storagePath);
+  } catch (deleteError) {
+    try {
+      await enqueueStoredFileCleanup({ storagePath, sourceType, sourceId });
+    } catch (queueError) {
+      console.error("Failed to enqueue uploaded file cleanup", {
+        storagePath,
+        sourceType,
+        sourceId,
+        deleteError,
+        queueError,
+      });
+    }
   }
 }
 

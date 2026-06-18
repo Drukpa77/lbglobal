@@ -19,6 +19,7 @@ export function FormSubmitLoadingListener() {
       const form = event.target;
       if (!(form instanceof HTMLFormElement)) return;
       if (form.getAttribute("data-skip-global-loading") === "true") return;
+      if (form.getAttribute("data-confirm-submit") === "true") return;
       setFormPending(true);
     };
 

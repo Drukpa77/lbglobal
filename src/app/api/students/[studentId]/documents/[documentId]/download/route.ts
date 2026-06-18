@@ -8,10 +8,6 @@ import {
 
 export const runtime = "nodejs";
 
-/**
- * Streams a student document for staff. Required when blobs are stored with
- * `BLOB_STORE_ACCESS=private` (direct blob URLs are not browser-accessible).
- */
 export async function GET(
   _request: Request,
   context: { params: Promise<{ studentId: string; documentId: string }> },
@@ -21,6 +17,7 @@ export async function GET(
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
   const result = await getStudentDocumentForStaff({
     user: session.user,
     studentId,
@@ -30,5 +27,5 @@ export async function GET(
     return NextResponse.json({ error: result.error }, { status: result.status });
   }
 
-  return streamStudentDocument(result.document, "inline");
+  return streamStudentDocument(result.document, "attachment");
 }
