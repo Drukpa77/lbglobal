@@ -1,11 +1,15 @@
 import Link from "next/link";
+import type { BlobAccessType } from "@vercel/blob";
 
 import { DeleteWithConfirm } from "@/components/delete-with-confirm";
-import { FileSizeLimitedForm } from "@/components/file-size-limited-form";
+import {
+  ReplacementDocumentUploadForm,
+  StudentDocumentUploadForm,
+} from "@/components/student-document-upload-form";
 import type { TaskAssigneeOption, TaskListView } from "@/lib/task-assignment";
 import { COMPLETED_TASK_WINDOW_DAYS } from "@/lib/task-assignment";
 import { taskStatusCardClass } from "@/lib/task-status-styles";
-import { MAX_STUDENT_DOCUMENT_UPLOAD_MB } from "@/lib/upload-limits";
+import { MAX_STUDENT_DOCUMENT_DIRECT_UPLOAD_MB } from "@/lib/upload-limits";
 
 type TaskRow = {
   id: string;
@@ -153,13 +157,12 @@ type TasksDocumentsTabProps = {
   reassignTaskAction: (formData: FormData) => Promise<void>;
   updateTaskStatusAction: (formData: FormData) => Promise<void>;
   updateTaskChecklistAction: (formData: FormData) => Promise<void>;
-  uploadStudentDocumentAction: (formData: FormData) => Promise<void>;
   updateStudentDocumentVerificationAction: (formData: FormData) => Promise<void>;
   disputeStudentDocumentReturnAction: (formData: FormData) => Promise<void>;
-  uploadReplacementDocumentAction: (formData: FormData) => Promise<void>;
   deleteStudentDocumentAction: (formData: FormData) => Promise<void>;
   viewerRole: "ADMIN" | "SUB_ADMIN" | "INTERNAL_STAFF";
   canCreateTasks: boolean;
+  blobAccess: BlobAccessType;
   /** When true, HTTPS blob links use the authenticated API proxy (private Blob stores). */
   blobOpensThroughAuthenticatedApi: boolean;
 };
@@ -237,13 +240,12 @@ export function TasksDocumentsTab({
   reassignTaskAction,
   updateTaskStatusAction,
   updateTaskChecklistAction,
-  uploadStudentDocumentAction,
   updateStudentDocumentVerificationAction,
   disputeStudentDocumentReturnAction,
-  uploadReplacementDocumentAction,
   deleteStudentDocumentAction,
   viewerRole,
   canCreateTasks,
+  blobAccess,
   blobOpensThroughAuthenticatedApi,
 }: TasksDocumentsTabProps) {
   const isCompletedView = taskView === "completed";
@@ -456,44 +458,16 @@ export function TasksDocumentsTab({
       <section className="scroll-mt-24 rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">Documents</h2>
         <p className="mt-1 text-sm text-slate-600">
-          PDF, Word document, or image, up to about {MAX_STUDENT_DOCUMENT_UPLOAD_MB} MB per file (hosted upload limit).
+          PDF, Word document, or image, up to about {MAX_STUDENT_DOCUMENT_DIRECT_UPLOAD_MB} MB per file.
         </p>
-        <FileSizeLimitedForm
-          action={uploadStudentDocumentAction}
-          className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
-        >
-          <input type="hidden" name="studentId" value={studentId} />
-          <input
-            name="title"
-            required
-            placeholder="Document title"
-            className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-          />
-          <select
-            name="category"
-            defaultValue="OTHER"
-            className="rounded-lg border border-slate-300 px-4 py-2.5 text-base text-slate-900 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400"
-          >
-            {DOCUMENT_CATEGORY_ORDER.map((category) => (
-              <option key={category} value={category}>
-                {getCategoryLabel(category)}
-              </option>
-            ))}
-          </select>
-          <input
-            name="file"
-            type="file"
-            required
-            accept=".pdf,.doc,.docx,image/*"
-            className="rounded-lg border border-slate-300 px-4 py-2.5 text-base file:mr-4 file:rounded-lg file:border-0 file:bg-slate-100 file:px-4 file:py-2 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-200"
-          />
-          <button
-            type="submit"
-            className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
-          >
-            Upload
-          </button>
-        </FileSizeLimitedForm>
+        <StudentDocumentUploadForm
+          studentId={studentId}
+          blobAccess={blobAccess}
+          categoryOptions={DOCUMENT_CATEGORY_ORDER.map((category) => ({
+            value: category,
+            label: getCategoryLabel(category),
+          }))}
+        />
         {documents.length === 0 ? (
           <p className="mt-4 text-base text-slate-600">No documents uploaded yet.</p>
         ) : (
@@ -684,31 +658,11 @@ export function TasksDocumentsTab({
                           !doc.returnResolvedAt &&
                           doc.returnedBy && (
                             <>
-                              <FileSizeLimitedForm
-                                action={uploadReplacementDocumentAction}
-                                className="flex flex-wrap items-center gap-2"
-                              >
-                                <input type="hidden" name="studentId" value={studentId} />
-                                <input type="hidden" name="documentId" value={doc.id} />
-                                <input
-                                  name="title"
-                                  placeholder="Replacement title (optional)"
-                                  className="rounded-lg border border-emerald-300 px-3 py-1.5 text-sm text-emerald-900 placeholder:text-emerald-500 focus:border-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-400"
-                                />
-                                <input
-                                  name="file"
-                                  type="file"
-                                  required
-                                  accept=".pdf,.doc,.docx,image/*"
-                                  className="rounded-lg border border-emerald-300 px-3 py-1.5 text-sm text-emerald-900 file:mr-3 file:rounded-lg file:border-0 file:bg-emerald-50 file:px-3 file:py-1 file:text-xs file:font-medium file:text-emerald-800 hover:file:bg-emerald-100"
-                                />
-                                <button
-                                  type="submit"
-                                  className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-800 hover:bg-emerald-100"
-                                >
-                                  Upload Replacement
-                                </button>
-                              </FileSizeLimitedForm>
+                              <ReplacementDocumentUploadForm
+                                studentId={studentId}
+                                documentId={doc.id}
+                                blobAccess={blobAccess}
+                              />
                               <form
                                 action={disputeStudentDocumentReturnAction}
                                 className="flex flex-wrap items-center gap-2"
