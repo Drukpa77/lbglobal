@@ -49,9 +49,9 @@ export async function markNewApplicationNotificationsHandled(
 }
 
 /**
- * Soft-deleting a client also removes the case from the claiming agent's view,
- * and only an admin can restore it. When someone other than the owner deletes a
- * client, let the owner know so cross-office cleanup isn't a silent surprise.
+ * Soft-deleting a client also removes the case from the claiming agent's view.
+ * When someone other than the owner deletes a client, let the owner know so
+ * cross-office cleanup isn't a silent surprise.
  *
  * Call this BEFORE the soft delete so the claim owner is still resolvable.
  */
@@ -73,7 +73,7 @@ export async function notifyClaimOwnerOfClientDeletion(studentUserId: string, ac
       studentProfileId: profile.id,
       type: "STUDENT_DELEGATED",
       title: "Your client was removed",
-      message: `${clientLabel} was moved to Deleted Clients. Ask an administrator to restore them if this was a mistake.`,
+      message: `${clientLabel} was moved to Deleted Clients. Restore them from the archive if this was a mistake.`,
       link: "/dashboard/sub-admin?tab=deleted-clients",
       actionRequired: false,
       metadata: { teamNotice: "change_by_actor", reason: "client_deleted" },

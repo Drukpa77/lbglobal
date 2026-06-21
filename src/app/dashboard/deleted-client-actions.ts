@@ -24,10 +24,25 @@ async function assertAdmin() {
   return session;
 }
 
+async function assertTeamMember() {
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+  if (
+    session.user.role !== "ADMIN" &&
+    session.user.role !== "SUB_ADMIN" &&
+    session.user.role !== "INTERNAL_STAFF"
+  ) {
+    redirect("/dashboard");
+  }
+  return session;
+}
+
 export async function restoreDeletedClientAction(formData: FormData) {
-  const session = await assertAdmin();
+  const session = await assertTeamMember();
   const studentId = String(formData.get("studentId") ?? "").trim();
-  const returnPath = String(formData.get("returnPath") ?? dashboardPathForRole("ADMIN"));
+  const returnPath = String(
+    formData.get("returnPath") ?? dashboardPathForRole(session.user.role),
+  );
   if (!studentId) redirect(returnPath);
 
   await restoreDeletedClient(studentId, session.user.id);
@@ -40,7 +55,7 @@ export async function restoreDeletedClientAction(formData: FormData) {
 }
 
 export async function permanentDeleteDeletedClientAction(formData: FormData) {
-  const session = await assertAdmin();
+  await assertAdmin();
   const studentId = String(formData.get("studentId") ?? "").trim();
   const returnPath = String(formData.get("returnPath") ?? dashboardPathForRole("ADMIN"));
   if (!studentId) redirect(returnPath);

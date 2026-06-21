@@ -40,8 +40,8 @@ export function DeletedClientsTab({
         <p className="mt-1 text-sm text-amber-900">
           Removed clients stay here with their profile, submissions, and documents.
           {isAdmin
-            ? " Only administrators can restore a client or permanently delete them from the system."
-            : " Contact an administrator if a client needs to be restored."}
+            ? " Team members can restore a client; only administrators can permanently delete them from the system."
+            : " Restore a client from here if they were removed by mistake."}
         </p>
       </div>
 
@@ -71,18 +71,18 @@ export function DeletedClientsTab({
                       Deleted {client.deletedAt?.toLocaleString() ?? "—"} by {deletedByLabel}
                     </p>
                   </div>
-                  {isAdmin ? (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <form action={restoreDeletedClientAction} className="inline">
-                        <input type="hidden" name="studentId" value={client.id} />
-                        <input type="hidden" name="returnPath" value={returnPath} />
-                        <button
-                          type="submit"
-                          className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-800 hover:bg-emerald-100"
-                        >
-                          Restore client
-                        </button>
-                      </form>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <form action={restoreDeletedClientAction} className="inline">
+                      <input type="hidden" name="studentId" value={client.id} />
+                      <input type="hidden" name="returnPath" value={returnPath} />
+                      <button
+                        type="submit"
+                        className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-800 hover:bg-emerald-100"
+                      >
+                        Restore client
+                      </button>
+                    </form>
+                    {isAdmin ? (
                       <DeleteWithConfirm
                         formAction={permanentDeleteDeletedClientAction}
                         confirmMessage={`Permanently delete ${displayName} and all related data? This cannot be undone.`}
@@ -92,8 +92,8 @@ export function DeletedClientsTab({
                         <input type="hidden" name="studentId" value={client.id} />
                         <input type="hidden" name="returnPath" value={returnPath} />
                       </DeleteWithConfirm>
-                    </div>
-                  ) : null}
+                    ) : null}
+                  </div>
                 </div>
 
                 {profile ? (

@@ -6,16 +6,20 @@ import { after } from "next/server";
 import { redirect } from "next/navigation";
 
 import { prioritizedCountries } from "@/lib/countries";
+import {
+  isValidIntakeValue,
+  resolveIntakeFromFormData,
+} from "@/lib/intake-options";
 import { runWithUniqueCaseReference } from "@/lib/case-reference";
 import { getCurrentClaimOwnerId } from "@/lib/claims";
 import { parseTemplateQuestions } from "@/lib/questionnaire";
 import {
   isEnglishTestType,
   isOtherVisaService,
-  isStudentVisaService,
   isVisaServiceType,
   OTHER_SERVICE_DESCRIPTION_KEY,
   STUDENT_ONLY_QUESTION_IDS,
+  usesStudentClientFields,
 } from "@/lib/visa-services";
 import { prisma } from "@/lib/prisma";
 import { queueDevEmail } from "@/lib/email-outbox";
@@ -212,7 +216,13 @@ async function submitQuestionnaireAction(formData: FormData) {
   const answers: Record<string, string> = {};
   for (const [key, value] of formData.entries()) {
     if (key === "templateId") continue;
+    if (key.endsWith("Custom")) continue;
     if (typeof value === "string") answers[key] = value;
+  }
+
+  const preferredIntake = resolveIntakeFromFormData(formData, "preferredIntake");
+  if (preferredIntake) {
+    answers.preferredIntake = preferredIntake;
   }
 
   const fullName = answers.fullName?.trim() ?? "";
@@ -247,12 +257,16 @@ async function submitQuestionnaireAction(formData: FormData) {
   }
 
   const targetCourse = answers.targetCourse?.trim() ?? "";
-  const preferredIntake = answers.preferredIntake?.trim() ?? "";
   const currentEducationLevel = answers.currentEducationLevel?.trim() ?? "";
   const otherServiceDescription =
     answers[OTHER_SERVICE_DESCRIPTION_KEY]?.trim() ?? "";
-  if (isStudentVisaService(visaServiceType)) {
-    if (!targetCourse || !preferredIntake || !currentEducationLevel) {
+  if (usesStudentClientFields(visaServiceType)) {
+    if (
+      !targetCourse ||
+      !preferredIntake ||
+      !currentEducationLevel ||
+      !isValidIntakeValue(preferredIntake)
+    ) {
       redirect("/apply?error=validation");
     }
     delete answers[OTHER_SERVICE_DESCRIPTION_KEY];
@@ -391,7 +405,7 @@ async function submitQuestionnaireAction(formData: FormData) {
         if (!existing.otherServiceDescription && otherServiceDescription)
           profileUpdate.otherServiceDescription = otherServiceDescription;
       }
-      if (isStudentVisaService(visaServiceType)) {
+      if (usesStudentClientFields(visaServiceType)) {
         if (!existing.currentEducationLevel && currentEducationLevel)
           profileUpdate.currentEducationLevel = currentEducationLevel;
         if (!existing.targetCourse && targetCourse) profileUpdate.targetCourse = targetCourse;
@@ -430,11 +444,11 @@ async function submitQuestionnaireAction(formData: FormData) {
             otherServiceDescription: isOtherVisaService(visaServiceType)
               ? otherServiceDescription || null
               : null,
-            currentEducationLevel: isStudentVisaService(visaServiceType)
+            currentEducationLevel: usesStudentClientFields(visaServiceType)
               ? currentEducationLevel || null
               : null,
-            targetCourse: isStudentVisaService(visaServiceType) ? targetCourse || null : null,
-            preferredIntake: isStudentVisaService(visaServiceType) ? preferredIntake || null : null,
+            targetCourse: usesStudentClientFields(visaServiceType) ? targetCourse || null : null,
+            preferredIntake: usesStudentClientFields(visaServiceType) ? preferredIntake || null : null,
             englishTestType: englishTestType || null,
             englishTestScore: englishTestScore || null,
             followUpNotes: null,

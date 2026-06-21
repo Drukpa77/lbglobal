@@ -855,7 +855,7 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
                         ) : null}
                         <DeleteWithConfirm
                           formAction={deleteStudentFromAdminAction}
-                          confirmMessage="Move this client to Deleted Clients? You can restore them later (admins can permanently delete)."
+                          confirmMessage="Move this client to Deleted Clients? Team members can restore them later (admins can permanently delete)."
                           buttonLabel="Delete client"
                           buttonClassName="rounded-md border border-red-300 bg-red-50 px-3 py-1 text-sm text-red-700"
                         >

@@ -22,7 +22,7 @@ import { StudentClientIntakeForm } from "@/components/student-client-intake-form
 import { VisaOutcomesPanel } from "@/components/visa-outcomes-panel";
 import { queueDevEmail } from "@/lib/email-outbox";
 import { runWithUniqueCaseReference } from "@/lib/case-reference";
-import { startNewVisaCaseForProfile } from "@/lib/visa-cases";
+import { ensureVisaCaseFromProfile, startNewVisaCaseForProfile } from "@/lib/visa-cases";
 import {
   buildManualIntakeAnswers,
   buildManualIntakeProfileData,
@@ -1015,9 +1015,21 @@ async function createManualStudentAction(formData: FormData) {
           userId: studentUser.id,
           ...buildManualIntakeProfileData(intake),
         },
-        select: { id: true },
+        select: {
+          id: true,
+          caseReference: true,
+          visaServiceType: true,
+          otherServiceDescription: true,
+          caseStage: true,
+          visaStatus: true,
+          courseStartDate: true,
+          courseEndDate: true,
+          visaExpiryDate: true,
+        },
       }),
     );
+
+    await ensureVisaCaseFromProfile(tx, studentProfile, "ACTIVE");
 
     const submission = await tx.questionnaireSubmission.create({
       data: {
