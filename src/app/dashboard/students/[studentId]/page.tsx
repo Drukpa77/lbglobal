@@ -3350,7 +3350,7 @@ async function recomputeWorkflowDerivedState(
   const steps = await tx.caseWorkflowStep.findMany({
     where: { visaCaseId: params.caseId },
     orderBy: { position: "asc" },
-    select: { id: true, position: true, templateStageKey: true },
+    select: { id: true, position: true, label: true, templateStageKey: true },
   });
   if (steps.length === 0) return;
 
@@ -3408,7 +3408,11 @@ async function recomputeWorkflowDerivedState(
     await syncActiveVisaCaseFromProfile(tx, updatedProfile);
   }
 
-  return { currentId, anchor };
+  return {
+    currentId,
+    anchor,
+    currentStepLabel: steps[currentIdx]?.label ?? null,
+  };
 }
 
 function revalidateWorkflowViews(studentId: string) {
@@ -3455,9 +3459,12 @@ async function saveWorkflowCustomisationsAction(formData: FormData) {
 
   const existing = await prisma.caseWorkflowStep.findMany({
     where: { visaCaseId: caseId },
-    select: { id: true, templateStageKey: true },
+    select: { id: true, label: true, templateStageKey: true },
   });
   const existingById = new Map(existing.map((step) => [step.id, step]));
+  const previousCurrentStep = activeCase.currentStepId
+    ? existingById.get(activeCase.currentStepId)
+    : null;
   const requestedExistingIds = requestedSteps
     .map((step) => step.id)
     .filter((id): id is string => Boolean(id));
@@ -3474,6 +3481,9 @@ async function saveWorkflowCustomisationsAction(formData: FormData) {
   if (!keepsTemplateAnchor) return;
 
   let desiredCurrentStepId = activeCase.currentStepId;
+  let workflowResult:
+    | Awaited<ReturnType<typeof recomputeWorkflowDerivedState>>
+    | undefined;
   await prisma.$transaction(async (tx) => {
     const persistedDraftToId = new Map<string, string>();
     const requestedExistingIdSet = new Set(requestedExistingIds);
@@ -3516,7 +3526,7 @@ async function saveWorkflowCustomisationsAction(formData: FormData) {
         ? activeCase.currentStepId
         : null);
 
-    await recomputeWorkflowDerivedState(tx, {
+    workflowResult = await recomputeWorkflowDerivedState(tx, {
       profileId: profile.id,
       caseId,
       desiredCurrentStepId,
@@ -3524,17 +3534,33 @@ async function saveWorkflowCustomisationsAction(formData: FormData) {
     });
   });
 
+  const nextReportingStage = workflowResult?.anchor ?? null;
+  const reportingStageChanged =
+    nextReportingStage !== null && nextReportingStage !== profile.caseStage;
+
   await prisma.activityLog.create({
     data: {
       actorId: session.user.id,
       targetStudentProfileId: profile.id,
       entityType: "CASE_STAGE",
       entityId: profile.id,
-      action: "Saved workflow customisations",
+      action: reportingStageChanged
+        ? `Saved workflow customisations and moved reporting stage: ${caseStageLabel(profile.caseStage)} -> ${caseStageLabel(nextReportingStage)}`
+        : "Saved workflow customisations",
       metadata: {
         caseId,
         stepCount: requestedSteps.length,
+        previousCurrentStepId: activeCase.currentStepId,
+        previousCurrentStepLabel: previousCurrentStep?.label ?? null,
         currentStepId: desiredCurrentStepId,
+        currentStepLabel: workflowResult?.currentStepLabel ?? null,
+        contributionRule: "template_anchor_stage_delta_only",
+        ...(reportingStageChanged
+          ? {
+              from: profile.caseStage,
+              to: nextReportingStage,
+            }
+          : {}),
       },
     },
   });
