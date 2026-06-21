@@ -6,6 +6,7 @@ import { Suspense } from "react";
 
 import { auth } from "@/auth";
 import { CaseReferenceLabel } from "@/components/case-reference-label";
+import { CaseStageFunnelDetail } from "@/components/case-stage-funnel-detail";
 import { ContributionsTabSection } from "@/components/contributions-tab-panel";
 import { DeletedClientsTab } from "@/components/deleted-clients-tab";
 import { DashboardProfileHeader } from "@/components/dashboard-profile-header";
@@ -27,6 +28,7 @@ import { queueDevEmail } from "@/lib/email-outbox";
 import { runWithUniqueCaseReference } from "@/lib/case-reference";
 import { markNewApplicationNotificationsHandled } from "@/lib/claims";
 import { ensureVisaCaseFromProfile, startNewVisaCaseForProfile } from "@/lib/visa-cases";
+import { buildCaseStageProfileWhere } from "@/lib/case-stage-dashboard";
 import {
   buildManualIntakeAnswers,
   buildManualIntakeProfileData,
@@ -195,6 +197,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     taskAssigneeOptions,
     allInternalStaff,
     stagePipelineCounts,
+    stagePipelineProfiles,
     newInquiries,
     newInquiriesLast24hCount,
     deletedClientsCount,
@@ -370,22 +373,43 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
       // stagePipelineCounts only shown in overview
       isOverviewTab ? prisma.studentProfile.groupBy({
         by: ["caseStage"],
-        where:
-          session.user.role === "ADMIN"
-            ? undefined
-            : {
-                user: {
-                  submissions: {
-                    some: {
-                      OR: [
-                        { assignedToId: session.user.id },
-                        { assignedToId: null },
-                      ],
-                    },
-                  },
+        where: buildCaseStageProfileWhere({
+          role: session.user.role,
+          userId: session.user.id,
+        }),
+        _count: { _all: true },
+      }) : Promise.resolve([]),
+      isOverviewTab ? prisma.studentProfile.findMany({
+        where: buildCaseStageProfileWhere({
+          role: session.user.role,
+          userId: session.user.id,
+        }),
+        select: {
+          id: true,
+          caseStage: true,
+          phone: true,
+          visaServiceType: true,
+          otherServiceDescription: true,
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              submissions: {
+                orderBy: { submittedAt: "desc" },
+                take: 1,
+                select: {
+                  intendedCourse: true,
+                  answers: true,
                 },
               },
-        _count: { _all: true },
+            },
+          },
+        },
+        orderBy: [
+          { caseStageUpdatedAt: "desc" },
+          { user: { name: "asc" } },
+        ],
       }) : Promise.resolve([]),
       isOverviewTab ? prisma.questionnaireSubmission.findMany({
         where: {
@@ -440,6 +464,46 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     count: stageCountMap.get(stage) ?? 0,
   }));
   const stageTotal = stageCounts.reduce((sum, item) => sum + item.count, 0);
+  const stageStudentsByStage = new Map<CaseStage, {
+    id: string;
+    name: string;
+    email: string;
+    phone: string;
+    visaService: string;
+    profileHref: string;
+  }[]>();
+  for (const profile of stagePipelineProfiles) {
+    const latestSubmission = profile.user.submissions[0];
+    const students = stageStudentsByStage.get(profile.caseStage) ?? [];
+    students.push({
+      id: profile.id,
+      name: profile.user.name ?? profile.user.email,
+      email: profile.user.email,
+      phone: profile.phone?.trim() || "Not provided",
+      visaService: formatSubmissionServiceSummary({
+        intendedCourse: latestSubmission?.intendedCourse,
+        answers: latestSubmission?.answers,
+        profileVisaServiceType: profile.visaServiceType,
+        profileOtherServiceDescription: profile.otherServiceDescription,
+      }),
+      profileHref: `/dashboard/students/${profile.user.id}`,
+    });
+    stageStudentsByStage.set(profile.caseStage, students);
+  }
+  const caseStageFunnelItems = allCaseStages.map((stage) => {
+    const item = stageCounts.find((c) => c.stage === stage);
+    const count = item?.count ?? 0;
+    const percentage = stageTotal === 0 ? 0 : Math.round((count / stageTotal) * 100);
+    return {
+      stage,
+      label: caseStageLabel(stage),
+      toneClass: caseStageTone(stage),
+      count,
+      percentage,
+      exportUrl: `/api/sub-admin/case-stage-export?stage=${encodeURIComponent(stage)}`,
+      students: stageStudentsByStage.get(stage) ?? [],
+    };
+  });
 
   const countSubmissionSource = isStudentsTab ? submissions : studentsTabSubmissions;
   const latestSubmissionPerStudent = dedupeLatestSubmissionPerStudent(submissions);
@@ -735,83 +799,11 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
             />
           </section>
 
-          <section className="rounded-lg border bg-white p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h2 className="text-sm font-semibold">Case Stage Funnel</h2>
-                <p className="mt-1 text-xs text-gray-600">
-                  {stageTotal} client{stageTotal === 1 ? "" : "s"} across the workflow
-                </p>
-              </div>
-            </div>
-            <div className="mt-3">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Funnel view</p>
-              <ul className="mt-2 space-y-1.5">
-                {caseStageOrder.map((stage) => {
-                  const item = stageCounts.find((c) => c.stage === stage);
-                  const count = item?.count ?? 0;
-                  const pct = stageTotal === 0 ? 0 : Math.round((count / stageTotal) * 100);
-                  return (
-                    <li key={`${stage}-funnel`} className="flex items-center gap-3">
-                      <div className="w-48 shrink-0 text-xs font-medium text-gray-700">
-                        {caseStageLabel(stage)}
-                      </div>
-                      <div className="relative h-5 flex-1 overflow-hidden rounded-md bg-gray-100">
-                        <div
-                          className="h-full rounded-md bg-gradient-to-r from-rose-400 to-blue-500"
-                          style={{ width: `${Math.max(pct, count > 0 ? 2 : 0)}%` }}
-                        />
-                      </div>
-                      <div className="w-20 shrink-0 text-right text-xs font-semibold text-gray-700">
-                        {count} ({pct}%)
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-
-            <div className="mt-4">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Workflow stages</p>
-              <div className="mt-2 flex gap-2 overflow-x-auto pb-2">
-                {caseStageOrder.map((stage) => {
-                  const item = stageCounts.find((c) => c.stage === stage);
-                  const count = item?.count ?? 0;
-                  return (
-                    <article
-                      key={stage}
-                      className={`min-w-[160px] rounded-md border p-3 ${caseStageTone(stage)}`}
-                    >
-                      <p className="text-[11px] font-semibold uppercase tracking-wide opacity-80">
-                        {caseStageLabel(stage)}
-                      </p>
-                      <p className="mt-1 text-xl font-semibold">{count}</p>
-                    </article>
-                  );
-                })}
-              </div>
-            </div>
-            <div className="mt-3">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Outcomes / end states</p>
-              <div className="mt-2 flex gap-2 overflow-x-auto pb-2">
-                {caseStageTerminals.map((stage) => {
-                  const item = stageCounts.find((c) => c.stage === stage);
-                  const count = item?.count ?? 0;
-                  return (
-                    <article
-                      key={stage}
-                      className={`min-w-[160px] rounded-md border p-3 ${caseStageTone(stage)}`}
-                    >
-                      <p className="text-[11px] font-semibold uppercase tracking-wide opacity-80">
-                        {caseStageLabel(stage)}
-                      </p>
-                      <p className="mt-1 text-xl font-semibold">{count}</p>
-                    </article>
-                  );
-                })}
-              </div>
-            </div>
-          </section>
+          <CaseStageFunnelDetail
+            items={caseStageFunnelItems}
+            workflowStageCount={caseStageOrder.length}
+            total={stageTotal}
+          />
 
           <section className="rounded-lg border bg-white p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">

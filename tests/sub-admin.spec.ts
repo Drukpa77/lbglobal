@@ -26,6 +26,20 @@ test.describe("sub-admin dashboard", () => {
     await expect(reportLink).toHaveAttribute("href", /\/api\/sub-admin\/report/);
   });
 
+  test("Case stage tiles open client details with export", async ({ page }) => {
+    await page.getByRole("button", { name: "View Consultation and Documentation clients" }).first().click();
+
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Consultation and Documentation" })).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: "Email" })).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: "Phone" })).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: "Visa Service" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Download" })).toHaveAttribute(
+      "href",
+      /\/api\/sub-admin\/case-stage-export\?stage=CONSULTATION_AND_DOCUMENTATION/,
+    );
+  });
+
   test("Students tab shows triage filters and prioritised categories", async ({ page }) => {
     await openDashboardTab(page, "Students");
     await expect(page.getByText("Saved Triage Filters")).toBeVisible();
