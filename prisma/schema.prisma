@@ -340,12 +340,34 @@ model VisaCase {
   startedAt               DateTime       @default(now())
   completedAt             DateTime?
   notes                   String?        @db.Text
+  // Plain scalar pointer to the current CaseWorkflowStep.id (deliberately NOT a
+  // Prisma relation, to avoid a second VisaCase<->CaseWorkflowStep relation).
+  // Integrity is maintained in the workflow server actions.
+  currentStepId           String?
   createdAt               DateTime       @default(now())
   updatedAt               DateTime       @updatedAt
   studentProfile          StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+  workflowSteps           CaseWorkflowStep[]
 
   @@index([studentProfileId, status])
   @@index([startedAt])
+}
+
+model CaseWorkflowStep {
+  id               String     @id @default(cuid())
+  visaCaseId       String
+  position         Int
+  label            String
+  // Set for steps copied from a code-defined template (maps to a CaseStage for
+  // reporting); null for custom staff-added steps.
+  templateStageKey CaseStage?
+  isCustom         Boolean    @default(false)
+  completedAt      DateTime?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  visaCase         VisaCase   @relation(fields: [visaCaseId], references: [id], onDelete: Cascade)
+
+  @@index([visaCaseId, position])
 }
 
 model QuestionnaireTemplate {

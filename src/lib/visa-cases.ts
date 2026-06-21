@@ -1,6 +1,8 @@
 import type { CaseStage, Prisma, VisaCaseStatus, VisaStatus } from "@prisma/client";
 
 import { runWithUniqueCaseReference } from "@/lib/case-reference";
+import { caseStageTerminals } from "@/lib/case-stage";
+import { getWorkflowTemplateForVisaService } from "@/lib/workflow-templates";
 
 type DbClient = Prisma.TransactionClient;
 
@@ -29,6 +31,75 @@ function completedStatusForStage(stage: CaseStage): VisaCaseStatus {
   return "SUPERSEDED";
 }
 
+/**
+ * Idempotently materialise the workflow steps for a case from its visa-service
+ * template. If the case already has steps, this is a no-op so existing
+ * customisations (or a changed visaServiceType) are never overwritten — a fresh
+ * template is only applied when a case has no steps yet (creation / lazy
+ * backfill of pre-existing cases).
+ *
+ * The case's `currentStepId` is pointed at the step matching its `caseStage`
+ * (terminal stages mark the whole template complete), keeping the synced
+ * `caseStage` reporting column and the workflow tile in agreement.
+ */
+export async function ensureWorkflowStepsForCase(
+  client: DbClient,
+  visaCase: { id: string; visaServiceType: string | null; caseStage: CaseStage },
+): Promise<void> {
+  const existingCount = await client.caseWorkflowStep.count({
+    where: { visaCaseId: visaCase.id },
+  });
+  if (existingCount > 0) return;
+
+  const template = getWorkflowTemplateForVisaService(visaCase.visaServiceType);
+  if (template.length === 0) return;
+
+  await client.caseWorkflowStep.createMany({
+    data: template.map((step, index) => ({
+      visaCaseId: visaCase.id,
+      position: index,
+      label: step.label,
+      templateStageKey: step.templateStageKey,
+      isCustom: false,
+    })),
+  });
+
+  const steps = await client.caseWorkflowStep.findMany({
+    where: { visaCaseId: visaCase.id },
+    orderBy: { position: "asc" },
+    select: { id: true, templateStageKey: true },
+  });
+  if (steps.length === 0) return;
+
+  const isTerminal = caseStageTerminals.includes(visaCase.caseStage);
+  const matchIndex = steps.findIndex(
+    (step) => step.templateStageKey === visaCase.caseStage,
+  );
+  // Terminal/outcome stages aren't in the template: treat the whole workflow as
+  // done and point at the last step. Otherwise point at the matching step
+  // (default to the first when no match, e.g. an unexpected stage value).
+  const currentIndex = isTerminal
+    ? steps.length - 1
+    : matchIndex >= 0
+      ? matchIndex
+      : 0;
+
+  const completedIds = steps
+    .slice(0, isTerminal ? steps.length : currentIndex)
+    .map((step) => step.id);
+  if (completedIds.length > 0) {
+    await client.caseWorkflowStep.updateMany({
+      where: { id: { in: completedIds } },
+      data: { completedAt: new Date() },
+    });
+  }
+
+  await client.visaCase.update({
+    where: { id: visaCase.id },
+    data: { currentStepId: steps[currentIndex]?.id ?? null },
+  });
+}
+
 export async function ensureVisaCaseFromProfile(
   client: DbClient,
   profile: ProfileCaseFields,
@@ -38,9 +109,18 @@ export async function ensureVisaCaseFromProfile(
     where: { caseReference: profile.caseReference },
     select: { id: true },
   });
-  if (existing) return existing;
+  if (existing) {
+    if (status === "ACTIVE") {
+      await ensureWorkflowStepsForCase(client, {
+        id: existing.id,
+        visaServiceType: profile.visaServiceType,
+        caseStage: profile.caseStage,
+      });
+    }
+    return existing;
+  }
 
-  return client.visaCase.create({
+  const created = await client.visaCase.create({
     data: {
       studentProfileId: profile.id,
       caseReference: profile.caseReference,
@@ -56,6 +136,16 @@ export async function ensureVisaCaseFromProfile(
     },
     select: { id: true },
   });
+
+  if (status === "ACTIVE") {
+    await ensureWorkflowStepsForCase(client, {
+      id: created.id,
+      visaServiceType: profile.visaServiceType,
+      caseStage: profile.caseStage,
+    });
+  }
+
+  return created;
 }
 
 export async function syncActiveVisaCaseFromProfile(
@@ -83,6 +173,13 @@ export async function syncActiveVisaCaseFromProfile(
       courseEndDate: profile.courseEndDate,
       visaExpiryDate: profile.visaExpiryDate,
     },
+  });
+
+  // Lazy backfill: existing customised steps are left untouched (idempotent).
+  await ensureWorkflowStepsForCase(client, {
+    id: active.id,
+    visaServiceType: profile.visaServiceType,
+    caseStage: profile.caseStage,
   });
 }
 
@@ -157,6 +254,12 @@ export async function startNewVisaCaseForProfile(
         notes: input.notes?.trim() || null,
       },
       select: { id: true, caseReference: true },
+    });
+
+    await ensureWorkflowStepsForCase(client, {
+      id: visaCase.id,
+      visaServiceType: updatedProfile.visaServiceType,
+      caseStage: updatedProfile.caseStage,
     });
 
     return { previousStatus, caseReference: visaCase.caseReference };

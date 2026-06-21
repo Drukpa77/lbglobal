@@ -1,10 +1,14 @@
 import {
+  isValidIntakeValue,
+  resolveIntakeFromFormData,
+} from "@/lib/intake-options";
+import {
   formatVisaServiceDisplay,
   isEnglishTestType,
   isOtherVisaService,
-  isStudentVisaService,
   isVisaServiceType,
   OTHER_SERVICE_DESCRIPTION_KEY,
+  usesStudentClientFields,
 } from "@/lib/visa-services";
 
 export type ManualClientIntakeInput = {
@@ -36,7 +40,7 @@ export function parseManualClientIntakeFormData(
   const country = String(formData.get("country") ?? "").trim();
   const city = String(formData.get("city") ?? "").trim();
   const course = String(formData.get("course") ?? "").trim();
-  const intake = String(formData.get("intake") ?? "").trim();
+  const intake = resolveIntakeFromFormData(formData, "intake");
   const currentEducation = String(formData.get("currentEducation") ?? "").trim();
   const englishTestType = String(formData.get("englishTestType") ?? "").trim();
   const englishTestScore = String(formData.get("englishTestScore") ?? "").trim();
@@ -58,9 +62,9 @@ export function parseManualClientIntakeFormData(
     return null;
   }
 
-  const isStudentVisa = isStudentVisaService(visaServiceType);
+  const isStudentVisa = usesStudentClientFields(visaServiceType);
   const isOtherService = isOtherVisaService(visaServiceType);
-  if (isStudentVisa && (!course || !intake || !currentEducation)) {
+  if (isStudentVisa && (!course || !intake || !currentEducation || !isValidIntakeValue(intake))) {
     return null;
   }
   if (

@@ -2,14 +2,14 @@
 
 import { useMemo, useState } from "react";
 
-import { getUpcomingIntakeOptions } from "@/lib/intake-options";
+import { IntakeSelect } from "@/components/intake-select";
 import type { QuestionnaireQuestion } from "@/lib/questionnaire";
 import {
   ENGLISH_TEST_TYPES,
   isOtherVisaService,
-  isStudentVisaService,
   OTHER_SERVICE_DESCRIPTION_KEY,
   STUDENT_ONLY_QUESTION_IDS,
+  usesStudentClientFields,
   VISA_SERVICE_OPTIONS,
 } from "@/lib/visa-services";
 
@@ -41,7 +41,7 @@ export function ApplyFormFields({
   prioritizedCountries: readonly string[];
 }) {
   const [visaServiceType, setVisaServiceType] = useState("");
-  const showStudentFields = isStudentVisaService(visaServiceType);
+  const showStudentFields = usesStudentClientFields(visaServiceType);
   const showOtherServiceField = isOtherVisaService(visaServiceType);
 
   const hearFromQuestion = questions.find((q) => q.id === "hearFrom");
@@ -79,12 +79,20 @@ export function ApplyFormFields({
     }
 
     if (q.type === "select") {
-      const options =
-        q.id === "country"
-          ? prioritizedCountries
-          : q.id === "preferredIntake"
-            ? getUpcomingIntakeOptions()
-            : (q.options ?? []);
+      if (q.id === "preferredIntake") {
+        return (
+          <IntakeSelect
+            key={q.id}
+            name={name}
+            required={isRequired}
+            label={q.label}
+            labelClassName="block text-sm font-medium text-slate-700"
+            className={inputClass}
+          />
+        );
+      }
+
+      const options = q.id === "country" ? prioritizedCountries : (q.options ?? []);
 
       return (
         <label key={q.id} className="block text-sm font-medium text-slate-700">
@@ -199,19 +207,12 @@ export function ApplyFormFields({
                 className={inputClass}
               />
             </label>
-            <label className="block text-sm font-medium text-slate-700 md:col-span-2">
-              Preferred intake *
-              <select name="preferredIntake" required defaultValue="" className={inputClass}>
-                <option value="" disabled>
-                  Select intake...
-                </option>
-                {getUpcomingIntakeOptions().map((intake) => (
-                  <option key={intake} value={intake}>
-                    {intake}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <IntakeSelect
+              required
+              className={inputClass}
+              labelClassName="block text-sm font-medium text-slate-700 md:col-span-2"
+              wrapperClassName="md:col-span-2"
+            />
           </div>
         </div>
       ) : null}

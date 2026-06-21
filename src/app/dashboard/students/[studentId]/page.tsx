@@ -69,9 +69,20 @@ import {
   isStudentVisaService,
   OTHER_SERVICE_DESCRIPTION_KEY,
   resolveVisaServiceType,
+  usesStudentClientFields,
   VISA_SERVICE_OPTIONS,
 } from "@/lib/visa-services";
-import { startNewVisaCaseForProfile, syncActiveVisaCaseFromProfile } from "@/lib/visa-cases";
+import {
+  isValidIntakeValue,
+  resolveIntakeFromFormData,
+} from "@/lib/intake-options";
+import {
+  ensureVisaCaseFromProfile,
+  ensureWorkflowStepsForCase,
+  startNewVisaCaseForProfile,
+  syncActiveVisaCaseFromProfile,
+} from "@/lib/visa-cases";
+import { CaseStageWorkflowCard } from "@/components/case-stage-workflow-card";
 import { formatVisaStatus, formatYearsLeft, visaStatuses } from "@/lib/student-tracking";
 import {
   allCaseStages,
@@ -98,6 +109,32 @@ const studentAccountSchema = z.object({
   fullName: z.string().trim().min(2).max(100),
   email: z.string().trim().email().toLowerCase(),
 });
+
+function isPrismaWriteConflict(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "P2034"
+  );
+}
+
+async function runWorkflowBackfillTransaction(
+  callback: (tx: Prisma.TransactionClient) => Promise<void>,
+) {
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await prisma.$transaction(callback);
+      return;
+    } catch (error) {
+      if (!isPrismaWriteConflict(error) || attempt === maxAttempts) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, attempt * 75));
+    }
+  }
+}
 
 export default async function StudentProfileManagementPage(props: { params: Params; searchParams: SearchParams }) {
   const { studentId } = await props.params;
@@ -436,6 +473,83 @@ export default async function StudentProfileManagementPage(props: { params: Para
       })
     : "Not set";
 
+  // Editable per-client workflow for the active case. Ensures the active case
+  // and its steps exist (lazy backfill for pre-existing clients), then loads
+  // the ordered steps + current pointer for the Case Stage tile.
+  let workflowCard:
+    | {
+        caseId: string;
+        currentStepId: string | null;
+        steps: {
+          id: string;
+          label: string;
+          isCustom: boolean;
+          hasTemplateAnchor: boolean;
+          completed: boolean;
+        }[];
+        currentStageLabel: string;
+        currentStageToneClass: string;
+        updatedAt: Date | null;
+        isTerminal: boolean;
+      }
+    | null = null;
+  if (needsOverviewData && profile) {
+    let activeCase = visaCases.find((visaCase) => visaCase.status === "ACTIVE") ?? null;
+    if (!activeCase && visaCases.length === 0) {
+      // Truly uninitialised client (no cases yet): create the first active case.
+      // Clients whose only cases are completed/withdrawn are left as-is.
+      await runWorkflowBackfillTransaction(async (tx) => {
+        await ensureVisaCaseFromProfile(tx, profile, "ACTIVE");
+      });
+      activeCase = await prisma.visaCase.findFirst({
+        where: { studentProfileId: profile.id, status: "ACTIVE" },
+      });
+    } else if (activeCase) {
+      await runWorkflowBackfillTransaction(async (tx) => {
+        await ensureWorkflowStepsForCase(tx, {
+          id: activeCase!.id,
+          visaServiceType: activeCase!.visaServiceType,
+          caseStage: activeCase!.caseStage,
+        });
+      });
+    }
+    if (activeCase) {
+      const [stepRows, refreshed] = await Promise.all([
+        prisma.caseWorkflowStep.findMany({
+          where: { visaCaseId: activeCase.id },
+          orderBy: { position: "asc" },
+          select: {
+            id: true,
+            label: true,
+            isCustom: true,
+            templateStageKey: true,
+            completedAt: true,
+          },
+        }),
+        prisma.visaCase.findUnique({
+          where: { id: activeCase.id },
+          select: { currentStepId: true, caseStage: true },
+        }),
+      ]);
+      const currentStage = refreshed?.caseStage ?? profile.caseStage;
+      workflowCard = {
+        caseId: activeCase.id,
+        currentStepId: refreshed?.currentStepId ?? null,
+        steps: stepRows.map((step) => ({
+          id: step.id,
+          label: step.label,
+          isCustom: step.isCustom,
+          hasTemplateAnchor: step.templateStageKey != null,
+          completed: step.completedAt != null,
+        })),
+        currentStageLabel: caseStageLabel(currentStage),
+        currentStageToneClass: caseStageTone(currentStage),
+        updatedAt: profile.caseStageUpdatedAt,
+        isTerminal: isTerminalStage(currentStage),
+      };
+    }
+  }
+
   const overviewOpenTaskAssignees = overviewOpenTasks.map((task) => task.assignee);
   const assignedTeamForOverview = buildOverviewAssignedTeam({
     assignments: currentAssignments,
@@ -493,7 +607,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
           {showDeleteStudentButton ? (
             <DeleteWithConfirm
               formAction={deleteStudentAction}
-              confirmMessage="Move this client to Deleted Clients? You can restore them later from the Deleted Clients tab (admins can permanently delete)."
+              confirmMessage="Move this client to Deleted Clients? Team members can restore them later from the Deleted Clients tab (admins can permanently delete)."
               buttonLabel="Delete Client"
               buttonClassName="rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50"
             >
@@ -641,13 +755,38 @@ export default async function StudentProfileManagementPage(props: { params: Para
         </div>
       </div>
 
-      <CaseStageCard
-        studentId={studentId}
-        visaServiceType={resolvedVisaServiceType}
-        currentStage={profile?.caseStage ?? "CONSULTATION_AND_DOCUMENTATION"}
-        updatedAt={profile?.caseStageUpdatedAt ?? null}
-        action={updateCaseStageAction}
-      />
+      {workflowCard ? (
+        <CaseStageWorkflowCard
+          studentId={studentId}
+          caseId={workflowCard.caseId}
+          steps={workflowCard.steps}
+          currentStepId={workflowCard.currentStepId}
+          currentStageLabel={workflowCard.currentStageLabel}
+          currentStageToneClass={workflowCard.currentStageToneClass}
+          updatedAt={workflowCard.updatedAt}
+          isTerminal={workflowCard.isTerminal}
+          terminalOptions={caseStageTerminals.map((stage) => ({
+            value: stage,
+            label: caseStageLabel(stage),
+          }))}
+          hideStudentOnlyNote={!isStudentVisaService(resolvedVisaServiceType)}
+          saveAction={saveWorkflowCustomisationsAction}
+          outcomeAction={updateCaseStageAction}
+        />
+      ) : profile && isTerminalStage(profile.caseStage) ? (
+        <CaseStageReadOnlyCard
+          currentStage={profile.caseStage}
+          updatedAt={profile.caseStageUpdatedAt}
+        />
+      ) : (
+        <CaseStageCard
+          studentId={studentId}
+          visaServiceType={resolvedVisaServiceType}
+          currentStage={profile?.caseStage ?? "CONSULTATION_AND_DOCUMENTATION"}
+          updatedAt={profile?.caseStageUpdatedAt ?? null}
+          action={updateCaseStageAction}
+        />
+      )}
       {profile ? (
         <VisaCasesSection
           studentId={studentId}
@@ -1902,6 +2041,52 @@ function CaseStageCard({
   );
 }
 
+function CaseStageReadOnlyCard({
+  currentStage,
+  updatedAt,
+}: {
+  currentStage: CaseStage;
+  updatedAt: Date | null;
+}) {
+  return (
+    <section
+      id="case-stage"
+      className="scroll-mt-24 rounded-2xl border border-rose-100 bg-white p-6 shadow-sm"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">Case Stage</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            This case has reached an outcome. Start a new visa case to begin a
+            new editable workflow.
+          </p>
+        </div>
+        <span
+          className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${caseStageTone(currentStage)}`}
+        >
+          <span className="inline-block h-2 w-2 rounded-full bg-current opacity-70" />
+          {caseStageLabel(currentStage)}
+        </span>
+      </div>
+
+      <div className="mt-5 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+        <div
+          className={`h-full rounded-full ${
+            currentStage === "VISA_GRANTED" ? "bg-emerald-500" : "bg-rose-500"
+          }`}
+          style={{ width: "100%" }}
+        />
+      </div>
+
+      {updatedAt ? (
+        <p className="mt-3 text-xs text-slate-500">
+          Stage last updated: {updatedAt.toLocaleString()}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 function assignmentRoleLabel(role: string) {
   if (role === "SUB_ADMIN") return "Agent";
   if (role === "INTERNAL_STAFF") return "Case manager";
@@ -2283,7 +2468,7 @@ async function saveStudentProfileAction(formData: FormData) {
   const visaStatusRaw = String(formData.get("visaStatus") ?? "NOT_STARTED") as VisaStatus;
   const visaStatus = visaStatuses.includes(visaStatusRaw) ? visaStatusRaw : "NOT_STARTED";
   const visaServiceType = nullableText(formData.get("visaServiceType"));
-  const isStudentVisa = isStudentVisaService(visaServiceType ?? "");
+  const isStudentVisa = usesStudentClientFields(visaServiceType ?? "");
   const isOtherService = isOtherVisaService(visaServiceType ?? "");
   const otherServiceDescription = nullableText(
     formData.get(OTHER_SERVICE_DESCRIPTION_KEY),
@@ -2303,7 +2488,14 @@ async function saveStudentProfileAction(formData: FormData) {
       ? nullableText(formData.get("currentEducationLevel"))
       : null,
     targetCourse: isStudentVisa ? nullableText(formData.get("targetCourse")) : null,
-    preferredIntake: isStudentVisa ? nullableText(formData.get("preferredIntake")) : null,
+    preferredIntake: isStudentVisa
+      ? (() => {
+          const intake = resolveIntakeFromFormData(formData, "preferredIntake").trim();
+          if (!intake) return null;
+          if (!isValidIntakeValue(intake)) redirect(studentProfileUrl(studentId));
+          return intake;
+        })()
+      : null,
     englishTestType: nullableText(formData.get("englishTestType")),
     englishTestScore: nullableText(formData.get("englishTestScore")),
   };
@@ -3076,6 +3268,278 @@ async function updateCaseStageAction(formData: FormData) {
   revalidatePath("/dashboard/internal-staff");
   revalidatePath("/dashboard/student");
   redirect(studentOverviewCaseStageUrl(studentId));
+}
+
+const workflowProfileSelect = {
+  id: true,
+  caseReference: true,
+  visaServiceType: true,
+  otherServiceDescription: true,
+  caseStage: true,
+  visaStatus: true,
+  courseStartDate: true,
+  courseEndDate: true,
+  visaExpiryDate: true,
+} as const;
+
+/**
+ * Shared authorization + lookup for the workflow-step editing actions. Returns
+ * the resolved profile and active case id, or redirects on any failure.
+ * Case managers (INTERNAL_STAFF) must be assigned to the client; sub-admins and
+ * admins may edit any client's workflow.
+ */
+async function loadWorkflowActionContext(formData: FormData) {
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+  if (
+    session.user.role !== "ADMIN" &&
+    session.user.role !== "SUB_ADMIN" &&
+    session.user.role !== "INTERNAL_STAFF"
+  ) {
+    redirect("/dashboard");
+  }
+
+  const studentId = String(formData.get("studentId") ?? "");
+  const caseId = String(formData.get("caseId") ?? "");
+  if (!studentId || !caseId) redirect("/dashboard");
+
+  const profile = await prisma.studentProfile.findUnique({
+    where: { userId: studentId },
+    select: {
+      ...workflowProfileSelect,
+      assignments: {
+        where: { isActive: true },
+        select: { assignedToId: true },
+      },
+      visaCases: {
+        where: { id: caseId, status: "ACTIVE" },
+        select: { id: true, currentStepId: true },
+      },
+    },
+  });
+  if (!profile) redirect(studentOverviewCaseStageUrl(studentId));
+
+  if (session.user.role === "INTERNAL_STAFF") {
+    const isAssigned = profile.assignments.some(
+      (assignment) => assignment.assignedToId === session.user.id,
+    );
+    if (!isAssigned) redirect(studentOverviewCaseStageUrl(studentId));
+  }
+
+  const activeCase = profile.visaCases[0];
+  if (!activeCase) redirect(studentOverviewCaseStageUrl(studentId));
+
+  return { session, studentId, caseId, profile, activeCase };
+}
+
+/**
+ * Recompute the case's derived state after a structural change: mark steps
+ * before the current step complete, point `currentStepId` at a valid step, and
+ * sync the reporting `caseStage` to the current step's template anchor (the
+ * nearest preceding template-keyed step when the current step is custom).
+ */
+async function recomputeWorkflowDerivedState(
+  tx: Prisma.TransactionClient,
+  params: {
+    profileId: string;
+    caseId: string;
+    desiredCurrentStepId: string | null;
+    currentCaseStage: CaseStage;
+  },
+) {
+  const steps = await tx.caseWorkflowStep.findMany({
+    where: { visaCaseId: params.caseId },
+    orderBy: { position: "asc" },
+    select: { id: true, position: true, templateStageKey: true },
+  });
+  if (steps.length === 0) return;
+
+  let currentId = params.desiredCurrentStepId;
+  if (!currentId || !steps.some((step) => step.id === currentId)) {
+    currentId = steps[0].id;
+  }
+  const currentIdx = steps.findIndex((step) => step.id === currentId);
+
+  const completedIds = steps.slice(0, currentIdx).map((step) => step.id);
+  const pendingIds = steps.slice(currentIdx).map((step) => step.id);
+  if (completedIds.length > 0) {
+    await tx.caseWorkflowStep.updateMany({
+      where: { id: { in: completedIds } },
+      data: { completedAt: new Date() },
+    });
+  }
+  if (pendingIds.length > 0) {
+    await tx.caseWorkflowStep.updateMany({
+      where: { id: { in: pendingIds } },
+      data: { completedAt: null },
+    });
+  }
+
+  await tx.visaCase.update({
+    where: { id: params.caseId },
+    data: { currentStepId: currentId },
+  });
+
+  // Anchor rule: current step's template key, else nearest preceding template
+  // key, else the first template-keyed step in the list.
+  let anchor: CaseStage | null = steps[currentIdx].templateStageKey;
+  if (!anchor) {
+    for (let i = currentIdx - 1; i >= 0; i -= 1) {
+      if (steps[i].templateStageKey) {
+        anchor = steps[i].templateStageKey;
+        break;
+      }
+    }
+  }
+  if (!anchor) {
+    anchor = steps.find((step) => step.templateStageKey)?.templateStageKey ?? null;
+  }
+
+  if (anchor) {
+    const stageChanged = anchor !== params.currentCaseStage;
+    const updatedProfile = await tx.studentProfile.update({
+      where: { id: params.profileId },
+      data: {
+        caseStage: anchor,
+        ...(stageChanged ? { caseStageUpdatedAt: new Date() } : {}),
+      },
+      select: workflowProfileSelect,
+    });
+    await syncActiveVisaCaseFromProfile(tx, updatedProfile);
+  }
+
+  return { currentId, anchor };
+}
+
+function revalidateWorkflowViews(studentId: string) {
+  revalidateContributionsCache(studentId);
+  revalidatePath(`/dashboard/students/${studentId}`);
+  revalidatePath("/dashboard/admin");
+  revalidatePath("/dashboard/sub-admin");
+  revalidatePath("/dashboard/internal-staff");
+  revalidatePath("/dashboard/student");
+}
+
+async function saveWorkflowCustomisationsAction(formData: FormData) {
+  "use server";
+  const { session, studentId, caseId, profile, activeCase } =
+    await loadWorkflowActionContext(formData);
+
+  const rawSteps = String(formData.get("steps") ?? "");
+  const currentStepDraftId = String(formData.get("currentStepDraftId") ?? "");
+  let parsedSteps: unknown;
+  try {
+    parsedSteps = JSON.parse(rawSteps);
+  } catch {
+    return;
+  }
+  if (!Array.isArray(parsedSteps) || parsedSteps.length === 0) return;
+
+  const requestedSteps = parsedSteps
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const row = item as Record<string, unknown>;
+      const draftId = typeof row.draftId === "string" ? row.draftId.trim() : "";
+      const id = typeof row.id === "string" && row.id.trim() ? row.id.trim() : null;
+      const label = typeof row.label === "string" ? row.label.trim() : "";
+      if (!draftId || !label || label.length > 120) return null;
+      return { draftId, id, label };
+    })
+    .filter((step): step is { draftId: string; id: string | null; label: string } =>
+      Boolean(step),
+    );
+  if (requestedSteps.length === 0) return;
+
+  const draftIds = new Set(requestedSteps.map((step) => step.draftId));
+  if (draftIds.size !== requestedSteps.length) return;
+
+  const existing = await prisma.caseWorkflowStep.findMany({
+    where: { visaCaseId: caseId },
+    select: { id: true, templateStageKey: true },
+  });
+  const existingById = new Map(existing.map((step) => [step.id, step]));
+  const requestedExistingIds = requestedSteps
+    .map((step) => step.id)
+    .filter((id): id is string => Boolean(id));
+  if (
+    requestedExistingIds.length !== new Set(requestedExistingIds).size ||
+    !requestedExistingIds.every((id) => existingById.has(id))
+  ) {
+    return;
+  }
+
+  const keepsTemplateAnchor = requestedExistingIds.some(
+    (id) => existingById.get(id)?.templateStageKey != null,
+  );
+  if (!keepsTemplateAnchor) return;
+
+  let desiredCurrentStepId = activeCase.currentStepId;
+  await prisma.$transaction(async (tx) => {
+    const persistedDraftToId = new Map<string, string>();
+    const requestedExistingIdSet = new Set(requestedExistingIds);
+    const removedExistingIds = existing
+      .filter((step) => !requestedExistingIdSet.has(step.id))
+      .map((step) => step.id);
+
+    if (removedExistingIds.length > 0) {
+      await tx.caseWorkflowStep.deleteMany({
+        where: { id: { in: removedExistingIds }, visaCaseId: caseId },
+      });
+    }
+
+    for (let index = 0; index < requestedSteps.length; index += 1) {
+      const step = requestedSteps[index];
+      if (step.id) {
+        await tx.caseWorkflowStep.update({
+          where: { id: step.id },
+          data: { label: step.label, position: index },
+        });
+        persistedDraftToId.set(step.draftId, step.id);
+      } else {
+        const created = await tx.caseWorkflowStep.create({
+          data: {
+            visaCaseId: caseId,
+            position: index,
+            label: step.label,
+            templateStageKey: null,
+            isCustom: true,
+          },
+          select: { id: true },
+        });
+        persistedDraftToId.set(step.draftId, created.id);
+      }
+    }
+
+    desiredCurrentStepId =
+      persistedDraftToId.get(currentStepDraftId) ??
+      (requestedExistingIdSet.has(activeCase.currentStepId ?? "")
+        ? activeCase.currentStepId
+        : null);
+
+    await recomputeWorkflowDerivedState(tx, {
+      profileId: profile.id,
+      caseId,
+      desiredCurrentStepId,
+      currentCaseStage: profile.caseStage,
+    });
+  });
+
+  await prisma.activityLog.create({
+    data: {
+      actorId: session.user.id,
+      targetStudentProfileId: profile.id,
+      entityType: "CASE_STAGE",
+      entityId: profile.id,
+      action: "Saved workflow customisations",
+      metadata: {
+        caseId,
+        stepCount: requestedSteps.length,
+        currentStepId: desiredCurrentStepId,
+      },
+    },
+  });
+
+  revalidateWorkflowViews(studentId);
 }
 
 async function updateStudentDocumentVerificationAction(formData: FormData) {

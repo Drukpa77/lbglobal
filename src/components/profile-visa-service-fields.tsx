@@ -2,13 +2,13 @@
 
 import { useState } from "react";
 
-import { mergeIntakeOptions, getUpcomingIntakeOptions } from "@/lib/intake-options";
+import { IntakeSelect } from "@/components/intake-select";
 import {
   ENGLISH_TEST_TYPES,
   isOtherVisaService,
-  isStudentVisaService,
   OTHER_SERVICE_DESCRIPTION_KEY,
   parseLegacyEnglishTestScore,
+  usesStudentClientFields,
   VISA_SERVICE_OPTIONS,
 } from "@/lib/visa-services";
 
@@ -52,7 +52,7 @@ export function ProfileVisaServiceFields({
       : (legacyEnglish.score ?? initialEnglishScore ?? "");
 
   const [visaServiceType, setVisaServiceType] = useState(initialServiceType ?? "");
-  const showStudentFields = isStudentVisaService(visaServiceType);
+  const showStudentFields = usesStudentClientFields(visaServiceType);
   const showOtherServiceField = isOtherVisaService(visaServiceType);
 
   return (
@@ -118,21 +118,13 @@ export function ProfileVisaServiceFields({
               className={inputClass}
             />
           </label>
-          <label className="block text-sm font-medium text-slate-700">
-            Preferred Intake
-            <select
-              name="preferredIntake"
-              defaultValue={preferredIntake ?? ""}
-              className={inputClass}
-            >
-              <option value="">Select intake...</option>
-              {mergeIntakeOptions(getUpcomingIntakeOptions(), preferredIntake).map((intake) => (
-                <option key={intake} value={intake}>
-                  {intake}
-                </option>
-              ))}
-            </select>
-          </label>
+          <IntakeSelect
+            savedValue={preferredIntake}
+            editable
+            label="Preferred Intake"
+            labelClassName="block text-sm font-medium text-slate-700"
+            className={inputClass}
+          />
         </>
       ) : (
         <>

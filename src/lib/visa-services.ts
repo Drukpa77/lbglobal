@@ -1,5 +1,10 @@
 export const VISA_SERVICE_OPTIONS = [
   { value: "STUDENT_VISA", label: "Student Visa" },
+  { value: "STUDENT_EXTENSION", label: "Student Extension" },
+  { value: "SUBSEQUENT_VISA", label: "Subsequent Visa" },
+  { value: "REAPPLICATION_COMBINED_VISA", label: "Reapplication/Combined Visa" },
+  { value: "TGV_485_EXTENSION", label: "485 Temporary Graduate Visa Extension" },
+  { value: "VISA_408", label: "408 Visa" },
   { value: "TEMPORARY_RESIDENCE", label: "Temporary Residence (TR)" },
   { value: "SKILLS_ASSESSMENT", label: "Skills Assessment" },
   { value: "PERMANENT_RESIDENCE", label: "Permanent Residence (PR)" },
@@ -7,6 +12,12 @@ export const VISA_SERVICE_OPTIONS = [
   { value: "TOURIST_VISA", label: "Tourist Visa" },
   { value: "OTHER", label: "Other Services" },
 ] as const;
+
+/** Visa services whose client intake collects course / study-related fields */
+export const STUDENT_FIELD_SERVICE_TYPES = new Set<string>([
+  "STUDENT_VISA",
+  "STUDENT_EXTENSION",
+]);
 
 export type VisaServiceType = (typeof VISA_SERVICE_OPTIONS)[number]["value"];
 
@@ -31,6 +42,14 @@ export function isVisaServiceType(value: string): value is VisaServiceType {
 
 export function isStudentVisaService(value: string | null | undefined) {
   return value === "STUDENT_VISA";
+}
+
+/**
+ * Whether a visa service collects the student/course-related client fields
+ * (course, intake, education level). Covers Student Visa and Student Extension.
+ */
+export function usesStudentClientFields(value: string | null | undefined) {
+  return value != null && STUDENT_FIELD_SERVICE_TYPES.has(value);
 }
 
 export function isOtherVisaService(value: string | null | undefined) {
@@ -117,7 +136,7 @@ export function formatSubmissionServiceSummary(input: {
     otherServiceDescription: input.profileOtherServiceDescription,
     answers: input.answers,
   });
-  if (serviceType && isStudentVisaService(serviceType)) {
+  if (serviceType && usesStudentClientFields(serviceType)) {
     const course = input.intendedCourse?.trim();
     return course ? `${getVisaServiceLabel(serviceType)} | ${course}` : getVisaServiceLabel(serviceType);
   }

@@ -3,12 +3,12 @@
 import { useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 
-import { getUpcomingIntakeOptions } from "@/lib/intake-options";
+import { IntakeSelect } from "@/components/intake-select";
 import {
   ENGLISH_TEST_TYPES,
   isOtherVisaService,
-  isStudentVisaService,
   OTHER_SERVICE_DESCRIPTION_KEY,
+  usesStudentClientFields,
   VISA_SERVICE_OPTIONS,
 } from "@/lib/visa-services";
 
@@ -41,7 +41,7 @@ export function StudentClientIntakeForm({
   const [isServiceFieldsOpen, setIsServiceFieldsOpen] = useState(false);
   const hasSelectedService = Boolean(visaServiceType);
   const showServiceFields = hasSelectedService && isServiceFieldsOpen;
-  const showStudentFields = isStudentVisaService(visaServiceType);
+  const showStudentFields = usesStudentClientFields(visaServiceType);
   const showOtherServiceField = isOtherVisaService(visaServiceType);
 
   return (
@@ -157,19 +157,14 @@ export function StudentClientIntakeForm({
                   Target course *
                   <input name="course" required className={commonInputClass} />
                 </label>
-                <label className="text-xs font-medium text-gray-700 md:col-span-2">
-                  Preferred intake *
-                  <select name="intake" required defaultValue="" className={commonInputClass}>
-                    <option value="" disabled>
-                      Select intake...
-                    </option>
-                    {getUpcomingIntakeOptions().map((intake) => (
-                      <option key={intake} value={intake}>
-                        {intake}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <IntakeSelect
+                  name="intake"
+                  required
+                  label="Preferred intake"
+                  labelClassName="text-xs font-medium text-gray-700"
+                  className={commonInputClass}
+                  wrapperClassName="md:col-span-2"
+                />
               </>
             ) : null}
 
