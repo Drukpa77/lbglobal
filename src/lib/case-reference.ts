@@ -16,16 +16,14 @@ export async function generateNextCaseReference(client: DbClient = prisma): Prom
   const year = new Date().getFullYear();
   const prefix = `LBG-${year}-`;
 
-  const [profileReferences, visaCaseReferences] = await Promise.all([
-    client.studentProfile.findMany({
-      where: { caseReference: { startsWith: prefix } },
-      select: { caseReference: true },
-    }),
-    client.visaCase.findMany({
-      where: { caseReference: { startsWith: prefix } },
-      select: { caseReference: true },
-    }),
-  ]);
+  const profileReferences = await client.studentProfile.findMany({
+    where: { caseReference: { startsWith: prefix } },
+    select: { caseReference: true },
+  });
+  const visaCaseReferences = await client.visaCase.findMany({
+    where: { caseReference: { startsWith: prefix } },
+    select: { caseReference: true },
+  });
 
   return formatCaseReference(
     year,
