@@ -47,6 +47,42 @@ test.describe("sub-admin dashboard", () => {
     await expect(page.getByText("Filter by Case Stage")).toBeVisible();
   });
 
+  test("client workflow reordering saves and persists", async ({ page }) => {
+    await openDashboardTab(page, "Students");
+    const studentCard = page.locator("article").filter({ hasText: "Student User" }).first();
+    await studentCard.getByRole("link", { name: "View profile" }).click();
+
+    const workflow = page.locator("#case-stage");
+    await workflow.getByRole("button", { name: "Customise" }).click();
+
+    const rows = workflow.locator("li");
+    const originalFirst = (await rows.nth(0).locator("span.flex-1").innerText()).trim();
+    const originalSecond = (await rows.nth(1).locator("span.flex-1").innerText()).trim();
+    expect(originalFirst).toBeTruthy();
+    expect(originalSecond).toBeTruthy();
+
+    const firstDragHandle = workflow.getByRole("button", { name: "Drag to reorder" }).first();
+    await firstDragHandle.focus();
+    await page.keyboard.press("Space");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Space");
+    await workflow.getByRole("button", { name: "Save", exact: true }).click();
+
+    await expect(workflow.getByRole("heading", { name: "Case Stage" })).toBeVisible();
+    await workflow.getByRole("button", { name: "Customise" }).click();
+    await expect(rows.nth(0)).toContainText(originalSecond!);
+    await expect(rows.nth(1)).toContainText(originalFirst!);
+
+    const restoreDragHandle = workflow.getByRole("button", { name: "Drag to reorder" }).first();
+    await restoreDragHandle.focus();
+    await page.keyboard.press("Space");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Space");
+    await workflow.getByRole("button", { name: "Save", exact: true }).click();
+
+    await expect(workflow.getByRole("heading", { name: "Case Stage" })).toBeVisible();
+  });
+
   test("Team & Operations tab shows the approval queue and assignment board", async ({ page }) => {
     await openDashboardTab(page, "Team & Operations");
     await expect(page.getByText("Approval Queue")).toBeVisible();

@@ -40,11 +40,17 @@ type DraftStep = WorkflowStepView & {
   persistedId: string | null;
 };
 
-type ServerAction = (formData: FormData) => Promise<void>;
+export type WorkflowSaveResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+type WorkflowSaveAction = (formData: FormData) => Promise<WorkflowSaveResult>;
+type FormAction = (formData: FormData) => Promise<void>;
 
 type CaseStageWorkflowCardProps = {
   studentId: string;
   caseId: string;
+  workflowVersion: string;
   steps: WorkflowStepView[];
   currentStepId: string | null;
   currentStageLabel: string;
@@ -53,8 +59,8 @@ type CaseStageWorkflowCardProps = {
   isTerminal: boolean;
   terminalOptions: { value: string; label: string }[];
   hideStudentOnlyNote: boolean;
-  saveAction: ServerAction;
-  outcomeAction: ServerAction;
+  saveAction: WorkflowSaveAction;
+  outcomeAction: FormAction;
 };
 
 function toDraftSteps(steps: WorkflowStepView[]): DraftStep[] {
@@ -68,6 +74,7 @@ function toDraftSteps(steps: WorkflowStepView[]): DraftStep[] {
 export function CaseStageWorkflowCard({
   studentId,
   caseId,
+  workflowVersion,
   steps,
   currentStepId,
   currentStageLabel,
@@ -86,6 +93,7 @@ export function CaseStageWorkflowCard({
   const [editingLabel, setEditingLabel] = useState("");
   const [isAdding, setIsAdding] = useState(false);
   const [newLabel, setNewLabel] = useState("");
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const sensors = useSensors(
@@ -126,6 +134,7 @@ export function CaseStageWorkflowCard({
     setEditingLabel("");
     setIsAdding(false);
     setNewLabel("");
+    setSaveError(null);
   }
 
   function openCustomise() {
@@ -207,6 +216,7 @@ export function CaseStageWorkflowCard({
   }
 
   function saveCustomisation() {
+    setSaveError(null);
     const stepsToSave =
       editingId && editingLabel.trim()
         ? draftSteps.map((step) =>
@@ -218,6 +228,7 @@ export function CaseStageWorkflowCard({
     const formData = new FormData();
     formData.set("studentId", studentId);
     formData.set("caseId", caseId);
+    formData.set("workflowVersion", workflowVersion);
     formData.set("currentStepDraftId", draftCurrentId ?? "");
     formData.set(
       "steps",
@@ -230,8 +241,16 @@ export function CaseStageWorkflowCard({
       ),
     );
     startTransition(async () => {
-      await saveAction(formData);
-      setMode("overview");
+      try {
+        const result = await saveAction(formData);
+        if (!result.ok) {
+          setSaveError(result.error);
+          return;
+        }
+        setMode("overview");
+      } catch {
+        setSaveError("The workflow could not be saved. Please try again.");
+      }
     });
   }
 
@@ -382,6 +401,11 @@ export function CaseStageWorkflowCard({
           </button>
         </div>
       </div>
+      {saveError ? (
+        <p role="alert" className="mt-3 text-sm font-medium text-rose-700">
+          {saveError}
+        </p>
+      ) : null}
 
       <div className="mt-5 space-y-2">
         <div className="flex items-center justify-between text-xs text-slate-500">

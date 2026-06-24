@@ -6,12 +6,12 @@ import type {
   LeadStatus,
   OpportunityForecastCategory,
   OpportunityStage,
-  Prisma,
   QuoteStatus,
   TaskPriority,
   TaskStatus,
   VisaStatus,
 } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -82,7 +82,10 @@ import {
   startNewVisaCaseForProfile,
   syncActiveVisaCaseFromProfile,
 } from "@/lib/visa-cases";
-import { CaseStageWorkflowCard } from "@/components/case-stage-workflow-card";
+import {
+  CaseStageWorkflowCard,
+  type WorkflowSaveResult,
+} from "@/components/case-stage-workflow-card";
 import { formatVisaStatus, formatYearsLeft, visaStatuses } from "@/lib/student-tracking";
 import {
   allCaseStages,
@@ -479,6 +482,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
   let workflowCard:
     | {
         caseId: string;
+        workflowVersion: string;
         currentStepId: string | null;
         steps: {
           id: string;
@@ -528,12 +532,13 @@ export default async function StudentProfileManagementPage(props: { params: Para
         }),
         prisma.visaCase.findUnique({
           where: { id: activeCase.id },
-          select: { currentStepId: true, caseStage: true },
+          select: { currentStepId: true, caseStage: true, updatedAt: true },
         }),
       ]);
       const currentStage = refreshed?.caseStage ?? profile.caseStage;
       workflowCard = {
         caseId: activeCase.id,
+        workflowVersion: (refreshed?.updatedAt ?? activeCase.updatedAt).toISOString(),
         currentStepId: refreshed?.currentStepId ?? null,
         steps: stepRows.map((step) => ({
           id: step.id,
@@ -759,6 +764,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
         <CaseStageWorkflowCard
           studentId={studentId}
           caseId={workflowCard.caseId}
+          workflowVersion={workflowCard.workflowVersion}
           steps={workflowCard.steps}
           currentStepId={workflowCard.currentStepId}
           currentStageLabel={workflowCard.currentStageLabel}
@@ -3313,7 +3319,7 @@ async function loadWorkflowActionContext(formData: FormData) {
       },
       visaCases: {
         where: { id: caseId, status: "ACTIVE" },
-        select: { id: true, currentStepId: true },
+        select: { id: true, currentStepId: true, updatedAt: true },
       },
     },
   });
@@ -3375,11 +3381,6 @@ async function recomputeWorkflowDerivedState(
     });
   }
 
-  await tx.visaCase.update({
-    where: { id: params.caseId },
-    data: { currentStepId: currentId },
-  });
-
   // Anchor rule: current step's template key, else nearest preceding template
   // key, else the first template-keyed step in the list.
   let anchor: CaseStage | null = steps[currentIdx].templateStageKey;
@@ -3405,7 +3406,25 @@ async function recomputeWorkflowDerivedState(
       },
       select: workflowProfileSelect,
     });
-    await syncActiveVisaCaseFromProfile(tx, updatedProfile);
+    await tx.visaCase.update({
+      where: { id: params.caseId },
+      data: {
+        currentStepId: currentId,
+        caseReference: updatedProfile.caseReference,
+        visaServiceType: updatedProfile.visaServiceType,
+        otherServiceDescription: updatedProfile.otherServiceDescription,
+        caseStage: updatedProfile.caseStage,
+        visaStatus: updatedProfile.visaStatus,
+        courseStartDate: updatedProfile.courseStartDate,
+        courseEndDate: updatedProfile.courseEndDate,
+        visaExpiryDate: updatedProfile.visaExpiryDate,
+      },
+    });
+  } else {
+    await tx.visaCase.update({
+      where: { id: params.caseId },
+      data: { currentStepId: currentId },
+    });
   }
 
   return {
@@ -3424,20 +3443,29 @@ function revalidateWorkflowViews(studentId: string) {
   revalidatePath("/dashboard/student");
 }
 
-async function saveWorkflowCustomisationsAction(formData: FormData) {
+async function saveWorkflowCustomisationsAction(
+  formData: FormData,
+): Promise<WorkflowSaveResult> {
   "use server";
   const { session, studentId, caseId, profile, activeCase } =
     await loadWorkflowActionContext(formData);
 
   const rawSteps = String(formData.get("steps") ?? "");
   const currentStepDraftId = String(formData.get("currentStepDraftId") ?? "");
+  const workflowVersionRaw = String(formData.get("workflowVersion") ?? "");
+  const workflowVersion = new Date(workflowVersionRaw);
+  if (!workflowVersionRaw || Number.isNaN(workflowVersion.getTime())) {
+    return { ok: false, error: "The workflow version is invalid. Refresh and try again." };
+  }
   let parsedSteps: unknown;
   try {
     parsedSteps = JSON.parse(rawSteps);
   } catch {
-    return;
+    return { ok: false, error: "The workflow data is invalid. Refresh and try again." };
   }
-  if (!Array.isArray(parsedSteps) || parsedSteps.length === 0) return;
+  if (!Array.isArray(parsedSteps) || parsedSteps.length === 0) {
+    return { ok: false, error: "A workflow must contain at least one stage." };
+  }
 
   const requestedSteps = parsedSteps
     .map((item) => {
@@ -3452,14 +3480,21 @@ async function saveWorkflowCustomisationsAction(formData: FormData) {
     .filter((step): step is { draftId: string; id: string | null; label: string } =>
       Boolean(step),
     );
-  if (requestedSteps.length === 0) return;
+  if (
+    requestedSteps.length === 0 ||
+    requestedSteps.length !== parsedSteps.length
+  ) {
+    return { ok: false, error: "The workflow contains an invalid stage." };
+  }
 
   const draftIds = new Set(requestedSteps.map((step) => step.draftId));
-  if (draftIds.size !== requestedSteps.length) return;
+  if (draftIds.size !== requestedSteps.length) {
+    return { ok: false, error: "The workflow contains duplicate stages." };
+  }
 
   const existing = await prisma.caseWorkflowStep.findMany({
     where: { visaCaseId: caseId },
-    select: { id: true, label: true, templateStageKey: true },
+    select: { id: true, position: true, label: true, templateStageKey: true },
   });
   const existingById = new Map(existing.map((step) => [step.id, step]));
   const previousCurrentStep = activeCase.currentStepId
@@ -3472,40 +3507,91 @@ async function saveWorkflowCustomisationsAction(formData: FormData) {
     requestedExistingIds.length !== new Set(requestedExistingIds).size ||
     !requestedExistingIds.every((id) => existingById.has(id))
   ) {
-    return;
+    return {
+      ok: false,
+      error: "This workflow changed while you were editing it. Refresh and try again.",
+    };
   }
 
   const keepsTemplateAnchor = requestedExistingIds.some(
     (id) => existingById.get(id)?.templateStageKey != null,
   );
-  if (!keepsTemplateAnchor) return;
+  if (!keepsTemplateAnchor) {
+    return { ok: false, error: "At least one standard workflow stage must remain." };
+  }
 
   let desiredCurrentStepId = activeCase.currentStepId;
   let workflowResult:
     | Awaited<ReturnType<typeof recomputeWorkflowDerivedState>>
     | undefined;
-  await prisma.$transaction(async (tx) => {
-    const persistedDraftToId = new Map<string, string>();
-    const requestedExistingIdSet = new Set(requestedExistingIds);
-    const removedExistingIds = existing
-      .filter((step) => !requestedExistingIdSet.has(step.id))
-      .map((step) => step.id);
-
-    if (removedExistingIds.length > 0) {
-      await tx.caseWorkflowStep.deleteMany({
-        where: { id: { in: removedExistingIds }, visaCaseId: caseId },
+  const transactionResult = await prisma.$transaction(
+    async (tx) => {
+      const transactionStartedAt = new Date();
+      const versionClaim = await tx.visaCase.updateMany({
+        where: {
+          id: caseId,
+          status: "ACTIVE",
+          updatedAt: workflowVersion,
+        },
+        data: { updatedAt: transactionStartedAt },
       });
-    }
+      if (versionClaim.count !== 1) {
+        return { conflict: true as const };
+      }
 
-    for (let index = 0; index < requestedSteps.length; index += 1) {
-      const step = requestedSteps[index];
-      if (step.id) {
-        await tx.caseWorkflowStep.update({
-          where: { id: step.id },
-          data: { label: step.label, position: index },
+      const persistedDraftToId = new Map<string, string>();
+      const requestedExistingIdSet = new Set(requestedExistingIds);
+      const removedExistingIds = existing
+        .filter((step) => !requestedExistingIdSet.has(step.id))
+        .map((step) => step.id);
+
+      if (removedExistingIds.length > 0) {
+        await tx.caseWorkflowStep.deleteMany({
+          where: { id: { in: removedExistingIds }, visaCaseId: caseId },
         });
+      }
+
+      const changedExistingSteps = requestedSteps.flatMap((step, position) => {
+        if (!step.id) return [];
         persistedDraftToId.set(step.draftId, step.id);
-      } else {
+        const previous = existingById.get(step.id);
+        return previous &&
+          (previous.position !== position || previous.label !== step.label)
+          ? [{ id: step.id, position, label: step.label }]
+          : [];
+      });
+
+      if (changedExistingSteps.length > 0) {
+        const positionCases = Prisma.join(
+          changedExistingSteps.map(
+            (step) => Prisma.sql`WHEN ${step.id} THEN ${step.position}`,
+          ),
+          " ",
+        );
+        const labelCases = Prisma.join(
+          changedExistingSteps.map(
+            (step) => Prisma.sql`WHEN ${step.id} THEN ${step.label}`,
+          ),
+          " ",
+        );
+        const changedIds = Prisma.join(
+          changedExistingSteps.map((step) => step.id),
+        );
+
+        await tx.$executeRaw(Prisma.sql`
+          UPDATE \`CaseWorkflowStep\`
+          SET
+            \`position\` = CASE \`id\` ${positionCases} ELSE \`position\` END,
+            \`label\` = CASE \`id\` ${labelCases} ELSE \`label\` END,
+            \`updatedAt\` = ${transactionStartedAt}
+          WHERE \`visaCaseId\` = ${caseId}
+            AND \`id\` IN (${changedIds})
+        `);
+      }
+
+      for (let index = 0; index < requestedSteps.length; index += 1) {
+        const step = requestedSteps[index];
+        if (step.id) continue;
         const created = await tx.caseWorkflowStep.create({
           data: {
             visaCaseId: caseId,
@@ -3518,21 +3604,32 @@ async function saveWorkflowCustomisationsAction(formData: FormData) {
         });
         persistedDraftToId.set(step.draftId, created.id);
       }
-    }
 
-    desiredCurrentStepId =
-      persistedDraftToId.get(currentStepDraftId) ??
-      (requestedExistingIdSet.has(activeCase.currentStepId ?? "")
-        ? activeCase.currentStepId
-        : null);
+      desiredCurrentStepId =
+        persistedDraftToId.get(currentStepDraftId) ??
+        (requestedExistingIdSet.has(activeCase.currentStepId ?? "")
+          ? activeCase.currentStepId
+          : null);
 
-    workflowResult = await recomputeWorkflowDerivedState(tx, {
-      profileId: profile.id,
-      caseId,
-      desiredCurrentStepId,
-      currentCaseStage: profile.caseStage,
-    });
-  });
+      workflowResult = await recomputeWorkflowDerivedState(tx, {
+        profileId: profile.id,
+        caseId,
+        desiredCurrentStepId,
+        currentCaseStage: profile.caseStage,
+      });
+
+      return { conflict: false as const };
+    },
+    { maxWait: 5_000, timeout: 15_000 },
+  );
+
+  if (transactionResult.conflict) {
+    return {
+      ok: false,
+      error:
+        "Another staff member updated this workflow while you were editing it. Refresh and try again.",
+    };
+  }
 
   const nextReportingStage = workflowResult?.anchor ?? null;
   const reportingStageChanged =
@@ -3566,6 +3663,7 @@ async function saveWorkflowCustomisationsAction(formData: FormData) {
   });
 
   revalidateWorkflowViews(studentId);
+  return { ok: true };
 }
 
 async function updateStudentDocumentVerificationAction(formData: FormData) {
