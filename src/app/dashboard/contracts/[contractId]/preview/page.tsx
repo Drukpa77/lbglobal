@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
@@ -87,6 +88,12 @@ export default async function ContractPreviewPage(props: { params: Params }) {
           <span className={`rounded-full px-3 py-1 text-xs font-semibold ${contractStatusTone(contract.status)}`}>
             {contract.status}
           </span>
+          <Link
+            href={`/dashboard/students/${studentUserId}?tab=financials`}
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Back to client
+          </Link>
           <DeleteWithConfirm
             formAction={deleteContractAction}
             confirmMessage={`Delete contract "${contract.contractNumber ?? contract.id}"? This cannot be undone.`}

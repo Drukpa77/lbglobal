@@ -133,26 +133,103 @@ export default async function InvoiceBuilderPage(props: { params: Params }) {
 
       <InvoiceBuilder initial={initial} />
 
-      <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        {invoice.status === "SENT" ? (
-          <form action={markInvoicePaidAction}>
+      {/* Status tracking card */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h3 className="mb-4 text-sm font-semibold text-slate-700">Invoice Status</h3>
+        <div className="divide-y divide-slate-100">
+          {/* Sent row */}
+          <div className="flex items-center justify-between py-3">
+            <div className="flex items-center gap-3">
+              <span
+                className={`flex h-6 w-6 items-center justify-center rounded-full text-sm font-bold ${
+                  invoice.sentAt
+                    ? "bg-blue-100 text-blue-600"
+                    : "bg-slate-100 text-slate-400"
+                }`}
+              >
+                {invoice.sentAt ? "✓" : "○"}
+              </span>
+              <div>
+                <p className="text-sm font-medium text-slate-800">Sent</p>
+                {invoice.sentAt ? (
+                  <p className="text-xs text-slate-500">
+                    Marked sent on {formatInvoiceDate(invoice.sentAt)}
+                  </p>
+                ) : (
+                  <p className="text-xs text-slate-400">Not yet marked as sent</p>
+                )}
+              </div>
+            </div>
+            {!invoice.sentAt && invoice.status === "DRAFT" && (
+              <form action={markInvoiceSentAction}>
+                <input type="hidden" name="invoiceId" value={invoice.id} />
+                <button
+                  type="submit"
+                  className="rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+                >
+                  Mark as Sent
+                </button>
+              </form>
+            )}
+          </div>
+
+          {/* Paid row */}
+          <div className="flex items-center justify-between py-3">
+            <div className="flex items-center gap-3">
+              <span
+                className={`flex h-6 w-6 items-center justify-center rounded-full text-sm font-bold ${
+                  invoice.paidAt
+                    ? "bg-emerald-100 text-emerald-600"
+                    : "bg-slate-100 text-slate-400"
+                }`}
+              >
+                {invoice.paidAt ? "✓" : "○"}
+              </span>
+              <div>
+                <p className="text-sm font-medium text-slate-800">Paid</p>
+                {invoice.paidAt ? (
+                  <p className="text-xs text-slate-500">
+                    Marked paid on {formatInvoiceDate(invoice.paidAt)}
+                  </p>
+                ) : (
+                  <p className="text-xs text-slate-400">Not yet marked as paid</p>
+                )}
+              </div>
+            </div>
+            {invoice.paidAt ? (
+              <form action={unmarkInvoicePaidAction}>
+                <input type="hidden" name="invoiceId" value={invoice.id} />
+                <button
+                  type="submit"
+                  className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                >
+                  Undo Paid
+                </button>
+              </form>
+            ) : (invoice.status === "SENT" || invoice.status === "DRAFT") ? (
+              <form action={markInvoicePaidAction}>
+                <input type="hidden" name="invoiceId" value={invoice.id} />
+                <button
+                  type="submit"
+                  className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
+                >
+                  Mark as Paid
+                </button>
+              </form>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="mt-4 border-t border-slate-100 pt-4">
+          <DeleteWithConfirm
+            formAction={deleteInvoiceAction}
+            confirmMessage={`Delete invoice ${invoice.invoiceNumber}? This cannot be undone.`}
+            buttonLabel="Delete Invoice"
+            buttonClassName="rounded-md border border-red-300 bg-red-50 px-4 py-2 text-sm font-medium text-red-700"
+          >
             <input type="hidden" name="invoiceId" value={invoice.id} />
-            <button
-              type="submit"
-              className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
-            >
-              Mark as Paid
-            </button>
-          </form>
-        ) : null}
-        <DeleteWithConfirm
-          formAction={deleteInvoiceAction}
-          confirmMessage={`Delete invoice ${invoice.invoiceNumber}? This cannot be undone.`}
-          buttonLabel="Delete Invoice"
-          buttonClassName="rounded-md border border-red-300 bg-red-50 px-4 py-2 text-sm font-medium text-red-700"
-        >
-          <input type="hidden" name="invoiceId" value={invoice.id} />
-        </DeleteWithConfirm>
+          </DeleteWithConfirm>
+        </div>
       </div>
     </section>
   );
@@ -174,6 +251,52 @@ function invoiceStatusTone(status: string) {
   return "bg-gray-100 text-gray-700";
 }
 
+async function markInvoiceSentAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (
+    !session?.user ||
+    (session.user.role !== "ADMIN" &&
+      session.user.role !== "SUB_ADMIN" &&
+      session.user.role !== "INTERNAL_STAFF")
+  ) {
+    redirect("/login");
+  }
+  const invoiceId = String(formData.get("invoiceId") ?? "");
+  if (!invoiceId) redirect("/dashboard");
+
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    include: { studentProfile: { select: { userId: true } } },
+  });
+  if (!invoice || invoice.status !== "DRAFT" || !invoice.studentProfile) redirect("/dashboard");
+
+  const canAccess = await staffCanAccessClientFinancials(session.user, invoice.studentProfile.userId);
+  if (!canAccess) redirect("/dashboard");
+
+  const studentUserId = invoice.studentProfile.userId;
+
+  await prisma.invoice.update({
+    where: { id: invoice.id },
+    data: { status: "SENT", sentAt: new Date() },
+  });
+
+  await prisma.activityLog.create({
+    data: {
+      actorId: session.user.id,
+      targetStudentProfileId: invoice.studentProfileId,
+      entityType: "INVOICE",
+      entityId: invoice.id,
+      action: `Marked invoice ${invoice.invoiceNumber} as sent`,
+      metadata: { invoiceNumber: invoice.invoiceNumber },
+    },
+  });
+
+  revalidatePath(`/dashboard/invoices/${invoice.id}/preview`);
+  revalidatePath(`/dashboard/students/${studentUserId}`);
+  redirect(`/dashboard/invoices/${invoice.id}/preview`);
+}
+
 async function markInvoicePaidAction(formData: FormData) {
   "use server";
   const session = await auth();
@@ -192,16 +315,27 @@ async function markInvoicePaidAction(formData: FormData) {
     where: { id: invoiceId },
     include: { studentProfile: { select: { userId: true } } },
   });
-  if (!invoice || invoice.status !== "SENT" || !invoice.studentProfile) redirect("/dashboard");
+  if (
+    !invoice ||
+    (invoice.status !== "SENT" && invoice.status !== "DRAFT") ||
+    !invoice.studentProfile
+  )
+    redirect("/dashboard");
 
   const canAccess = await staffCanAccessClientFinancials(session.user, invoice.studentProfile.userId);
   if (!canAccess) redirect("/dashboard");
 
   const studentUserId = invoice.studentProfile.userId;
+  const now = new Date();
 
   await prisma.invoice.update({
     where: { id: invoice.id },
-    data: { status: "PAID", paidAt: new Date() },
+    data: {
+      status: "PAID",
+      paidAt: now,
+      // Also set sentAt if it wasn't already set (marking paid from DRAFT)
+      sentAt: invoice.sentAt ?? now,
+    },
   });
 
   await prisma.activityLog.create({
@@ -217,7 +351,54 @@ async function markInvoicePaidAction(formData: FormData) {
 
   revalidatePath(`/dashboard/invoices/${invoice.id}/preview`);
   revalidatePath(`/dashboard/students/${studentUserId}`);
-  redirect(`/dashboard/students/${studentUserId}?tab=financials`);
+  redirect(`/dashboard/invoices/${invoice.id}/preview`);
+}
+
+async function unmarkInvoicePaidAction(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (
+    !session?.user ||
+    (session.user.role !== "ADMIN" &&
+      session.user.role !== "SUB_ADMIN" &&
+      session.user.role !== "INTERNAL_STAFF")
+  ) {
+    redirect("/login");
+  }
+  const invoiceId = String(formData.get("invoiceId") ?? "");
+  if (!invoiceId) redirect("/dashboard");
+
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    include: { studentProfile: { select: { userId: true } } },
+  });
+  if (!invoice || invoice.status !== "PAID" || !invoice.studentProfile) redirect("/dashboard");
+
+  const canAccess = await staffCanAccessClientFinancials(session.user, invoice.studentProfile.userId);
+  if (!canAccess) redirect("/dashboard");
+
+  const studentUserId = invoice.studentProfile.userId;
+
+  // Revert to SENT (since sentAt exists), clearing paidAt
+  await prisma.invoice.update({
+    where: { id: invoice.id },
+    data: { status: "SENT", paidAt: null },
+  });
+
+  await prisma.activityLog.create({
+    data: {
+      actorId: session.user.id,
+      targetStudentProfileId: invoice.studentProfileId,
+      entityType: "INVOICE",
+      entityId: invoice.id,
+      action: `Reverted invoice ${invoice.invoiceNumber} from paid to sent`,
+      metadata: { invoiceNumber: invoice.invoiceNumber },
+    },
+  });
+
+  revalidatePath(`/dashboard/invoices/${invoice.id}/preview`);
+  revalidatePath(`/dashboard/students/${studentUserId}`);
+  redirect(`/dashboard/invoices/${invoice.id}/preview`);
 }
 
 async function deleteInvoiceAction(formData: FormData) {
