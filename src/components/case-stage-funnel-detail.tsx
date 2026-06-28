@@ -55,20 +55,23 @@ export function CaseStageFunnelDetail({ items, workflowStageCount, total }: Prop
               <button
                 type="button"
                 onClick={() => setSelectedStage(item.stage)}
-                className="flex w-full items-center gap-3 rounded-md px-1 py-1 text-left transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="grid w-full grid-cols-[minmax(0,1fr)_2.5rem] items-center gap-x-3 gap-y-1 rounded-md px-1 py-1 text-left transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500 sm:grid-cols-[minmax(12rem,15rem)_2.5rem_minmax(8rem,1fr)_3.5rem]"
                 aria-label={`View ${item.label} clients`}
               >
-                <span className="w-48 shrink-0 text-xs font-medium text-gray-700">
+                <span className="min-w-0 text-xs font-medium text-gray-700">
                   {item.label}
                 </span>
-                <span className="relative h-5 flex-1 overflow-hidden rounded-md bg-gray-100">
+                <span className="text-center text-xs font-semibold text-gray-700">
+                  {item.count}
+                </span>
+                <span className="relative col-span-1 h-5 overflow-hidden rounded-md bg-gray-100">
                   <span
                     className="block h-full rounded-md bg-gradient-to-r from-rose-400 to-blue-500"
                     style={{ width: `${Math.max(item.percentage, item.count > 0 ? 2 : 0)}%` }}
                   />
                 </span>
-                <span className="w-20 shrink-0 text-right text-xs font-semibold text-gray-700">
-                  {item.count} ({item.percentage}%)
+                <span className="text-right text-xs font-semibold text-gray-700">
+                  {item.percentage}%
                 </span>
               </button>
             </li>
@@ -76,25 +79,6 @@ export function CaseStageFunnelDetail({ items, workflowStageCount, total }: Prop
         </ul>
       </div>
 
-      <div className="mt-4">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Workflow stages</p>
-        <div className="mt-2 flex gap-2 overflow-x-auto pb-2">
-          {workflowItems.map((item) => (
-            <button
-              key={item.stage}
-              type="button"
-              onClick={() => setSelectedStage(item.stage)}
-              className={`min-w-[160px] rounded-md border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${item.toneClass}`}
-              aria-label={`View ${item.label} clients`}
-            >
-              <span className="block text-[11px] font-semibold uppercase tracking-wide opacity-80">
-                {item.label}
-              </span>
-              <span className="mt-1 block text-xl font-semibold">{item.count}</span>
-            </button>
-          ))}
-        </div>
-      </div>
       <div className="mt-3">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Outcomes / end states</p>
         <div className="mt-2 flex gap-2 overflow-x-auto pb-2">

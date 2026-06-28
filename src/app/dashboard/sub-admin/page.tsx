@@ -615,11 +615,26 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   const enrolledItems = activeSubmissionItems.filter((item) => item.status === "ENROLLED");
   const rejectedItems = activeSubmissionItems.filter((item) => item.status === "REJECTED");
   const unassignedItems = activeSubmissionItems.filter((item) => item.assignedToId === null);
-  const pendingApprovalsCount = draftContractsCount + draftInvoicesCount + pendingDocumentsCount;
-  const overdueFollowUpsCount = activeSubmissionItems.filter((item) => {
+  const overdueFollowUpItems = activeSubmissionItems.filter((item) => {
     const next = item.student.studentProfile?.nextFollowUpDate;
     return next ? daysUntilDate(next, today) < 0 : false;
-  }).length;
+  });
+  const overdueFollowUpsCount = overdueFollowUpItems.length;
+  const overdueFollowUpBuckets = [
+    { label: "1-3 days", count: 0 },
+    { label: "4-7 days", count: 0 },
+    { label: "8-14 days", count: 0 },
+    { label: "15+ days", count: 0 },
+  ];
+  for (const item of overdueFollowUpItems) {
+    const next = item.student.studentProfile?.nextFollowUpDate;
+    if (!next) continue;
+    const daysOverdue = Math.abs(daysUntilDate(next, today));
+    if (daysOverdue <= 3) overdueFollowUpBuckets[0].count += 1;
+    else if (daysOverdue <= 7) overdueFollowUpBuckets[1].count += 1;
+    else if (daysOverdue <= 14) overdueFollowUpBuckets[2].count += 1;
+    else overdueFollowUpBuckets[3].count += 1;
+  }
   const taskLoadByStaff = new Map(teamTaskLoad.map((row) => [row.assigneeId, row._count._all]));
   const caseLoadByStaff = new Map(teamCaseLoad.map((row) => [row.assignedToId, row._count._all]));
   const staffWorkloads = teamMembers
@@ -635,7 +650,6 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
       };
     })
     .sort((a, b) => b.openTasks - a.openTasks);
-  const overloadedStaffCount = staffWorkloads.filter((staff) => staff.openTasks >= 8 || staff.activeCases >= 15).length;
   const suggestedAssigneeId =
     staffWorkloads.length > 0
       ? [...staffWorkloads].sort((a, b) => a.openTasks + a.activeCases - (b.openTasks + b.activeCases))[0].id
@@ -716,20 +730,9 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   const unassignedPreview = unassignedItems.slice(0, 2).map(
     (item) => item.student.name ?? item.student.email,
   );
-  const teamOverloadedPreview = staffWorkloads
-    .filter((staff) => staff.openTasks >= 8 || staff.activeCases >= 15)
-    .slice(0, 2)
-    .map((staff) => `${staff.name} - ${staff.openTasks} tasks / ${staff.activeCases} cases`);
-  const overdueFollowUpsPreview = activeSubmissionItems
-    .filter((item) => {
-      const next = item.student.studentProfile?.nextFollowUpDate;
-      return next ? daysUntilDate(next, today) < 0 : false;
-    })
+  const overdueFollowUpsPreview = overdueFollowUpItems
     .slice(0, 2)
     .map((item) => item.student.name ?? item.student.email);
-  const teamMembersPreview = teamMembers
-    .slice(0, 2)
-    .map((member) => member.internalStaff.name ?? member.internalStaff.email);
   return (
     <section className="space-y-6">
       <DashboardProfileHeader
@@ -771,32 +774,47 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
             viewAllHref={subAdminUnassignedQueueHref}
           />
 
-          <section className="grid gap-4 md:grid-cols-5">
-            <StatCard
-              title="Pending Approvals"
-              value={String(pendingApprovalsCount)}
-              preview={pendingApprovalsPreview}
-            />
-            <StatCard
-              title="Unassigned Cases"
-              value={String(unassignedItems.length)}
-              preview={unassignedPreview}
-            />
-            <StatCard
-              title="Team Overloaded"
-              value={String(overloadedStaffCount)}
-              preview={teamOverloadedPreview}
-            />
-            <StatCard
-              title="Overdue Follow-ups"
-              value={String(overdueFollowUpsCount)}
-              preview={overdueFollowUpsPreview}
-            />
-            <StatCard
-              title="Team Members"
-              value={String(teamMembers.length)}
-              preview={teamMembersPreview}
-            />
+          <section className="overview-top-tiles grid gap-4 md:grid-cols-[minmax(0,1fr)_16rem] xl:grid-cols-[minmax(0,1.45fr)_minmax(20rem,0.85fr)]">
+            <article className="rounded-lg border bg-white p-4">
+              <h2 className="text-sm font-semibold">Risk Board</h2>
+              <p className="mt-1 text-xs text-gray-600">High-priority cases needing intervention.</p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                <RiskBucket
+                  title="Visa Expiring <=30d"
+                  items={highVisaRiskItems}
+                  emptyLabel="No critical visa expiries."
+                />
+                <RiskBucket
+                  title="Missing Follow-up Date"
+                  items={missingFollowUpItems}
+                  emptyLabel="All tracked cases have follow-up dates."
+                />
+                <RiskBucket
+                  title="Pending Docs/Approvals"
+                  items={pendingDocRiskItems}
+                  emptyLabel="No pending approval risk."
+                />
+              </div>
+            </article>
+
+            <div className="grid gap-3 sm:grid-cols-3 md:grid-cols-1">
+              <PendingApprovalsMetricCard
+                draftContractsCount={draftContractsCount}
+                draftInvoicesCount={draftInvoicesCount}
+                pendingDocumentsCount={pendingDocumentsCount}
+                preview={pendingApprovalsPreview}
+              />
+              <UnassignedCasesMetricCard
+                activeCount={activeSubmissionItems.length}
+                unassignedCount={unassignedItems.length}
+                preview={unassignedPreview}
+              />
+              <OverdueFollowUpsMetricCard
+                buckets={overdueFollowUpBuckets}
+                total={overdueFollowUpsCount}
+                preview={overdueFollowUpsPreview}
+              />
+            </div>
           </section>
 
           <CaseStageFunnelDetail
@@ -834,30 +852,6 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
             </div>
           </section>
 
-          <section className="grid gap-4 lg:grid-cols-2">
-            <article className="rounded-lg border bg-white p-4">
-              <h2 className="text-sm font-semibold">Risk Board</h2>
-              <p className="mt-1 text-xs text-gray-600">High-priority cases needing intervention.</p>
-              <div className="mt-3 grid gap-3 md:grid-cols-3">
-                <RiskBucket
-                  title="Visa Expiring <=30d"
-                  items={highVisaRiskItems}
-                  emptyLabel="No critical visa expiries."
-                />
-                <RiskBucket
-                  title="Missing Follow-up Date"
-                  items={missingFollowUpItems}
-                  emptyLabel="All tracked cases have follow-up dates."
-                />
-                <RiskBucket
-                  title="Pending Docs/Approvals"
-                  items={pendingDocRiskItems}
-                  emptyLabel="No pending approval risk."
-                />
-              </div>
-            </article>
-
-          </section>
         </div>
       )}
 
@@ -1609,6 +1603,174 @@ function StatCard({ title, value, preview }: { title: string; value: string; pre
         <p className="mt-2 text-xs text-slate-500">No items yet</p>
       )}
     </article>
+  );
+}
+
+function PendingApprovalsMetricCard({
+  draftContractsCount,
+  draftInvoicesCount,
+  pendingDocumentsCount,
+  preview,
+}: {
+  draftContractsCount: number;
+  draftInvoicesCount: number;
+  pendingDocumentsCount: number;
+  preview?: string[];
+}) {
+  const total = draftContractsCount + draftInvoicesCount + pendingDocumentsCount;
+  const segments = [
+    { label: "Draft Contracts", shortLabel: "Contracts", count: draftContractsCount, className: "bg-blue-500" },
+    { label: "Draft Invoices", shortLabel: "Invoices", count: draftInvoicesCount, className: "bg-violet-500" },
+    { label: "Pending Document Verification", shortLabel: "Docs", count: pendingDocumentsCount, className: "bg-rose-500" },
+  ];
+
+  return (
+    <article className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Pending Approvals</p>
+          <p className="mt-1 text-xl font-bold text-slate-900">{total}</p>
+        </div>
+        <p className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+          workload
+        </p>
+      </div>
+
+      <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-slate-100" aria-label="Pending approval workload composition">
+        {total > 0 ? (
+          <div className="flex h-full">
+            {segments.map((segment) => (
+              <span
+                key={segment.label}
+                className={`block h-full ${segment.className}`}
+                style={{ width: `${(segment.count / total) * 100}%` }}
+                title={`${segment.label}: ${segment.count}`}
+              />
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      <dl className="mt-2 grid grid-cols-3 gap-1.5 text-[10px] text-slate-600">
+        {segments.map((segment) => (
+          <div key={segment.label} className="min-w-0 rounded-md bg-slate-50 px-1.5 py-1" title={`${segment.label}: ${segment.count}`}>
+            <dt className="flex min-w-0 items-center gap-1">
+              <span className={`h-2 w-2 shrink-0 rounded-full ${segment.className}`} />
+              <span className="truncate">{segment.shortLabel}</span>
+            </dt>
+            <dd className="mt-0.5 font-semibold text-slate-800">{segment.count}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <div className="hidden 2xl:block">
+        <MetricPreviewLine preview={preview} />
+      </div>
+    </article>
+  );
+}
+
+function UnassignedCasesMetricCard({
+  activeCount,
+  unassignedCount,
+  preview,
+}: {
+  activeCount: number;
+  unassignedCount: number;
+  preview?: string[];
+}) {
+  const percentage = activeCount === 0 ? 0 : Math.round((unassignedCount / activeCount) * 100);
+
+  return (
+    <article className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Unassigned Cases</p>
+          <p className="mt-1 text-xl font-bold text-slate-900">{unassignedCount}</p>
+          <p className="mt-1 text-xs text-slate-600">
+            {unassignedCount} of {activeCount} active cases unassigned.
+          </p>
+        </div>
+        <div
+          className="grid h-14 w-14 shrink-0 place-items-center rounded-full"
+          style={{
+            background: `conic-gradient(#2563eb ${percentage * 3.6}deg, #e2e8f0 0deg)`,
+          }}
+          aria-label={`${percentage}% of active cases are unassigned`}
+        >
+          <div className="grid h-10 w-10 place-items-center rounded-full bg-white">
+            <span className="text-xs font-bold text-slate-900">{percentage}%</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="hidden 2xl:block">
+        <MetricPreviewLine preview={preview} />
+      </div>
+    </article>
+  );
+}
+
+function OverdueFollowUpsMetricCard({
+  buckets,
+  total,
+  preview,
+}: {
+  buckets: { label: string; count: number }[];
+  total: number;
+  preview?: string[];
+}) {
+  const maxBucketCount = Math.max(1, ...buckets.map((bucket) => bucket.count));
+
+  return (
+    <article className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Overdue Follow-ups</p>
+          <p className="mt-1 text-xl font-bold text-slate-900">{total}</p>
+        </div>
+        <p className="rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-700">
+          aging
+        </p>
+      </div>
+
+      <div className="mt-2 flex h-14 items-end gap-2" aria-label="Overdue follow-up aging buckets">
+        {buckets.map((bucket) => {
+          const barHeight = bucket.count === 0 ? 4 : Math.max(10, Math.round((bucket.count / maxBucketCount) * 32));
+          return (
+            <div key={bucket.label} className="flex min-w-0 flex-1 flex-col items-center gap-1">
+              <div className="flex h-8 w-full items-end rounded-t-md bg-slate-50 px-1">
+                <span
+                  className="block w-full rounded-t-md bg-gradient-to-t from-rose-500 to-amber-400"
+                  style={{ height: `${barHeight}px` }}
+                  title={`${bucket.label}: ${bucket.count}`}
+                />
+              </div>
+              <span className="text-[10px] font-semibold text-slate-700">{bucket.count}</span>
+              <span className="text-center text-[10px] text-slate-500" title={bucket.label}>
+                {bucket.label.replace(" days", "d")}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="hidden 2xl:block">
+        <MetricPreviewLine preview={preview} />
+      </div>
+    </article>
+  );
+}
+
+function MetricPreviewLine({ preview }: { preview?: string[] }) {
+  if (!preview || preview.length === 0) {
+    return <p className="mt-2 truncate text-xs text-slate-500">No items yet</p>;
+  }
+
+  return (
+    <p className="mt-2 truncate text-xs text-slate-600" title={preview.join(", ")}>
+      {preview.join(", ")}
+    </p>
   );
 }
 
