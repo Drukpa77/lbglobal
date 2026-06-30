@@ -62,6 +62,13 @@ import {
   buildSubmissionWhere,
   normalizeInquiryLocationFilter,
 } from "@/lib/submission-filters";
+import {
+  calculateActiveCaseRatios,
+  daysUntilDate,
+  dedupeLatestSubmissionPerStudent,
+  isActiveCaseSubmission,
+  isVisaExpiringWithinDays,
+} from "@/lib/dashboard-overview-metrics";
 import { formatSubmissionStatus, submissionStatuses } from "@/lib/submission";
 import { formatVisaStatus, formatYearsLeft } from "@/lib/student-tracking";
 import { formatSubmissionServiceSummary } from "@/lib/visa-services";
@@ -148,7 +155,9 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   const taskView = normalizeTaskListView(searchParams.taskView);
   const isTeamTab = tab === "team";
   const isAdminViewer = session.user.role === "ADMIN";
-  const needsSubmissions = true;
+  const needsVisibleSubmissions = isStudentsTab;
+  const needsMetricSubmissions = isOverviewTab || isStudentsTab;
+  const needsStudentsTabMetricSubmissions = !isStudentsTab;
   const needsTeamData = isOverviewTab || isTeamTab;
   const needsApprovalData = isOverviewTab || isStudentsTab;
 
@@ -183,11 +192,10 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
 
   const [
     reminders,
-    submissions,
-    studentsTabSubmissions,
+    visibleSubmissions,
+    metricSubmissions,
+    studentsTabMetricSubmissions,
     trendSubmissions,
-    pendingReviews,
-    offersInProgress,
     homePosts,
     teamMembers,
     activeAssignments,
@@ -206,7 +214,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   ] =
     await Promise.all([
       isOverviewTab ? getRemindersForUser(session.user.role as "ADMIN" | "SUB_ADMIN", session.user.id) : Promise.resolve([]),
-      needsSubmissions ? prisma.questionnaireSubmission.findMany({
+      needsVisibleSubmissions ? prisma.questionnaireSubmission.findMany({
         where: activeSubmissionWhere,
         include: {
           student: {
@@ -232,7 +240,32 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
         orderBy: { submittedAt: "desc" },
         take: isStudentsTab ? 100 : 50,
       }) : Promise.resolve([]),
-      needsSubmissions && !isStudentsTab
+      needsMetricSubmissions ? prisma.questionnaireSubmission.findMany({
+        where: activeSubmissionWhere,
+        include: {
+          student: {
+            include: {
+              studentProfile: {
+                include: {
+                  assignments: {
+                    where: { isActive: true },
+                    orderBy: { createdAt: "desc" },
+                    select: {
+                      id: true,
+                      assignedToId: true,
+                      assignedTo: { select: { name: true, email: true, role: true } },
+                      assignedBy: { select: { name: true, email: true } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          assignedSubAdmin: { select: { id: true, name: true, email: true } },
+        },
+        orderBy: { submittedAt: "desc" },
+      }) : Promise.resolve([]),
+      needsStudentsTabMetricSubmissions
         ? prisma.questionnaireSubmission.findMany({
             where: studentsSubmissionWhere,
             include: {
@@ -257,10 +290,10 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
               assignedSubAdmin: { select: { id: true, name: true, email: true } },
             },
             orderBy: { submittedAt: "desc" },
-            take: 100,
           })
         : Promise.resolve([]),
-      // trendSubmissions (500 rows) only needed for the overview trend chart
+      // Full trend window: the overview chart and review-time metric should not
+      // silently drop busy weeks after an arbitrary row cap.
       isOverviewTab ? prisma.questionnaireSubmission.findMany({
         where: {
           ...overviewSubmissionWhere,
@@ -272,24 +305,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
           updatedAt: true,
         },
         orderBy: { submittedAt: "asc" },
-        take: 500,
       }) : Promise.resolve([]),
-    isOverviewTab ? prisma.questionnaireSubmission.count({
-      where: {
-        ...overviewSubmissionWhere,
-        status: {
-          in: ["SUBMITTED", "UNDER_REVIEW", "DOCS_REQUESTED"],
-        },
-      },
-    }) : Promise.resolve(0),
-    isOverviewTab ? prisma.questionnaireSubmission.count({
-      where: {
-        ...overviewSubmissionWhere,
-        status: {
-          in: ["OFFER_RECEIVED", "VISA_GRANTED", "ENROLLED"],
-        },
-      },
-    }) : Promise.resolve(0),
     // homePosts only needed for team tab
     isTeamTab ? prisma.homePost.findMany({
       where:
@@ -442,7 +458,10 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
           where: {
             status: { not: "ACTIVE" },
             caseStage: { in: caseStageTerminals },
-            studentProfile: { user: { deletedAt: null } },
+            studentProfile: buildCaseStageProfileWhere({
+              role: session.user.role,
+              userId: session.user.id,
+            }),
           },
           include: {
             studentProfile: {
@@ -505,14 +524,18 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     };
   });
 
-  const countSubmissionSource = isStudentsTab ? submissions : studentsTabSubmissions;
-  const latestSubmissionPerStudent = dedupeLatestSubmissionPerStudent(submissions);
+  const countSubmissionSource = isStudentsTab ? metricSubmissions : studentsTabMetricSubmissions;
+  const latestSubmissionPerStudent = dedupeLatestSubmissionPerStudent(metricSubmissions);
   const latestStudentsTabSubmissionPerStudent = dedupeLatestSubmissionPerStudent(countSubmissionSource);
+  const latestVisibleSubmissionPerStudent = dedupeLatestSubmissionPerStudent(visibleSubmissions);
   const activeStudentsTabItems = latestStudentsTabSubmissionPerStudent.filter(
-    (item) => !item.student.studentProfile || !caseStageTerminals.includes(item.student.studentProfile.caseStage),
+    isActiveCaseSubmission,
   );
   const activeSubmissionItems = latestSubmissionPerStudent.filter(
-    (item) => !item.student.studentProfile || !caseStageTerminals.includes(item.student.studentProfile.caseStage),
+    isActiveCaseSubmission,
+  );
+  const visibleActiveSubmissionItems = latestVisibleSubmissionPerStudent.filter(
+    isActiveCaseSubmission,
   );
   const assignedStudents = activeStudentsTabItems.length;
   const myCaseCount = activeSubmissionItems.filter(
@@ -525,9 +548,9 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
       ) ?? [];
     return item.assignedToId === session.user.id && staffDelegations.length > 0;
   }).length;
-  const studentProfileIds = submissions
+  const metricStudentProfileIds = Array.from(new Set(activeSubmissionItems
     .map((item) => item.student.studentProfile?.id)
-    .filter((id): id is string => Boolean(id));
+    .filter((id): id is string => Boolean(id))));
   const teamStaffIds = Array.from(new Set(teamMembers.map((member) => member.internalStaff.id)));
   const [
     draftContractsCount,
@@ -540,15 +563,15 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     pendingDocumentProfiles,
   ] = await Promise.all([
     needsApprovalData ? prisma.contract.count({
-      where: { studentProfileId: { in: studentProfileIds }, status: "DRAFT" },
+      where: { studentProfileId: { in: metricStudentProfileIds }, status: "DRAFT" },
     }) : Promise.resolve(0),
     needsApprovalData ? prisma.invoice.count({
-      where: { studentProfileId: { in: studentProfileIds }, status: "DRAFT" },
+      where: { studentProfileId: { in: metricStudentProfileIds }, status: "DRAFT" },
     }) : Promise.resolve(0),
     needsApprovalData ? prisma.studentDocument.count({
       where: {
         verificationStatus: "PENDING",
-        studentProfileId: { in: studentProfileIds },
+        studentProfileId: { in: metricStudentProfileIds },
       },
     }) : Promise.resolve(0),
     // teamTaskLoad + teamCaseLoad only needed for team tab workload display
@@ -569,36 +592,28 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
       _count: { _all: true },
     }) : Promise.resolve([]),
     needsApprovalData ? prisma.contract.findMany({
-      where: { studentProfileId: { in: studentProfileIds }, status: "DRAFT" },
+      where: { studentProfileId: { in: metricStudentProfileIds }, status: "DRAFT" },
       select: { studentProfileId: true },
     }) : Promise.resolve([]),
     needsApprovalData ? prisma.invoice.findMany({
-      where: { studentProfileId: { in: studentProfileIds }, status: "DRAFT" },
+      where: { studentProfileId: { in: metricStudentProfileIds }, status: "DRAFT" },
       select: { studentProfileId: true },
     }) : Promise.resolve([]),
     needsApprovalData ? prisma.studentDocument.findMany({
       where: {
         verificationStatus: "PENDING",
-        studentProfileId: { in: studentProfileIds },
+        studentProfileId: { in: metricStudentProfileIds },
       },
       select: { studentProfileId: true },
     }) : Promise.resolve([]),
   ]);
 
-  const visaExpiringSoon = submissions.filter((item) => {
-    const visaExpiryDate = item.student.studentProfile?.visaExpiryDate;
-    if (!visaExpiryDate) return false;
-    const days = daysUntilDate(visaExpiryDate, today);
-    return days >= 0 && days <= 90;
-  }).length;
   const locationQuery = inquiryLocation === "all" ? "" : `&inquiryLocation=${encodeURIComponent(inquiryLocation)}`;
   const exportUrl = `/api/submissions/export?search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}&country=${encodeURIComponent(country)}&course=${encodeURIComponent(course)}${locationQuery}`;
   const visaExpiringSoonItems = activeSubmissionItems.filter((item) => {
-    const visaExpiryDate = item.student.studentProfile?.visaExpiryDate;
-    if (!visaExpiryDate) return false;
-    const days = daysUntilDate(visaExpiryDate, today);
-    return days >= 0 && days <= 90;
+    return isVisaExpiringWithinDays(item.student.studentProfile?.visaExpiryDate, today, 90);
   });
+  const visaExpiringSoon = visaExpiringSoonItems.length;
   const autoFollowUpItems = activeSubmissionItems.filter((item) => {
     const visaExpiryDate = item.student.studentProfile?.visaExpiryDate;
     const nextFollowUpDate = item.student.studentProfile?.nextFollowUpDate;
@@ -659,7 +674,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     ...draftInvoiceProfiles.map((item) => item.studentProfileId),
     ...pendingDocumentProfiles.map((item) => item.studentProfileId),
   ]);
-  const filteredSubmissions = activeSubmissionItems.filter((submission) => {
+  const filteredSubmissions = visibleActiveSubmissionItems.filter((submission) => {
     if (stageFilter && submission.student.studentProfile?.caseStage !== stageFilter) {
       return false;
     }
@@ -706,14 +721,12 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
   const subAdminCaseListHrefBase = `/dashboard/sub-admin?tab=students&queue=${encodeURIComponent(queueFilter)}&stage=${encodeURIComponent(stageFilter)}&search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}&country=${encodeURIComponent(country)}&course=${encodeURIComponent(course)}`;
   const trendBuckets = buildWeeklyTrendBuckets(trendSubmissions);
   const avgReviewHours = calculateAverageReviewHours(trendSubmissions);
-  const conversionRate =
-    submissions.length > 0 ? Math.round((enrolledItems.length / submissions.length) * 100) : 0;
-  const pendingRatio = submissions.length > 0 ? Math.round((pendingItems.length / submissions.length) * 100) : 0;
+  // Manager overview ratios are case-based: both numerator and denominator use
+  // the same deduped latest active case population.
+  const { conversionRate, pendingRatio } = calculateActiveCaseRatios(activeSubmissionItems);
+  const pendingReviews = pendingItems.length;
   const highVisaRiskItems = activeSubmissionItems.filter((item) => {
-    const visaExpiryDate = item.student.studentProfile?.visaExpiryDate;
-    if (!visaExpiryDate) return false;
-    const days = daysUntilDate(visaExpiryDate, today);
-    return days >= 0 && days <= 30;
+    return isVisaExpiringWithinDays(item.student.studentProfile?.visaExpiryDate, today, 30);
   });
   const missingFollowUpItems = activeSubmissionItems.filter((item) => {
     const needsFollowUp = ["SUBMITTED", "UNDER_REVIEW", "DOCS_REQUESTED", "OFFER_RECEIVED"].includes(item.status);
@@ -1435,27 +1448,6 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
       {tab === "contributions" && <ContributionsTabSection />}
     </section>
   );
-}
-
-function dedupeLatestSubmissionPerStudent<T extends { studentId: string }>(items: T[]): T[] {
-  const seen = new Set<string>();
-  const deduped: T[] = [];
-  for (const item of items) {
-    if (seen.has(item.studentId)) continue;
-    seen.add(item.studentId);
-    deduped.push(item);
-  }
-  return deduped;
-}
-
-function daysUntilDate(targetDate: Date, now: Date) {
-  const current = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const target = new Date(
-    targetDate.getFullYear(),
-    targetDate.getMonth(),
-    targetDate.getDate(),
-  );
-  return Math.round((target.getTime() - current.getTime()) / (1000 * 60 * 60 * 24));
 }
 
 function calculateAverageReviewHours(
