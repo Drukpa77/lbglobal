@@ -42,6 +42,13 @@ import {
   buildSubmissionWhere,
   normalizeInquiryLocationFilter,
 } from "@/lib/submission-filters";
+import {
+  buildCountByAssignee,
+  daysUntilDate,
+  dedupeLatestSubmissionPerStudent,
+  isVisaExpiringWithinDays,
+  uniquePreviewLabels,
+} from "@/lib/dashboard-overview-metrics";
 import { formatSubmissionStatus } from "@/lib/submission";
 import { formatVisaStatus, formatYearsLeft } from "@/lib/student-tracking";
 import { formatSubmissionServiceSummary } from "@/lib/visa-services";
@@ -121,6 +128,7 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
     byIntake,
     recentSubmissions,
     filteredSubmissions,
+    overviewMetricSubmissions,
     adminUsers,
     subAdmins,
     funnelCounts,
@@ -128,7 +136,9 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
     internalStaffUsers,
     staffTeamMemberships,
     recentAssignments,
+    assignmentLoadCounts,
     openTaskCount,
+    openTaskPreviewRows,
     stagePipelineCounts,
     newInquiries,
     newInquiriesLast24hCount,
@@ -169,7 +179,8 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
       orderBy: { _count: { intendedIntake: "desc" } },
       take: 5,
     }) : Promise.resolve([]),
-    isStudentsTab ? prisma.questionnaireSubmission.findMany({
+    isOverviewTab || isStudentsTab ? prisma.questionnaireSubmission.findMany({
+      where: { student: { role: "USER", deletedAt: null } },
       include: {
         student: {
           include: {
@@ -204,6 +215,29 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
       },
       orderBy: { submittedAt: "desc" },
       take: 50,
+    }) : Promise.resolve([]),
+    isOverviewTab ? prisma.questionnaireSubmission.findMany({
+      where: filteredWhere,
+      include: {
+        student: {
+          include: {
+            studentProfile: {
+              include: {
+                assignments: {
+                  where: { isActive: true },
+                  orderBy: { createdAt: "desc" },
+                  select: {
+                    assignedToId: true,
+                    assignedTo: { select: { name: true, email: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+        assignedSubAdmin: true,
+      },
+      orderBy: { submittedAt: "desc" },
     }) : Promise.resolve([]),
     isStaffTab ? prisma.user.findMany({
       where: { role: "ADMIN", deletedAt: null },
@@ -247,9 +281,28 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
       orderBy: { createdAt: "desc" },
       take: 8,
     }) : Promise.resolve([]),
+    isOverviewTab ? prisma.studentAssignment.groupBy({
+      by: ["assignedToId"],
+      where: {
+        isActive: true,
+        assignedTo: { role: "INTERNAL_STAFF", deletedAt: null },
+      },
+      _count: { _all: true },
+    }) : Promise.resolve([]),
     isOverviewTab ? prisma.task.count({
       where: { status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] } },
     }) : Promise.resolve(0),
+    isOverviewTab ? prisma.task.findMany({
+      where: { status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] } },
+      include: {
+        assignee: { select: { name: true, email: true } },
+        studentProfile: {
+          include: { user: { select: { name: true, email: true } } },
+        },
+      },
+      orderBy: [{ dueDate: "asc" }, { createdAt: "desc" }],
+      take: 2,
+    }) : Promise.resolve([]),
     isOverviewTab ? prisma.studentProfile.groupBy({
       by: ["caseStage"],
       where: { user: { deletedAt: null } },
@@ -298,19 +351,54 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
   }));
   const stageTotal = stageCounts.reduce((sum, item) => sum + item.count, 0);
 
-  const filteredStudentProfileIds = filteredSubmissions
-    .map((item) => item.student.studentProfile?.id)
-    .filter((id): id is string => Boolean(id));
-  const [draftContractsCount, draftInvoicesCount, pendingDocumentsCount] = await Promise.all([
-    needsFilteredSubmissions ? prisma.contract.count({
-      where: { studentProfileId: { in: filteredStudentProfileIds }, status: "DRAFT" },
+  const overviewMetricSource = isOverviewTab ? overviewMetricSubmissions : filteredSubmissions;
+  const latestSubmissionPerStudent = dedupeLatestSubmissionPerStudent(overviewMetricSource);
+  const metricStudentProfileIds = Array.from(new Set(
+    overviewMetricSource
+      .map((item) => item.student.studentProfile?.id)
+      .filter((id): id is string => Boolean(id)),
+  ));
+  const [
+    draftContractsCount,
+    draftInvoicesCount,
+    pendingDocumentsCount,
+    draftContractPreviewRows,
+    draftInvoicePreviewRows,
+    pendingDocumentPreviewRows,
+  ] = await Promise.all([
+    isOverviewTab ? prisma.contract.count({
+      where: { studentProfileId: { in: metricStudentProfileIds }, status: "DRAFT" },
     }) : Promise.resolve(0),
-    needsFilteredSubmissions ? prisma.invoice.count({
-      where: { studentProfileId: { in: filteredStudentProfileIds }, status: "DRAFT" },
+    isOverviewTab ? prisma.invoice.count({
+      where: { studentProfileId: { in: metricStudentProfileIds }, status: "DRAFT" },
     }) : Promise.resolve(0),
-    needsFilteredSubmissions ? prisma.studentDocument.count({
-      where: { studentProfileId: { in: filteredStudentProfileIds }, verificationStatus: "PENDING" },
+    isOverviewTab ? prisma.studentDocument.count({
+      where: { studentProfileId: { in: metricStudentProfileIds }, verificationStatus: "PENDING" },
     }) : Promise.resolve(0),
+    isOverviewTab ? prisma.contract.findMany({
+      where: { studentProfileId: { in: metricStudentProfileIds }, status: "DRAFT" },
+      select: {
+        studentProfile: { select: { user: { select: { name: true, email: true } } } },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+    }) : Promise.resolve([]),
+    isOverviewTab ? prisma.invoice.findMany({
+      where: { studentProfileId: { in: metricStudentProfileIds }, status: "DRAFT" },
+      select: {
+        studentProfile: { select: { user: { select: { name: true, email: true } } } },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+    }) : Promise.resolve([]),
+    isOverviewTab ? prisma.studentDocument.findMany({
+      where: { studentProfileId: { in: metricStudentProfileIds }, verificationStatus: "PENDING" },
+      select: {
+        studentProfile: { select: { user: { select: { name: true, email: true } } } },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+    }) : Promise.resolve([]),
   ]);
 
   const offerRate =
@@ -344,12 +432,8 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
       : `/dashboard/admin?tab=students&inquiryLocation=${encodeURIComponent(inquiryLocation)}`;
   const adminFilteredSubmissionsHrefBase = `/dashboard/admin?tab=students&search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}&country=${encodeURIComponent(country)}&course=${encodeURIComponent(course)}`;
   const today = new Date();
-  const latestSubmissionPerStudent = dedupeLatestSubmissionPerStudent(filteredSubmissions);
   const visaExpiringSoonItems = latestSubmissionPerStudent.filter((item) => {
-    const visaExpiryDate = item.student.studentProfile?.visaExpiryDate;
-    if (!visaExpiryDate) return false;
-    const days = daysUntilDate(visaExpiryDate, today);
-    return days >= 0 && days <= 90;
+    return isVisaExpiringWithinDays(item.student.studentProfile?.visaExpiryDate, today, 90);
   });
   const autoFollowUpItems = latestSubmissionPerStudent.filter((item) => {
     const visaExpiryDate = item.student.studentProfile?.visaExpiryDate;
@@ -367,12 +451,7 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
   const visaGrantedItems = latestSubmissionPerStudent.filter((item) => item.status === "VISA_GRANTED");
   const enrolledItems = latestSubmissionPerStudent.filter((item) => item.status === "ENROLLED");
   const rejectedItems = latestSubmissionPerStudent.filter((item) => item.status === "REJECTED");
-  const visaExpiringSoon = filteredSubmissions.filter((item) => {
-    const visaExpiryDate = item.student.studentProfile?.visaExpiryDate;
-    if (!visaExpiryDate) return false;
-    const days = daysUntilDate(visaExpiryDate, today);
-    return days >= 0 && days <= 90;
-  }).length;
+  const visaExpiringSoon = visaExpiringSoonItems.length;
   const hearFromCounts = new Map<string, number>();
   for (const submission of filteredSubmissions) {
     const source = extractHearFromAnswer(submission.answers);
@@ -386,24 +465,19 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
   const managerByInternalStaffId = new Map(
     staffTeamMemberships.map((membership) => [membership.internalStaffId, membership.manager]),
   );
-  const assignmentCountByStaff = new Map<string, number>();
-  for (const assignment of recentAssignments) {
-    assignmentCountByStaff.set(
-      assignment.assignedToId,
-      (assignmentCountByStaff.get(assignment.assignedToId) ?? 0) + 1,
-    );
-  }
+  const assignmentCountByStaff = buildCountByAssignee(assignmentLoadCounts);
   const overloadedStaffCount = internalStaffUsers.filter(
     (staff) => (assignmentCountByStaff.get(staff.id) ?? 0) >= 3,
   ).length;
   const pendingApprovalsCount = draftContractsCount + draftInvoicesCount + pendingDocumentsCount;
   const unresolvedCaseCount = pendingItems.length + offerInProgressItems.length;
+  const healthDenominator = latestSubmissionPerStudent.length;
   const quickHealthScore =
-    submissionsCount === 0
+    healthDenominator === 0
       ? 100
       : Math.max(
           0,
-          100 - Math.round(((pendingApprovalsCount + visaExpiringSoon + unresolvedCaseCount) / submissionsCount) * 100),
+          100 - Math.round(((pendingApprovalsCount + visaExpiringSoon + unresolvedCaseCount) / healthDenominator) * 100),
         );
   const totalStudentsPreview = recentSubmissions
     .slice(0, 2)
@@ -417,27 +491,28 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
   const internalStaffPreview = internalStaffUsers
     .slice(0, 2)
     .map((staff) => staff.name ?? staff.email);
-  const openTasksPreview = recentAssignments
-    .slice(0, 2)
-    .map((assignment) => assignment.studentProfile.user.name ?? assignment.studentProfile.user.email);
+  const openTasksPreview = openTaskPreviewRows.map((task) => {
+    const studentName = task.studentProfile.user.name ?? task.studentProfile.user.email;
+    const assigneeName = task.assignee.name ?? task.assignee.email;
+    return `${task.title} - ${studentName} (${assigneeName})`;
+  });
   const visaExpiringPreview = visaExpiringSoonItems
     .slice(0, 2)
     .map((item) => getStudentDisplayName(item.student, item.answers));
-  const pendingApprovalsPreview = pendingItems
-    .slice(0, 2)
-    .map((item) => getStudentDisplayName(item.student, item.answers));
-  const draftContractsPreview = filteredSubmissions
-    .filter((item) =>
-      item.student.studentProfile ? filteredStudentProfileIds.includes(item.student.studentProfile.id) : false,
-    )
-    .slice(0, 2)
-    .map((item) => getStudentDisplayName(item.student, item.answers));
-  const draftInvoicesPreview = offerInProgressItems
-    .slice(0, 2)
-    .map((item) => getStudentDisplayName(item.student, item.answers));
-  const pendingDocsPreview = pendingItems
-    .slice(0, 2)
-    .map((item) => getStudentDisplayName(item.student, item.answers));
+  const approvalPreviewLabel = (item: {
+    studentProfile: { user: { name: string | null; email: string } };
+  }) => item.studentProfile.user.name ?? item.studentProfile.user.email;
+  const draftContractsPreview = uniquePreviewLabels(draftContractPreviewRows, approvalPreviewLabel);
+  const draftInvoicesPreview = uniquePreviewLabels(draftInvoicePreviewRows, approvalPreviewLabel);
+  const pendingDocsPreview = uniquePreviewLabels(pendingDocumentPreviewRows, approvalPreviewLabel);
+  const pendingApprovalsPreview = uniquePreviewLabels(
+    [
+      ...draftContractPreviewRows,
+      ...draftInvoicePreviewRows,
+      ...pendingDocumentPreviewRows,
+    ],
+    approvalPreviewLabel,
+  );
   const overloadedStaffPreview = internalStaffUsers
     .filter((staff) => (assignmentCountByStaff.get(staff.id) ?? 0) >= 3)
     .slice(0, 2)
@@ -1378,27 +1453,6 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
       {tab === "contributions" && <ContributionsTabSection />}
     </section>
   );
-}
-
-function dedupeLatestSubmissionPerStudent<T extends { studentId: string }>(items: T[]): T[] {
-  const seen = new Set<string>();
-  const deduped: T[] = [];
-  for (const item of items) {
-    if (seen.has(item.studentId)) continue;
-    seen.add(item.studentId);
-    deduped.push(item);
-  }
-  return deduped;
-}
-
-function daysUntilDate(targetDate: Date, now: Date) {
-  const current = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const target = new Date(
-    targetDate.getFullYear(),
-    targetDate.getMonth(),
-    targetDate.getDate(),
-  );
-  return Math.round((target.getTime() - current.getTime()) / (1000 * 60 * 60 * 24));
 }
 
 function CategoryCard({
