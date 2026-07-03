@@ -84,7 +84,7 @@ export default async function CompanySettingsPage(props: { searchParams: SearchP
                 defaultValue={settings.contactDetails ?? ""}
                 rows={2}
                 className={inputCls}
-                placeholder={`+61 0424 919 833\nstudent@lbglobal.com`}
+                placeholder={`+61 0424 919 833\nstudent@lbglobal.com.au`}
               />
             </Field>
           </div>

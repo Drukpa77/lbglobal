@@ -158,7 +158,7 @@ export const offices = [
     details:
       "Bhutan office offering free assessment, course-country counselling, document checks, SOP support, and visa application guidance.",
     phones: ["+975 7778 1399", "+975 77 72 45 39"],
-    email: "student@lbglobal.com",
+    email: "student@lbglobal.com.au",
     hours: "Mon–Fri, 9:00 AM – 5:00 PM (Bhutan Time)",
   },
   {
@@ -168,7 +168,7 @@ export const offices = [
     details:
       "Perth-based team for enrolment follow-up, provider liaison, and onshore student support in Western Australia.",
     phones: ["0451 106 077", "0424 919 833"],
-    email: "student@lbglobal.com",
+    email: "student@lbglobal.com.au",
     hours: "Mon–Fri, 9:00 AM – 5:00 PM (AWST)",
   },
 ] as const;

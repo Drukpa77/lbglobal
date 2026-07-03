@@ -149,10 +149,10 @@ export function FooterSection() {
                 {WHATSAPP_MOBILE_DISPLAY} (WhatsApp)
               </a>
               <a
-                href="mailto:student@lbglobal.com"
+                href="mailto:student@lbglobal.com.au"
                 className="block text-xs text-rose-400 hover:text-rose-300"
               >
-                student@lbglobal.com
+                student@lbglobal.com.au
               </a>
             </div>
           </div>

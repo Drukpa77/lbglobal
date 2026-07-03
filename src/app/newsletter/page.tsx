@@ -285,7 +285,7 @@ function Subscribe() {
             Get personalised guidance
           </Link>
           <a
-            href="mailto:student@lbglobal.com?subject=Subscribe%20to%20newsletter"
+            href="mailto:student@lbglobal.com.au?subject=Subscribe%20to%20newsletter"
             className="inline-flex items-center justify-center rounded-full border border-white/30 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-white/10"
           >
             Subscribe via email
