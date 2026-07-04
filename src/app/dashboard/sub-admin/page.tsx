@@ -9,7 +9,6 @@ import { CaseReferenceLabel } from "@/components/case-reference-label";
 import { CaseStageFunnelDetail } from "@/components/case-stage-funnel-detail";
 import { ContributionsTabSection } from "@/components/contributions-tab-panel";
 import { DeletedClientsTab } from "@/components/deleted-clients-tab";
-import { DashboardProfileHeader } from "@/components/dashboard-profile-header";
 import { DashboardTabBar } from "@/components/dashboard-tab-bar";
 import {
   restoreDeletedClientAction,
@@ -748,12 +747,6 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
     .map((item) => item.student.name ?? item.student.email);
   return (
     <section className="space-y-6">
-      <DashboardProfileHeader
-        name={session.user.name}
-        email={session.user.email ?? ""}
-        roleLabel={isAdminViewer ? "Administrator" : "Agent"}
-      />
-
       <DashboardTabBar
         tabs={[
           { id: "overview", label: "Overview" },
@@ -765,6 +758,11 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
           { id: "deleted-clients", label: "Deleted Clients", count: deletedClientsCount },
         ]}
         activeTab={tab}
+        profile={{
+          name: session.user.name,
+          email: session.user.email ?? "",
+          roleLabel: isAdminViewer ? "Administrator" : "Agent",
+        }}
       />
 
       <Suspense fallback={null}>
@@ -793,7 +791,7 @@ export default async function SubAdminDashboardPage(props: { searchParams: Searc
               <p className="mt-1 text-xs text-gray-600">High-priority cases needing intervention.</p>
               <div className="mt-3 grid gap-3 sm:grid-cols-3">
                 <RiskBucket
-                  title="Visa Expiring <=30d"
+                  title="Visa Expiring in 30 Days"
                   items={highVisaRiskItems}
                   emptyLabel="No critical visa expiries."
                 />
@@ -1465,7 +1463,7 @@ function calculateAverageReviewHours(
 function buildWeeklyTrendBuckets(
   items: Array<{ status: SubmissionStatus; submittedAt: Date; updatedAt: Date }>,
 ) {
-  const labels = ["Wk-4", "Wk-3", "Wk-2", "Wk-1"];
+  const labels = ["Week-4", "Week-3", "Week-2", "Week-1"];
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const weekMs = 1000 * 60 * 60 * 24 * 7;

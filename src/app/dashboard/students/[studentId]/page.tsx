@@ -18,6 +18,14 @@ import { redirect } from "next/navigation";
 import { after } from "next/server";
 import type { Session } from "next-auth";
 import { Suspense } from "react";
+import {
+  ClipboardList,
+  FileText,
+  History,
+  ReceiptText,
+  Trophy,
+  UserRound,
+} from "lucide-react";
 import { z } from "zod";
 
 import { Breadcrumbs } from "@/components/breadcrumbs";
@@ -38,6 +46,7 @@ import { getCompanySettings } from "@/lib/company-settings";
 import { revalidateContributionsCache } from "@/lib/contributions-cache";
 import { getContributions } from "@/lib/contributions";
 import { prisma } from "@/lib/prisma";
+import { cn } from "@/lib/utils";
 import {
   enqueueStoredFileCleanup,
   processStoredFileCleanupQueue,
@@ -107,6 +116,15 @@ type SearchParams = Promise<{
   taskError?: string;
   uploadError?: string;
 }>;
+
+const studentProfileTabs = [
+  { id: "overview", label: "Overview & Notes", icon: FileText },
+  { id: "profile", label: "Profile & Assignment", icon: UserRound },
+  { id: "tasks", label: "Tasks & Documents", icon: ClipboardList },
+  { id: "financials", label: "Contracts & Invoices", icon: ReceiptText },
+  { id: "audit", label: "Audit Log", icon: History },
+  { id: "contributions", label: "Contributions", icon: Trophy },
+] as const;
 
 const studentAccountSchema = z.object({
   fullName: z.string().trim().min(2).max(100),
@@ -628,28 +646,72 @@ export default async function StudentProfileManagementPage(props: { params: Para
         </div>
       </div>
 
-      <nav className="sticky top-0 z-10 -mx-6 -mt-2 mb-6 flex flex-wrap gap-2 border-b border-slate-200 bg-white/95 px-6 py-3 backdrop-blur-sm">
-        {[
-          { id: "overview", label: "Overview & Notes" },
-          { id: "profile", label: "Profile & Assignment" },
-          { id: "tasks", label: "Tasks & Documents" },
-          { id: "financials", label: "Contracts & Invoices" },
-          { id: "audit", label: "Audit Log" },
-          { id: "contributions", label: "Contributions" },
-        ].map((tab) => (
-          <Link
-            key={tab.id}
-            href={`${tabBase}?tab=${tab.id}`}
-            className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
-              activeTab === tab.id
-                ? "bg-slate-900 text-white"
-                : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-            }`}
-          >
-            {tab.label}
-          </Link>
-        ))}
+      <nav
+        className="student-profile-mobile-tabs sticky top-0 z-10 -mx-4 -mt-2 flex gap-2 overflow-x-auto border-y border-slate-200 bg-slate-100/95 px-4 py-3 backdrop-blur-sm lg:hidden"
+        aria-label="Client profile sections"
+      >
+        {studentProfileTabs.map((tab) => {
+          const Icon = tab.icon;
+          const isActive = activeTab === tab.id;
+
+          return (
+            <Link
+              key={tab.id}
+              href={`${tabBase}?tab=${tab.id}`}
+              aria-current={isActive ? "page" : undefined}
+              className={cn(
+                "inline-flex shrink-0 items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition",
+                isActive
+                  ? "bg-slate-900 text-white"
+                  : "text-slate-600 hover:bg-slate-200/70 hover:text-slate-900",
+              )}
+            >
+              <Icon aria-hidden="true" />
+              {tab.label}
+            </Link>
+          );
+        })}
       </nav>
+
+      <div className="grid gap-6 lg:grid-cols-[16rem_minmax(0,1fr)] lg:items-start">
+        <aside className="hidden lg:block">
+          <nav
+            className="sticky top-4 flex max-h-[calc(100vh-7rem)] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white/95 shadow-sm"
+            aria-label="Client profile sections"
+          >
+            <div className="border-b border-slate-200 px-4 py-3">
+              <p className="text-sm font-semibold text-slate-900">Client profile</p>
+              <p className="mt-0.5 truncate text-xs text-slate-500">
+                {student.name ?? student.email}
+              </p>
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2">
+              {studentProfileTabs.map((tab) => {
+                const Icon = tab.icon;
+                const isActive = activeTab === tab.id;
+
+                return (
+                  <Link
+                    key={tab.id}
+                    href={`${tabBase}?tab=${tab.id}`}
+                    aria-current={isActive ? "page" : undefined}
+                    className={cn(
+                      "flex min-h-11 items-center gap-3 rounded-lg px-3 py-2 text-sm font-semibold transition",
+                      isActive
+                        ? "bg-slate-900 text-white shadow-sm"
+                        : "text-slate-600 hover:bg-white/80 hover:text-slate-900",
+                    )}
+                  >
+                    <Icon aria-hidden="true" />
+                    <span className="min-w-0 flex-1 truncate">{tab.label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          </nav>
+        </aside>
+
+        <div className="min-w-0 space-y-8">
       <Suspense fallback={null}>
         <VisaStatusSavedToast />
       </Suspense>
@@ -1886,6 +1948,8 @@ export default async function StudentProfileManagementPage(props: { params: Para
           </section>
         )
       )}
+        </div>
+      </div>
     </section>
   );
 }

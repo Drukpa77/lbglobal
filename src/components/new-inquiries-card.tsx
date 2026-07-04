@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { LocationFilterButtons } from "@/components/location-filter-buttons";
+import { NewInquiriesCarousel } from "@/components/new-inquiries-carousel";
 import type { InquiryLocationFilter } from "@/lib/submission-filters";
 
 export type NewInquiry = {
@@ -56,7 +57,7 @@ export function NewInquiriesCard({
       </div>
 
       {total === 0 ? null : (
-        <ul className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+        <NewInquiriesCarousel>
           {inquiries.map((inquiry) => {
             const displayName = inquiry.student.name?.trim() || inquiry.student.email;
             const location = [inquiry.sourceCity, inquiry.sourceCountry]
@@ -66,7 +67,7 @@ export function NewInquiriesCard({
             return (
               <li
                 key={inquiry.id}
-                className="rounded-md border border-emerald-200 bg-white p-2.5 shadow-sm"
+                className="min-w-[min(82vw,20rem)] snap-start rounded-md border border-emerald-200 bg-white p-2.5 shadow-sm sm:min-w-[18rem] md:min-w-[22rem] lg:min-w-[24rem] xl:min-w-[26rem]"
               >
                 <p className="text-sm font-semibold text-slate-900">{displayName}</p>
                 <p className="mt-0.5 text-xs text-slate-600">
@@ -95,7 +96,7 @@ export function NewInquiriesCard({
               </li>
             );
           })}
-        </ul>
+        </NewInquiriesCarousel>
       )}
     </section>
   );
