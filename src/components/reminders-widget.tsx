@@ -1,22 +1,5 @@
-import Link from "next/link";
-
-import type { Reminder, ReminderSeverity, ReminderType } from "@/lib/reminders";
-
-const severityStyles: Record<ReminderSeverity, string> = {
-  info: "border-l-blue-500 bg-blue-50/50",
-  warning: "border-l-amber-500 bg-amber-50/50",
-  urgent: "border-l-red-500 bg-red-50/50",
-};
-
-const typeLabels: Record<ReminderType, string> = {
-  followup: "Follow-up",
-  visa_expiry: "Visa",
-  task_due: "Task",
-  contract_reminder: "Contract",
-  invoice_reminder: "Invoice",
-  stage_stalled: "Stage Stalled",
-  stage_info: "Stage",
-};
+import { RemindersCarousel } from "@/components/reminders-carousel";
+import type { Reminder } from "@/lib/reminders";
 
 type Props = {
   reminders: Reminder[];
@@ -26,50 +9,25 @@ type Props = {
 
 export function RemindersWidget({ reminders, title = "Reminders", maxItems = 10 }: Props) {
   const displayed = reminders.slice(0, maxItems);
-  const hasMore = reminders.length > maxItems;
 
   if (reminders.length === 0) {
     return null;
   }
 
   return (
-    <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
-      <p className="mt-0.5 text-xs text-slate-500">
-        {reminders.length} reminder{reminders.length !== 1 ? "s" : ""} requiring attention
-      </p>
-      <ul className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-        {displayed.map((reminder) => (
-          <li
-            key={reminder.id}
-            className={`rounded-lg border-l-4 p-3 ${severityStyles[reminder.severity]} min-h-28`}
-          >
-            <Link
-              href={reminder.link}
-              className="block h-full transition hover:opacity-90"
-            >
-              <div className="flex h-full flex-col justify-between gap-2">
-                <div className="min-w-0 flex-1">
-                  <span className="inline-block rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-700">
-                    {typeLabels[reminder.type]}
-                  </span>
-                  <p className="mt-1 text-sm font-medium text-slate-900">{reminder.title}</p>
-                  <p className="mt-0.5 text-xs text-slate-600 line-clamp-2">{reminder.description}</p>
-                </div>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="shrink-0 text-xs text-slate-500">{reminder.date.toLocaleDateString()}</span>
-                  <span className="text-[11px] font-medium text-blue-700">Open</span>
-                </div>
-              </div>
-            </Link>
-          </li>
-        ))}
-      </ul>
-      {hasMore && (
-        <p className="mt-2 text-xs text-slate-500">
-          +{reminders.length - maxItems} more reminder{reminders.length - maxItems !== 1 ? "s" : ""}
-        </p>
-      )}
-    </section>
+    <RemindersCarousel
+      reminders={displayed.map((reminder) => ({
+        id: reminder.id,
+        type: reminder.type,
+        severity: reminder.severity,
+        title: reminder.title,
+        description: reminder.description,
+        link: reminder.link,
+        dateLabel: reminder.date.toLocaleDateString(),
+      }))}
+      title={title}
+      totalCount={reminders.length}
+      hiddenCount={Math.max(reminders.length - maxItems, 0)}
+    />
   );
 }

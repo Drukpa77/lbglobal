@@ -7,7 +7,6 @@ import { auth } from "@/auth";
 import { CaseReferenceLabel } from "@/components/case-reference-label";
 import { ContributionsTabSection } from "@/components/contributions-tab-panel";
 import { DeletedClientsTab } from "@/components/deleted-clients-tab";
-import { DashboardProfileHeader } from "@/components/dashboard-profile-header";
 import { DashboardTabBar } from "@/components/dashboard-tab-bar";
 import { LocationFilterButtons } from "@/components/location-filter-buttons";
 import {
@@ -398,12 +397,6 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
 
   return (
     <section className="space-y-6 text-gray-900">
-      <DashboardProfileHeader
-        name={session.user.name}
-        email={session.user.email ?? ""}
-        roleLabel={isAdmin ? "Administrator" : "Case manager"}
-      />
-
       <DashboardTabBar
         tabs={[
           { id: "overview", label: "Overview" },
@@ -415,6 +408,11 @@ export default async function InternalStaffDashboardPage(props: { searchParams: 
           { id: "deleted-clients", label: "Deleted Clients", count: deletedClientsCount },
         ]}
         activeTab={tab}
+        profile={{
+          name: session.user.name,
+          email: session.user.email ?? "",
+          roleLabel: isAdmin ? "Administrator" : "Case manager",
+        }}
       />
 
       {/* ── OVERVIEW TAB ───────────────────────────────────────── */}

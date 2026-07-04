@@ -1,10 +1,6 @@
 import type { CaseStage, VisaStatus } from "@prisma/client";
-import Link from "next/link";
 
-import { CaseReferenceLabel } from "@/components/case-reference-label";
-import { caseStageLabel, caseStageTone } from "@/lib/case-stage";
-import { formatVisaStatus } from "@/lib/student-tracking";
-import { formatVisaServiceDisplay } from "@/lib/visa-services";
+import { VisaOutcomesCarousel } from "@/components/visa-outcomes-carousel";
 
 export type VisaOutcomeItem = {
   id: string;
@@ -47,44 +43,14 @@ export function VisaOutcomesPanel({ outcomes }: { outcomes: VisaOutcomeItem[] })
       <section className="rounded-lg border bg-white p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold">Outcome Cases</h2>
-          <p className="text-xs text-gray-600">{outcomes.length} result{outcomes.length === 1 ? "" : "s"}</p>
+          <p className="text-xs text-gray-600">
+            {outcomes.length} result{outcomes.length === 1 ? "" : "s"}
+          </p>
         </div>
         {outcomes.length === 0 ? (
           <p className="mt-3 text-sm text-gray-600">No visa outcomes yet.</p>
         ) : (
-          <ul className="mt-3 grid gap-3 lg:grid-cols-2">
-            {outcomes.map((item) => (
-              <li key={item.id} className={`rounded-md border p-3 ${caseStageTone(item.caseStage)}`}>
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-semibold">
-                        {item.studentProfile.user.name ?? item.studentProfile.user.email}
-                      </p>
-                      <CaseReferenceLabel caseReference={item.caseReference} />
-                    </div>
-                    <p className="mt-1 text-xs opacity-80">
-                      {formatVisaServiceDisplay({
-                        visaServiceType: item.visaServiceType,
-                        otherServiceDescription: item.otherServiceDescription,
-                      })}
-                    </p>
-                    <p className="mt-1 text-xs opacity-80">
-                      {caseStageLabel(item.caseStage)} · {formatVisaStatus(item.visaStatus)}
-                      {item.completedAt ? ` · Outcome ${item.completedAt.toLocaleDateString()}` : ""}
-                      {item.visaExpiryDate ? ` · Visa expiry ${item.visaExpiryDate.toLocaleDateString()}` : ""}
-                    </p>
-                  </div>
-                  <Link
-                    href={`/dashboard/students/${item.studentProfile.user.id}`}
-                    className="rounded-md border border-current/20 bg-white/60 px-2 py-1 text-xs font-medium"
-                  >
-                    Open Client
-                  </Link>
-                </div>
-              </li>
-            ))}
-          </ul>
+          <VisaOutcomesCarousel outcomes={outcomes} />
         )}
       </section>
     </div>

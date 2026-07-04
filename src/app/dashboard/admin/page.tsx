@@ -538,6 +538,11 @@ export default async function AdminDashboardPage(props: { searchParams: SearchPa
           { id: "deleted-clients", label: "Deleted Clients", count: deletedClientsCount },
         ]}
         activeTab={tab}
+        profile={{
+          name: session.user.name,
+          email: session.user.email ?? "",
+          roleLabel: "Administrator",
+        }}
       />
 
       <Suspense fallback={null}>
