@@ -1,4 +1,3 @@
-import Image from "next/image";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -32,21 +31,7 @@ export default async function DashboardLayout({
         <div className="dashboard-shell flex h-screen overflow-hidden bg-slate-100">
           <div className="flex h-screen min-w-0 flex-1 flex-col">
             <header className="relative z-40 shrink-0 border-b border-slate-200/80 bg-white/85 backdrop-blur-xl">
-              <div className="dashboard-topbar-inner mx-auto flex max-w-7xl items-center justify-between gap-4 px-6 py-4">
-                <div className="min-w-0 flex items-center gap-3">
-                  <Link href="/" className="flex min-w-0 items-center gap-3">
-                    <Image
-                      src="/loogo.png"
-                      alt="L&B Global logo"
-                      width={40}
-                      height={40}
-                      className="h-10 w-10 rounded-xl border border-slate-200 bg-white p-1 object-contain shadow-sm"
-                    />
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-900">L&B Global</p>
-                    </div>
-                  </Link>
-                </div>
+              <div className="dashboard-topbar-inner mx-auto flex max-w-7xl items-center justify-end gap-4 px-6 py-4">
                 <div className="dashboard-topbar-actions flex items-center gap-2">
                   {showChat && (
                     <div className="hidden lg:block">
@@ -86,22 +71,7 @@ export default async function DashboardLayout({
       ) : (
         <>
           <header className="relative z-40 border-b border-slate-200/80 bg-white/85 backdrop-blur-xl">
-            <div className="dashboard-topbar-inner mx-auto flex max-w-7xl items-center justify-between gap-4 px-6 py-4">
-              <div className="min-w-0 flex items-center gap-3">
-                <Link href="/" className="flex min-w-0 items-center gap-3">
-                  <Image
-                    src="/loogo.png"
-                    alt="L&B Global logo"
-                    width={40}
-                    height={40}
-                    className="h-10 w-10 rounded-xl border border-slate-200 bg-white p-1 object-contain shadow-sm"
-                  />
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-slate-900">L&B Global</p>
-                  </div>
-                </Link>
-              </div>
-
+            <div className="dashboard-topbar-inner mx-auto flex max-w-7xl items-center justify-end gap-4 px-6 py-4">
               <div className="dashboard-topbar-actions flex items-center gap-2">
                 {showChat && (
                   <div className="hidden lg:block">

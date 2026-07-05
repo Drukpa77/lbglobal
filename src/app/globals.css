@@ -132,9 +132,10 @@ input[type="reset"]:disabled {
 }
 
 .dashboard-sidebar-root {
-  margin-bottom: 1.25rem;
+  margin-bottom: 1rem;
 }
 
+.dashboard-main:has(.student-profile-shell),
 .dashboard-main:has(.dashboard-sidebar-root) {
   max-width: none;
 }
@@ -144,26 +145,36 @@ input[type="reset"]:disabled {
     display: none !important;
   }
 
+  .dashboard-main:has(.student-profile-shell),
   .dashboard-main:has(.dashboard-sidebar-root) {
     padding-left: 18.5rem !important;
   }
 }
 
-.dashboard-sidebar {
+.student-profile-sidebar {
   position: fixed;
-  top: 5.25rem;
-  bottom: 1rem;
-  left: 1rem;
-  z-index: 30;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 45;
   width: 16rem;
   overflow: hidden;
-  border: 1px solid rgba(226, 232, 240, 0.9);
-  border-radius: 1rem;
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 20px 45px rgba(15, 23, 42, 0.12);
+  background: rgba(255, 255, 255, 0.86);
+  backdrop-filter: blur(16px);
+}
+
+.dashboard-sidebar {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 45;
+  width: 16rem;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.86);
   backdrop-filter: blur(16px);
   transition:
-    box-shadow 180ms ease;
+    background 180ms ease;
 }
 
 .dashboard-sidebar-header,
@@ -176,11 +187,12 @@ input[type="reset"]:disabled {
 }
 
 .dashboard-sidebar-header {
-  border-bottom: 1px solid rgba(226, 232, 240, 0.85);
+  height: 4.5625rem;
+  padding-block: 0.625rem;
 }
 
 .dashboard-sidebar-footer {
-  border-top: 1px solid rgba(226, 232, 240, 0.85);
+  border-top: 1px solid rgba(226, 232, 240, 0.55);
 }
 
 .dashboard-sidebar-title,

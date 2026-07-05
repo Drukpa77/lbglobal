@@ -7,6 +7,7 @@ type DeleteWithConfirmProps = {
   confirmMessage?: string;
   buttonLabel?: string;
   buttonClassName?: string;
+  formClassName?: string;
   children?: React.ReactNode;
 };
 
@@ -15,6 +16,7 @@ export function DeleteWithConfirm({
   confirmMessage = "Are you sure? This action cannot be undone.",
   buttonLabel = "Delete",
   buttonClassName,
+  formClassName = "inline",
   children,
 }: DeleteWithConfirmProps) {
   const formRef = useRef<HTMLFormElement>(null);
@@ -26,7 +28,7 @@ export function DeleteWithConfirm({
       <form
         ref={formRef}
         action={formAction}
-        className="inline"
+        className={formClassName}
         data-confirm-submit="true"
         onSubmit={(e) => {
           if (skipConfirm.current) return;

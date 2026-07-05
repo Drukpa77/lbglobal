@@ -19,6 +19,7 @@ import { after } from "next/server";
 import type { Session } from "next-auth";
 import { Suspense } from "react";
 import {
+  ArrowLeft,
   ClipboardList,
   FileText,
   History,
@@ -28,9 +29,9 @@ import {
 } from "lucide-react";
 import { z } from "zod";
 
-import { Breadcrumbs } from "@/components/breadcrumbs";
 import { ContributionLeaderboard } from "@/components/contribution-leaderboard";
 import { DeleteWithConfirm } from "@/components/delete-with-confirm";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { VisaStatusSavedToast } from "@/components/visa-status-saved-toast";
 import { StudentNoteItem } from "@/components/student-note-item";
 import { ProfileVisaServiceFields } from "@/components/profile-visa-service-fields";
@@ -125,6 +126,21 @@ const studentProfileTabs = [
   { id: "audit", label: "Audit Log", icon: History },
   { id: "contributions", label: "Contributions", icon: Trophy },
 ] as const;
+
+function getInitials(value: string) {
+  const source = value.includes("@") ? value.split("@")[0] : value;
+  const parts = source
+    .replace(/[^a-zA-Z0-9\s._-]/g, " ")
+    .split(/[\s._-]+/)
+    .filter(Boolean);
+
+  if (parts.length === 0) return "CL";
+
+  return parts
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
+}
 
 const studentAccountSchema = z.object({
   fullName: z.string().trim().min(2).max(100),
@@ -606,48 +622,51 @@ export default async function StudentProfileManagementPage(props: { params: Para
     session.user.role === "ADMIN" ||
     session.user.role === "SUB_ADMIN" ||
     session.user.role === "INTERNAL_STAFF";
+  const clientDisplayName = student.name ?? student.email;
+  const caseReferenceLabel = profile?.caseReference ?? "Not assigned";
+  const caseReferenceText = `Case Reference: ${caseReferenceLabel}`;
+  const clientInitials = getInitials(clientDisplayName);
 
   return (
-    <section className="space-y-8 text-slate-900">
-      <Breadcrumbs
-        items={[
-          { label: "My Dashboard", href: backLink },
-          { label: student.name ?? student.email },
-        ]}
-      />
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-            {student.name ?? student.email} — Client profile
-          </h1>
-          {profile?.caseReference ? (
-            <p className="mt-1 text-sm font-medium text-slate-500">
-              Case reference: {profile.caseReference}
+    <section className="student-profile-shell text-slate-900">
+      <div className="mb-4 rounded-xl border border-slate-200 bg-white/95 p-4 shadow-sm lg:hidden">
+        <div className="flex min-w-0 items-center gap-3">
+          <Avatar aria-hidden="true">
+            <AvatarFallback>{clientInitials}</AvatarFallback>
+          </Avatar>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-slate-900" title={clientDisplayName}>
+              {clientDisplayName}
             </p>
-          ) : null}
+            <p className="truncate text-xs font-medium text-slate-500" title={caseReferenceText}>
+              {caseReferenceText}
+            </p>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="mt-4 flex flex-wrap gap-2">
           {showDeleteStudentButton ? (
             <DeleteWithConfirm
               formAction={deleteStudentAction}
+              formClassName="block"
               confirmMessage="Move this client to Deleted Clients? Team members can restore them later from the Deleted Clients tab (admins can permanently delete)."
               buttonLabel="Delete Client"
-              buttonClassName="rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50"
+              buttonClassName="inline-flex min-h-10 items-center justify-center rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-50"
             >
               <input type="hidden" name="studentId" value={studentId} />
             </DeleteWithConfirm>
           ) : null}
           <Link
             href={backLink}
-            className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
+            className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
           >
-            ← Back to dashboard
+            <ArrowLeft aria-hidden="true" className="h-4 w-4" />
+            Back to Dashboard
           </Link>
         </div>
       </div>
 
       <nav
-        className="student-profile-mobile-tabs sticky top-0 z-10 -mx-4 -mt-2 flex gap-2 overflow-x-auto border-y border-slate-200 bg-slate-100/95 px-4 py-3 backdrop-blur-sm lg:hidden"
+        className="student-profile-mobile-tabs sticky top-0 z-10 -mx-4 flex gap-2 overflow-x-auto border-y border-slate-200 bg-slate-100/95 px-4 py-3 backdrop-blur-sm lg:hidden"
         aria-label="Client profile sections"
       >
         {studentProfileTabs.map((tab) => {
@@ -673,17 +692,24 @@ export default async function StudentProfileManagementPage(props: { params: Para
         })}
       </nav>
 
-      <div className="grid gap-6 lg:grid-cols-[16rem_minmax(0,1fr)] lg:items-start">
-        <aside className="hidden lg:block">
+      <div className="lg:contents">
+        <aside className="student-profile-sidebar hidden lg:flex">
           <nav
-            className="sticky top-4 flex max-h-[calc(100vh-7rem)] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white/95 shadow-sm"
+            className="flex min-h-0 flex-1 flex-col overflow-hidden"
             aria-label="Client profile sections"
           >
-            <div className="border-b border-slate-200 px-4 py-3">
-              <p className="text-sm font-semibold text-slate-900">Client profile</p>
-              <p className="mt-0.5 truncate text-xs text-slate-500">
-                {student.name ?? student.email}
-              </p>
+            <div className="flex min-w-0 items-center gap-3 px-3 py-3">
+              <Avatar aria-hidden="true">
+                <AvatarFallback>{clientInitials}</AvatarFallback>
+              </Avatar>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-slate-900" title={clientDisplayName}>
+                  {clientDisplayName}
+                </p>
+                <p className="truncate text-xs font-medium text-slate-500" title={caseReferenceText}>
+                  {caseReferenceText}
+                </p>
+              </div>
             </div>
             <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2">
               {studentProfileTabs.map((tab) => {
@@ -699,7 +725,7 @@ export default async function StudentProfileManagementPage(props: { params: Para
                       "flex min-h-11 items-center gap-3 rounded-lg px-3 py-2 text-sm font-semibold transition",
                       isActive
                         ? "bg-slate-900 text-white shadow-sm"
-                        : "text-slate-600 hover:bg-white/80 hover:text-slate-900",
+                        : "text-slate-600 hover:bg-white/55 hover:text-slate-900",
                     )}
                   >
                     <Icon aria-hidden="true" />
@@ -707,6 +733,26 @@ export default async function StudentProfileManagementPage(props: { params: Para
                   </Link>
                 );
               })}
+            </div>
+            <div className="space-y-2 p-3">
+              <Link
+                href={backLink}
+                className="flex min-h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
+              >
+                <ArrowLeft aria-hidden="true" className="h-4 w-4" />
+                Back to Dashboard
+              </Link>
+              {showDeleteStudentButton ? (
+                <DeleteWithConfirm
+                  formAction={deleteStudentAction}
+                  formClassName="block"
+                  confirmMessage="Move this client to Deleted Clients? Team members can restore them later from the Deleted Clients tab (admins can permanently delete)."
+                  buttonLabel="Delete Client"
+                  buttonClassName="flex min-h-10 w-full items-center justify-center rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-50"
+                >
+                  <input type="hidden" name="studentId" value={studentId} />
+                </DeleteWithConfirm>
+              ) : null}
             </div>
           </nav>
         </aside>
