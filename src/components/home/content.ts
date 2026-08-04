@@ -46,6 +46,28 @@ export const proofBullets = [
   "Live update stream on policy/news changes via newsletter",
 ] as const;
 
+export const journeyPackage = {
+  eyebrow: "The L&B Global Promise",
+  title: "From Bhutan to Permanent Residency",
+  tagline: "We don't just help you get a visa.",
+  taglineHighlight: "We help you build your future in Australia.",
+  inclusionsLabel: "Your service package could include:",
+} as const;
+
+export const journeyInclusions = [
+  "Free career counselling",
+  "University admission",
+  "Student visa assistance",
+  "Airport pickup",
+  "Accommodation support",
+  "Direct Bhutan–Perth flights",
+  "Cargo services for families",
+  "Part-time job guidance",
+  "Graduate visa support",
+  "Employer sponsorship advice",
+  "PR pathway planning",
+] as const;
+
 export const processSteps = [
   {
     step: "01",

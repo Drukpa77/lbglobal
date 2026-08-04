@@ -2,6 +2,7 @@ import dynamic from "next/dynamic";
 import type { HomePostItem } from "@/components/home/types";
 import { HomeNav } from "@/components/home/home-nav";
 import { HeroSection } from "@/components/home/sections/hero-section";
+import { JourneyPackageSection } from "@/components/home/sections/journey-package-section";
 import { ServicesSection } from "@/components/home/sections/services-section";
 import { ProcessSection } from "@/components/home/sections/process-section";
 import { PartnersSection } from "@/components/home/sections/partners-section";
@@ -31,6 +32,7 @@ export function HomePage({ posts }: { posts: HomePostItem[] }) {
     <main className="min-h-screen bg-white text-slate-900">
       <HomeNav />
       <HeroSection />
+      <JourneyPackageSection />
       <ServicesSection />
       <ProcessSection />
       <PartnersSection />
