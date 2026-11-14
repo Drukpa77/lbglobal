@@ -4,54 +4,51 @@ import { notFound } from "next/navigation";
 
 import { NewsletterNav } from "@/components/newsletter-nav";
 import { ZoomableImage } from "@/components/zoomable-image";
-import { prisma } from "@/lib/prisma";
-import { resolveOgImage } from "@/lib/post-seo";
+import {
+  formatPostDate,
+  getAllPosts,
+  getPostBySlug,
+  postDescription,
+  postHref,
+  postOgImage,
+} from "@/lib/newsletter";
 
 type Params = Promise<{ slug: string }>;
 
-async function getPublishedPost(slug: string) {
-  return prisma.homePost.findFirst({
-    where: {
-      slug,
-      isPublished: true,
-      publishDate: { not: null, lte: new Date() },
-    },
-    include: {
-      galleryMedia: { orderBy: { sortOrder: "asc" } },
-      author: { select: { name: true, email: true } },
-    },
-  });
+// Every article is known at build time; unknown slugs 404.
+export const dynamicParams = false;
+
+export function generateStaticParams() {
+  return getAllPosts().map((post) => ({ slug: post.slug }));
 }
 
 export async function generateMetadata(props: { params: Params }): Promise<Metadata> {
   const { slug } = await props.params;
-  const post = await getPublishedPost(slug);
+  const post = getPostBySlug(slug);
   if (!post) {
     return { title: "Not Found | L&B Global" };
   }
 
-  const ogImage = resolveOgImage({
-    ogImage: post.ogImage,
-    featuredThumbnail: post.featuredThumbnail,
-    firstGalleryMediaUrl: post.galleryMedia[0]?.url,
-  });
-  const canonical = `/newsletter/${post.slug ?? slug}`;
+  const title = post.metaTitle ?? `${post.title} | L&B Global`;
+  const description = postDescription(post);
+  const ogImage = postOgImage(post);
+  const canonical = postHref(post);
 
   return {
-    title: post.metaTitle ?? `${post.title} | L&B Global`,
-    description: post.metaDescription ?? post.content.slice(0, 160),
+    title,
+    description,
     alternates: { canonical },
     openGraph: {
       type: "article",
-      title: post.metaTitle ?? `${post.title} | L&B Global`,
-      description: post.metaDescription ?? post.content.slice(0, 160),
+      title,
+      description,
       images: [ogImage],
       url: canonical,
     },
     twitter: {
       card: "summary_large_image",
-      title: post.metaTitle ?? `${post.title} | L&B Global`,
-      description: post.metaDescription ?? post.content.slice(0, 160),
+      title,
+      description,
       images: [ogImage],
     },
   };
@@ -59,30 +56,20 @@ export async function generateMetadata(props: { params: Params }): Promise<Metad
 
 export default async function NewsletterDetailPage(props: { params: Params }) {
   const { slug } = await props.params;
-  const post = await getPublishedPost(slug);
+  const post = getPostBySlug(slug);
   if (!post) notFound();
-
-  const ogImage = resolveOgImage({
-    ogImage: post.ogImage,
-    featuredThumbnail: post.featuredThumbnail,
-    firstGalleryMediaUrl: post.galleryMedia[0]?.url,
-  });
 
   const articleSchema = {
     "@context": "https://schema.org",
     "@type": "Article",
     headline: post.title,
-    description: post.metaDescription ?? post.content.slice(0, 160),
-    image: [ogImage],
-    datePublished: (post.publishDate ?? post.createdAt).toISOString(),
-    dateModified: post.updatedAt.toISOString(),
+    description: postDescription(post),
+    image: [postOgImage(post)],
+    datePublished: post.publishDate,
+    dateModified: post.updatedDate ?? post.publishDate,
     author: {
-      "@type": "Person",
-      name:
-        post.authorNameSnapshot ||
-        post.author.name ||
-        post.author.email ||
-        "L&B Global Team",
+      "@type": "Organization",
+      name: post.author,
     },
   };
 
@@ -100,9 +87,9 @@ export default async function NewsletterDetailPage(props: { params: Params }) {
 
           <div className="mt-4 flex flex-wrap items-center gap-2 text-sm text-slate-600">
             <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
-              {(post.publishDate ?? post.createdAt).toLocaleDateString()}
+              {formatPostDate(post.publishDate)}
             </span>
-            <span>By {post.authorNameSnapshot || post.author.name || post.author.email || "L&B Global Team"}</span>
+            <span>By {post.author}</span>
           </div>
 
           {post.metaDescription && (
@@ -112,40 +99,18 @@ export default async function NewsletterDetailPage(props: { params: Params }) {
           )}
         </div>
 
-        {post.featuredThumbnail && (
+        {post.featuredImage && (
           <ZoomableImage
-            src={post.featuredThumbnail}
-            alt={post.featuredThumbnailAlt || post.title}
+            src={post.featuredImage}
+            alt={post.featuredImageAlt || post.title}
             previewClassName="group relative mt-6 block h-[300px] w-full overflow-hidden rounded-3xl border border-slate-200 bg-slate-100 shadow-sm sm:h-[360px] md:h-[420px]"
           />
         )}
 
         <article
           className="prose prose-slate prose-headings:tracking-tight prose-a:text-blue-600 mt-8 max-w-none rounded-3xl border border-slate-200 bg-white p-6 leading-7 shadow-sm md:p-10"
-          dangerouslySetInnerHTML={{ __html: post.contentHtml || `<p>${post.content}</p>` }}
+          dangerouslySetInnerHTML={{ __html: post.contentHtml }}
         />
-
-        {post.galleryMedia.length > 0 && (
-          <section className="mt-10 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm md:p-8">
-            <h2 className="text-xl font-semibold text-slate-900">Media Gallery</h2>
-            <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              {post.galleryMedia.map((item) => (
-                <div key={item.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
-                  {item.mediaType === "VIDEO" ? (
-                    <video controls src={item.url} className="h-64 w-full object-cover md:h-72" />
-                  ) : (
-                    <ZoomableImage
-                      src={item.url}
-                      alt={item.altText ?? post.title}
-                      previewClassName="group relative block h-64 w-full overflow-hidden bg-slate-100 md:h-72"
-                      showHint={false}
-                    />
-                  )}                  
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
       </section>
 
       <script
@@ -155,4 +120,3 @@ export default async function NewsletterDetailPage(props: { params: Params }) {
     </main>
   );
 }
-

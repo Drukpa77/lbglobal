@@ -24,7 +24,6 @@ const quickLinks = [
   { label: homeCta.primary.label, href: homeCta.primary.href },
   { label: "Newsletter", href: "/newsletter" },
   { label: "Contact Us", href: "#contact" },
-  { label: "Sign In", href: "/login" },
 ];
 
 export function FooterSection() {

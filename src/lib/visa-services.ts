@@ -13,8 +13,8 @@ export const VISA_SERVICE_OPTIONS = [
   { value: "OTHER", label: "Other Services" },
 ] as const;
 
-/** Visa services whose client intake collects course / study-related fields */
-export const STUDENT_FIELD_SERVICE_TYPES = new Set<string>([
+/** Visa services whose enquiry collects course / study-related fields */
+const STUDENT_FIELD_SERVICE_TYPES = new Set<string>([
   "STUDENT_VISA",
   "STUDENT_EXTENSION",
 ]);
@@ -27,25 +27,32 @@ export const ENGLISH_TEST_TYPES = ["IELTS", "PTE", "TOEFL"] as const;
 
 export type EnglishTestType = (typeof ENGLISH_TEST_TYPES)[number];
 
-/** Questionnaire / apply form fields shown only for student visa inquiries */
-export const STUDENT_ONLY_QUESTION_IDS = new Set([
-  "targetCourse",
-  "preferredIntake",
-  "currentEducationLevel",
-  "englishTestScore",
-  "englishTestType",
-]);
+export const EDUCATION_LEVEL_OPTIONS = [
+  "+2 / High School",
+  "Diploma",
+  "Bachelors",
+  "Masters",
+  "Other",
+] as const;
+
+export const HEAR_FROM_OPTIONS = [
+  "Higher Perspective",
+  "Google Search",
+  "Facebook",
+  "Instagram",
+  "TikTok",
+  "Friends/Family",
+  "Existing Student",
+  "Education Fair",
+  "Others",
+] as const;
 
 export function isVisaServiceType(value: string): value is VisaServiceType {
   return VISA_SERVICE_OPTIONS.some((option) => option.value === value);
 }
 
-export function isStudentVisaService(value: string | null | undefined) {
-  return value === "STUDENT_VISA";
-}
-
 /**
- * Whether a visa service collects the student/course-related client fields
+ * Whether a visa service collects the student/course-related fields
  * (course, intake, education level). Covers Student Visa and Student Extension.
  */
 export function usesStudentClientFields(value: string | null | undefined) {
@@ -56,17 +63,16 @@ export function isOtherVisaService(value: string | null | undefined) {
   return value === "OTHER";
 }
 
-export function getOtherServiceDescriptionFromAnswers(answers: unknown): string | null {
-  if (!answers || typeof answers !== "object") return null;
-  const raw = (answers as Record<string, unknown>)[OTHER_SERVICE_DESCRIPTION_KEY];
-  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+export function isEnglishTestType(value: string): value is EnglishTestType {
+  return (ENGLISH_TEST_TYPES as readonly string[]).includes(value);
 }
 
-export function resolveOtherServiceDescription(
-  profileValue?: string | null,
-  answers?: unknown,
-): string | null {
-  return profileValue?.trim() || getOtherServiceDescriptionFromAnswers(answers) || null;
+export function isEducationLevel(value: string) {
+  return (EDUCATION_LEVEL_OPTIONS as readonly string[]).includes(value);
+}
+
+export function isHearFromOption(value: string) {
+  return (HEAR_FROM_OPTIONS as readonly string[]).includes(value);
 }
 
 export function getVisaServiceLabel(value: string | null | undefined) {
@@ -74,92 +80,27 @@ export function getVisaServiceLabel(value: string | null | undefined) {
   return VISA_SERVICE_OPTIONS.find((option) => option.value === value)?.label ?? value;
 }
 
-export function isEnglishTestType(value: string): value is EnglishTestType {
-  return (ENGLISH_TEST_TYPES as readonly string[]).includes(value);
-}
-
 export function formatEnglishTestDisplay(
   type: string | null | undefined,
   score: string | null | undefined,
 ) {
   const trimmedScore = score?.trim();
-  if (!trimmedScore) return null;
   const trimmedType = type?.trim();
+  if (!trimmedScore) return trimmedType || null;
   if (trimmedType && isEnglishTestType(trimmedType)) {
     return `${trimmedType} ${trimmedScore}`;
   }
   return trimmedScore;
 }
 
-/** Parse legacy combined values such as "IELTS 6.5" into type + score */
-export function getVisaServiceFromAnswers(answers: unknown): string | null {
-  if (!answers || typeof answers !== "object") return null;
-  const raw = (answers as Record<string, unknown>).visaServiceType;
-  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
-}
-
-export function resolveVisaServiceType(
-  profileValue?: string | null,
-  answers?: unknown,
-): string | null {
-  return profileValue?.trim() || getVisaServiceFromAnswers(answers);
-}
-
 export function formatVisaServiceDisplay(input: {
   visaServiceType?: string | null;
   otherServiceDescription?: string | null;
-  answers?: unknown;
 }) {
-  const serviceType =
-    input.visaServiceType?.trim() ||
-    resolveVisaServiceType(undefined, input.answers);
-  const serviceLabel = getVisaServiceLabel(serviceType);
-  const otherDescription = resolveOtherServiceDescription(
-    input.otherServiceDescription,
-    input.answers,
-  );
-  if (isOtherVisaService(serviceType) && otherDescription) {
+  const serviceLabel = getVisaServiceLabel(input.visaServiceType?.trim());
+  const otherDescription = input.otherServiceDescription?.trim();
+  if (isOtherVisaService(input.visaServiceType) && otherDescription) {
     return `${serviceLabel} — ${otherDescription}`;
   }
   return serviceLabel;
-}
-
-export function formatSubmissionServiceSummary(input: {
-  intendedCourse?: string | null;
-  answers?: unknown;
-  profileVisaServiceType?: string | null;
-  profileOtherServiceDescription?: string | null;
-}) {
-  const serviceType = resolveVisaServiceType(input.profileVisaServiceType, input.answers);
-  const serviceLabel = formatVisaServiceDisplay({
-    visaServiceType: serviceType,
-    otherServiceDescription: input.profileOtherServiceDescription,
-    answers: input.answers,
-  });
-  if (serviceType && usesStudentClientFields(serviceType)) {
-    const course = input.intendedCourse?.trim();
-    return course ? `${getVisaServiceLabel(serviceType)} | ${course}` : getVisaServiceLabel(serviceType);
-  }
-  if (serviceLabel !== "—") return serviceLabel;
-  return input.intendedCourse?.trim() || "Service not specified";
-}
-
-export function parseLegacyEnglishTestScore(combined: string | null | undefined) {
-  const raw = combined?.trim() ?? "";
-  if (!raw) return { type: null as string | null, score: null as string | null };
-
-  for (const testType of ENGLISH_TEST_TYPES) {
-    const prefix = `${testType} `;
-    if (raw.toUpperCase().startsWith(prefix)) {
-      return {
-        type: testType,
-        score: raw.slice(prefix.length).trim() || null,
-      };
-    }
-    if (raw.toUpperCase() === testType) {
-      return { type: testType, score: null };
-    }
-  }
-
-  return { type: null, score: raw };
 }

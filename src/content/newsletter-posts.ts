@@ -1,46 +1,27 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
+import type { NewsletterPost } from "@/lib/newsletter";
+
 /**
- * One-off seeder that publishes 4 SEO-friendly immigration articles
- * into the HomePost table. Safe to re-run — uses upsert by slug.
+ * Newsletter articles shown on the homepage ("Latest Blogs") and at /newsletter.
  *
- * Run with:
- *   node prisma/seed-newsletter-articles.js
+ * To publish a new article, add an entry to this list and redeploy:
+ * - `slug` becomes the URL: /newsletter/<slug> (lowercase, hyphen-separated, unique)
+ * - `publishDate` is YYYY-MM-DD; articles are listed newest first
+ * - `featuredImage` is optional; remote images must be on a host allowed in next.config.ts
+ * - `contentHtml` is the article body as HTML
  */
-const { PrismaClient } = require("@prisma/client");
 
-const prisma = new PrismaClient();
+const DEFAULT_AUTHOR = "L&B Global Team";
 
-function htmlToPlainText(html) {
-  return html
-    .replace(/<\/(p|h\d|li|tr|blockquote)>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&#39;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-const ARTICLES = [
+export const newsletterPosts: NewsletterPost[] = [
   {
     slug: "australian-student-visa-subclass-500-2026-requirements-costs-processing",
-    title:
-      "Australian Student Visa (Subclass 500) in 2026: Requirements, Costs & Processing Times",
-    publishOffsetDays: -2,
-    featuredThumbnail:
-      "https://images.unsplash.com/photo-1554224155-6726b3ff858f?w=1600&q=80&auto=format&fit=crop",
-    featuredThumbnailAlt:
-      "Passport, world map, and travel notebook — symbolising an Australian student visa application",
-    metaTitle:
-      "Australian Student Visa 2026: Subclass 500 Requirements & Costs",
-    metaDescription:
-      "Everything you need to apply for the Australian Subclass 500 student visa in 2026 — eligibility, financial requirements, English scores, fees, and current processing timelines.",
-    metaKeywords:
-      "Australian student visa 2026, subclass 500, student visa requirements, study in Australia, DHA visa processing",
-    focusKeyword: "Australian student visa 2026",
+    title: "Australian Student Visa (Subclass 500) in 2026: Requirements, Costs & Processing Times",
+    publishDate: "2026-05-24",
+    author: DEFAULT_AUTHOR,
+    featuredImage: "https://images.unsplash.com/photo-1554224155-6726b3ff858f?w=1600&q=80&auto=format&fit=crop",
+    featuredImageAlt: "Passport, world map, and travel notebook — symbolising an Australian student visa application",
+    metaTitle: "Australian Student Visa 2026: Subclass 500 Requirements & Costs",
+    metaDescription: "Everything you need to apply for the Australian Subclass 500 student visa in 2026 — eligibility, financial requirements, English scores, fees, and current processing timelines.",
     contentHtml: `
 <p><strong>Planning to study in Australia in 2026?</strong> The Subclass 500 student visa is the document that turns your offer letter into a boarding pass. This guide walks you through what's actually required this year — not the old 2022 rules — so you can plan with confidence.</p>
 
@@ -104,23 +85,15 @@ const ARTICLES = [
 <p><strong>Ready to apply for the February 2026 intake?</strong> <a href="/apply">Submit your inquiry</a> and we'll send you a personalised document checklist within one business day.</p>
 `,
   },
-
   {
     slug: "genuine-student-requirement-australia-2026-gte-replacement",
-    title:
-      "Genuine Student (GS) Requirement Explained: How to Pass Australia's Replacement for the GTE",
-    publishOffsetDays: -7,
-    featuredThumbnail:
-      "https://images.unsplash.com/photo-1434030216411-0b793f4b4173?w=1600&q=80&auto=format&fit=crop",
-    featuredThumbnailAlt:
-      "Student writing application answers at a desk with books and laptop",
-    metaTitle:
-      "Genuine Student (GS) Requirement Australia 2026: How to Pass It",
-    metaDescription:
-      "Australia replaced the GTE with the Genuine Student (GS) requirement. Here's exactly what the five GS questions assess and how to answer them with confidence in 2026.",
-    metaKeywords:
-      "Genuine Student requirement, GS test Australia, GTE replacement, student visa GS, Australia visa 2026",
-    focusKeyword: "Genuine Student requirement",
+    title: "Genuine Student (GS) Requirement Explained: How to Pass Australia's Replacement for the GTE",
+    publishDate: "2026-05-19",
+    author: DEFAULT_AUTHOR,
+    featuredImage: "https://images.unsplash.com/photo-1434030216411-0b793f4b4173?w=1600&q=80&auto=format&fit=crop",
+    featuredImageAlt: "Student writing application answers at a desk with books and laptop",
+    metaTitle: "Genuine Student (GS) Requirement Australia 2026: How to Pass It",
+    metaDescription: "Australia replaced the GTE with the Genuine Student (GS) requirement. Here's exactly what the five GS questions assess and how to answer them with confidence in 2026.",
     contentHtml: `
 <p>In November 2024, the Australian Government replaced the long-standing Genuine Temporary Entrant (GTE) requirement with a simpler — but stricter — test called the <strong>Genuine Student (GS) requirement</strong>. If you're preparing a Subclass 500 application in 2026, here's what you need to know to pass it.</p>
 
@@ -188,23 +161,15 @@ const ARTICLES = [
 <p><a href="/apply">Book a free GS review</a> — we draft, redline, and rewrite your responses against the current DHA assessment guidelines.</p>
 `,
   },
-
   {
     slug: "australia-intake-2026-february-july-november-comparison",
-    title:
-      "Australia Intake 2026: February, July or November — Which One Is Right for You?",
-    publishOffsetDays: -14,
-    featuredThumbnail:
-      "https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?w=1600&q=80&auto=format&fit=crop",
-    featuredThumbnailAlt:
-      "Sydney Opera House on a clear day — symbolising studying in Australia",
-    metaTitle:
-      "Australia Intake 2026: February, July or November Compared",
-    metaDescription:
-      "Compare Australia's three university intakes in 2026 — February, July, and November. Find the right intake based on your visa timeline, finances, and course choice.",
-    metaKeywords:
-      "Australia intake 2026, February intake, July intake, November intake, study in Australia, best intake Australia",
-    focusKeyword: "Australia intake 2026",
+    title: "Australia Intake 2026: February, July or November — Which One Is Right for You?",
+    publishDate: "2026-05-12",
+    author: DEFAULT_AUTHOR,
+    featuredImage: "https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?w=1600&q=80&auto=format&fit=crop",
+    featuredImageAlt: "Sydney Opera House on a clear day — symbolising studying in Australia",
+    metaTitle: "Australia Intake 2026: February, July or November Compared",
+    metaDescription: "Compare Australia's three university intakes in 2026 — February, July, and November. Find the right intake based on your visa timeline, finances, and course choice.",
     contentHtml: `
 <p>Australian universities run on three intakes — February, July, and November. Picking the right one shapes your visa timeline, your scholarship eligibility, and even your job prospects after graduation. Here's how to decide.</p>
 
@@ -274,23 +239,15 @@ const ARTICLES = [
 <p>We map your eligibility, finances, and English results against every running intake before you commit. <a href="/apply">Request your free intake planner</a> and we'll send you a personalised timeline within 2 business days.</p>
 `,
   },
-
   {
     slug: "post-study-work-visa-subclass-485-2026-changes-eligibility",
-    title:
-      "Post-Study Work Visa (Subclass 485) in 2026: What Changed & Who Still Qualifies",
-    publishOffsetDays: -21,
-    featuredThumbnail:
-      "https://images.unsplash.com/photo-1523580494863-6f3031224c94?w=1600&q=80&auto=format&fit=crop",
-    featuredThumbnailAlt:
-      "Graduation caps thrown into the air — symbolising post-study work visa graduates",
-    metaTitle:
-      "Post-Study Work Visa (Subclass 485) 2026: New Rules Explained",
-    metaDescription:
-      "The Subclass 485 visa rules tightened in 2024–25. Here's the 2026 update on age limits, English scores, course duration, and how Bhutanese & Nepalese graduates can still qualify.",
-    metaKeywords:
-      "subclass 485, post study work visa, temporary graduate visa, Australia 485 visa 2026, post-study work visa Bhutan Nepal",
-    focusKeyword: "post-study work visa 485",
+    title: "Post-Study Work Visa (Subclass 485) in 2026: What Changed & Who Still Qualifies",
+    publishDate: "2026-05-05",
+    author: DEFAULT_AUTHOR,
+    featuredImage: "https://images.unsplash.com/photo-1523580494863-6f3031224c94?w=1600&q=80&auto=format&fit=crop",
+    featuredImageAlt: "Graduation caps thrown into the air — symbolising post-study work visa graduates",
+    metaTitle: "Post-Study Work Visa (Subclass 485) 2026: New Rules Explained",
+    metaDescription: "The Subclass 485 visa rules tightened in 2024–25. Here's the 2026 update on age limits, English scores, course duration, and how Bhutanese & Nepalese graduates can still qualify.",
     contentHtml: `
 <p>The Subclass 485 — Australia's Temporary Graduate (post-study work) visa — went through major changes in 2024 and 2025. If you're enrolling for a course in 2026 with permanent residency in mind, these are the new rules you need to plan around from day one.</p>
 
@@ -374,81 +331,3 @@ const ARTICLES = [
 `,
   },
 ];
-
-async function findAuthor() {
-  const admin =
-    (await prisma.user.findFirst({
-      where: { role: "ADMIN" },
-      orderBy: { createdAt: "asc" },
-    })) ||
-    (await prisma.user.findFirst({
-      where: { role: "SUB_ADMIN" },
-      orderBy: { createdAt: "asc" },
-    }));
-  if (!admin) {
-    throw new Error(
-      "No ADMIN or SUB_ADMIN user found in the database. Run `npx prisma db seed` first to create the default admin.",
-    );
-  }
-  return admin;
-}
-
-async function main() {
-  const author = await findAuthor();
-  console.log(`Using author: ${author.email} (${author.role})`);
-
-  for (const article of ARTICLES) {
-    const cleanHtml = article.contentHtml.trim();
-    const plainContent = htmlToPlainText(cleanHtml);
-    const publishDate = new Date(
-      Date.now() + (article.publishOffsetDays ?? 0) * 24 * 60 * 60 * 1000,
-    );
-
-    const data = {
-      title: article.title,
-      slug: article.slug,
-      content: plainContent,
-      contentHtml: cleanHtml,
-      mediaType: article.featuredThumbnail ? "IMAGE" : "NONE",
-      mediaUrl: article.featuredThumbnail ?? null,
-      featuredThumbnail: article.featuredThumbnail ?? null,
-      featuredThumbnailAlt: article.featuredThumbnailAlt ?? null,
-      isPublished: true,
-      publishDate,
-      metaTitle: article.metaTitle,
-      metaDescription: article.metaDescription,
-      metaKeywords: article.metaKeywords ?? null,
-      focusKeyword: article.focusKeyword ?? null,
-      ogImage: article.featuredThumbnail ?? null,
-      authorId: author.id,
-      authorNameSnapshot: author.name ?? "L&B Global Editorial",
-      authorEmailSnapshot: author.email ?? "",
-    };
-
-    const existing = await prisma.homePost.findUnique({
-      where: { slug: article.slug },
-    });
-
-    if (existing) {
-      await prisma.homePost.update({
-        where: { id: existing.id },
-        data,
-      });
-      console.log(`Updated: ${article.title}`);
-    } else {
-      await prisma.homePost.create({ data });
-      console.log(`Created: ${article.title}`);
-    }
-  }
-
-  console.log("\nDone. 4 articles ready at /newsletter.");
-}
-
-main()
-  .catch((error) => {
-    console.error(error);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });

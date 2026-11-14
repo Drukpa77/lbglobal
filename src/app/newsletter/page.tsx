@@ -1,14 +1,12 @@
 import Link from "next/link";
 
-import { PostCard, type PostCardData } from "@/components/blog/post-card";
+import { PostCard } from "@/components/blog/post-card";
 import { NewsletterNav } from "@/components/newsletter-nav";
-import { prisma } from "@/lib/prisma";
+import { getAllPosts } from "@/lib/newsletter";
 
 const PAGE_SIZE = 9;
 
 type SearchParams = Promise<{ page?: string }>;
-
-export const revalidate = 600;
 
 export default async function NewsletterPage(props: { searchParams: SearchParams }) {
   const searchParams = await props.searchParams;
@@ -19,41 +17,11 @@ export default async function NewsletterPage(props: { searchParams: SearchParams
   const skip = (page - 1) * PAGE_SIZE + featuredCount;
   const take = PAGE_SIZE - featuredCount;
 
-  const where = {
-    isPublished: true,
-    publishDate: { not: null, lte: new Date() },
-    slug: { not: null },
-  } as const;
-
-  const [featuredPost, posts, total, recent] = await Promise.all([
-    isFirstPage
-      ? prisma.homePost.findFirst({
-          where,
-          include: {
-            author: { select: { name: true, email: true } },
-            galleryMedia: { orderBy: { sortOrder: "asc" }, take: 1 },
-          },
-          orderBy: { publishDate: "desc" },
-        })
-      : Promise.resolve(null),
-    prisma.homePost.findMany({
-      where,
-      include: {
-        author: { select: { name: true, email: true } },
-        galleryMedia: { orderBy: { sortOrder: "asc" }, take: 1 },
-      },
-      orderBy: { publishDate: "desc" },
-      skip,
-      take,
-    }),
-    prisma.homePost.count({ where }),
-    prisma.homePost.findMany({
-      where,
-      include: { author: { select: { name: true, email: true } } },
-      orderBy: { publishDate: "desc" },
-      take: 5,
-    }),
-  ]);
+  const allPosts = getAllPosts();
+  const total = allPosts.length;
+  const featuredPost = isFirstPage ? (allPosts[0] ?? null) : null;
+  const posts = allPosts.slice(skip, skip + take);
+  const recent = allPosts.slice(1, 5);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const adjustedPage = Math.min(page, totalPages);
@@ -77,7 +45,7 @@ export default async function NewsletterPage(props: { searchParams: SearchParams
           </h1>
           <p className="max-w-2xl text-base leading-relaxed text-slate-600 md:text-lg">
             Hand-picked insights from our advisors and case managers — written for students preparing
-            to study in Australia. New articles published as soon as our team approves them.
+            to study in Australia.
           </p>
           <div className="flex flex-wrap gap-3">
             <a
@@ -100,11 +68,11 @@ export default async function NewsletterPage(props: { searchParams: SearchParams
       {featuredPost ? (
         <section className="home-fluid-shell px-4 py-10 sm:px-6 md:py-14">
           <div className="grid gap-6 lg:grid-cols-[2.2fr_1fr]">
-            <PostCard post={toPostCardData(featuredPost)} variant="featured" />
+            <PostCard post={featuredPost} variant="featured" />
             <aside className="space-y-4">
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-rose-500">Most recent</p>
               {recent.map((post) => (
-                <PostCard key={post.id} post={toPostCardData(post)} variant="compact" />
+                <PostCard key={post.slug} post={post} variant="compact" />
               ))}
               {recent.length === 0 ? (
                 <p className="text-sm text-slate-500">No other posts yet.</p>
@@ -135,7 +103,7 @@ export default async function NewsletterPage(props: { searchParams: SearchParams
         ) : (
           <div className="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {posts.map((post) => (
-              <PostCard key={post.id} post={toPostCardData(post)} />
+              <PostCard key={post.slug} post={post} />
             ))}
           </div>
         )}
@@ -148,40 +116,6 @@ export default async function NewsletterPage(props: { searchParams: SearchParams
       </section>
     </main>
   );
-}
-
-function toPostCardData(post: {
-  id: string;
-  title: string;
-  slug: string | null;
-  content: string;
-  metaDescription: string | null;
-  publishDate: Date | null;
-  createdAt: Date;
-  authorNameSnapshot: string;
-  authorEmailSnapshot: string;
-  author: { name: string | null; email: string | null } | null;
-  mediaType: "NONE" | "IMAGE" | "VIDEO";
-  mediaUrl: string | null;
-  featuredThumbnail: string | null;
-  featuredThumbnailAlt: string | null;
-}): PostCardData {
-  return {
-    id: post.id,
-    title: post.title,
-    slug: post.slug,
-    content: post.content,
-    metaDescription: post.metaDescription,
-    publishDate: post.publishDate,
-    createdAt: post.createdAt,
-    authorNameSnapshot: post.authorNameSnapshot,
-    authorEmailSnapshot: post.authorEmailSnapshot,
-    author: post.author ?? undefined,
-    mediaType: post.mediaType,
-    mediaUrl: post.mediaUrl,
-    featuredThumbnail: post.featuredThumbnail,
-    featuredThumbnailAlt: post.featuredThumbnailAlt,
-  };
 }
 
 function EmptyState() {

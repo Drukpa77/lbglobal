@@ -5,18 +5,11 @@ import {
   formatVisaServiceDisplay,
 } from "@/lib/visa-services";
 
-type SendEmailAttachment = {
-  filename: string;
-  contentBase64: string;
-  contentType: string;
-};
-
 type SendEmailInput = {
   to: string;
   subject: string;
   html: string;
   replyTo?: string;
-  attachments?: SendEmailAttachment[];
 };
 
 type SendEmailResult =
@@ -53,11 +46,6 @@ function getGoogleSmtpConfig() {
   };
 }
 
-/** True when Google Workspace SMTP credentials are present (usable as a fallback). */
-export function isGoogleWorkspaceConfigured() {
-  return getGoogleSmtpConfig() !== null;
-}
-
 export async function sendGoogleWorkspaceEmail(
   input: SendEmailInput,
 ): Promise<SendEmailResult> {
@@ -88,12 +76,6 @@ export async function sendGoogleWorkspaceEmail(
       subject: input.subject,
       html: input.html,
       replyTo: input.replyTo,
-      attachments: input.attachments?.map((file) => ({
-        filename: file.filename,
-        content: file.contentBase64,
-        encoding: "base64",
-        contentType: file.contentType,
-      })),
     });
 
     return { ok: true, id: info.messageId };
@@ -139,11 +121,13 @@ export function buildApplicationInquiryEmail(params: {
   country?: string | null;
   visaServiceType?: string | null;
   otherServiceDescription?: string | null;
+  currentEducationLevel?: string | null;
   targetCourse?: string | null;
   preferredIntake?: string | null;
   englishTestType?: string | null;
   englishTestScore?: string | null;
   hearFrom?: string | null;
+  additionalNote?: string | null;
 }) {
   const englishTest = formatEnglishTestDisplay(
     params.englishTestType,
@@ -161,11 +145,14 @@ export function buildApplicationInquiryEmail(params: {
         otherServiceDescription: params.otherServiceDescription,
       }),
     ],
+    ["Current education level", params.currentEducationLevel],
     ["Target course", params.targetCourse],
     ["Preferred intake", params.preferredIntake],
     ["English test", englishTest],
     ["Heard from", params.hearFrom],
   ].filter((entry): entry is [string, string] => Boolean(entry[1]));
+
+  const note = params.additionalNote?.trim();
 
   return `
     <h2>New visa inquiry</h2>
@@ -174,6 +161,20 @@ export function buildApplicationInquiryEmail(params: {
         .map(([label, value]) => `<li><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}</li>`)
         .join("")}
     </ul>
+    ${
+      note
+        ? `<p><strong>Additional notes:</strong></p><p style="white-space:pre-wrap">${escapeHtml(note)}</p>`
+        : ""
+    }
+    <p style="color:#64748b;font-size:12px">Reply to this email to respond to the applicant directly.</p>
+  `;
+}
+
+export function buildApplicationAutoReplyEmail(params: { name: string }) {
+  return `
+    <p>Dear ${escapeHtml(params.name)},</p>
+    <p>Thank you for your inquiry. Our team has received your details and will contact you within 1–2 business days.</p>
+    <p>Best regards,<br />L&amp;B Global</p>
   `;
 }
 

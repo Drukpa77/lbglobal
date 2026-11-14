@@ -6,50 +6,34 @@ import {
   INTAKE_CUSTOM_MAX_LENGTH,
   INTAKE_CUSTOM_MIN_LENGTH,
   INTAKE_OTHER_VALUE,
-  getEditableIntakeOptions,
   getIntakeCustomFieldName,
-  getIntakeFieldState,
   getUpcomingIntakeOptions,
 } from "@/lib/intake-options";
 
 type IntakeSelectProps = {
   name?: string;
-  savedValue?: string | null;
   required?: boolean;
   className?: string;
   label?: string;
   labelClassName?: string;
-  /** When true, includes past months and a wider year range (for profile editing). */
-  editable?: boolean;
   wrapperClassName?: string;
   placeholder?: string;
 };
 
 export function IntakeSelect({
   name = "preferredIntake",
-  savedValue,
   required = false,
   className,
   label = "Preferred intake",
   labelClassName = "block text-sm font-medium text-slate-700",
-  editable = false,
   wrapperClassName,
   placeholder = "e.g. Trimester 3 2026, Mid-Sep intake",
 }: IntakeSelectProps) {
   const customFieldName = getIntakeCustomFieldName(name);
+  const options = useMemo(() => getUpcomingIntakeOptions(), []);
 
-  const options = useMemo(
-    () => (editable ? getEditableIntakeOptions() : getUpcomingIntakeOptions()),
-    [editable],
-  );
-
-  const initial = useMemo(
-    () => getIntakeFieldState(savedValue, options),
-    [savedValue, options],
-  );
-
-  const [selectValue, setSelectValue] = useState(initial.selectValue);
-  const [customValue, setCustomValue] = useState(initial.customValue);
+  const [selectValue, setSelectValue] = useState("");
+  const [customValue, setCustomValue] = useState("");
   const showCustom = selectValue === INTAKE_OTHER_VALUE;
 
   return (
