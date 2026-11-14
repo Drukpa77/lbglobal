@@ -1,29 +1,11 @@
 import Link from "next/link";
 
-import { PostCard, type PostCardData } from "@/components/blog/post-card";
+import { PostCard } from "@/components/blog/post-card";
 import { SectionReveal } from "@/components/home/section-reveal";
-import type { HomePostItem } from "@/components/home/types";
+import type { NewsletterPost } from "@/lib/newsletter";
 
-function toPostCardData(item: HomePostItem): PostCardData {
-  return {
-    id: item.id,
-    title: item.title,
-    slug: item.slug,
-    content: item.content,
-    metaDescription: item.metaDescription,
-    publishDate: item.publishDate,
-    createdAt: item.createdAt,
-    authorNameSnapshot: item.authorNameSnapshot,
-    authorEmailSnapshot: item.authorEmailSnapshot,
-    mediaType: item.mediaType,
-    mediaUrl: item.mediaUrl,
-    featuredThumbnail: item.featuredThumbnail,
-    featuredThumbnailAlt: item.featuredThumbnailAlt,
-  };
-}
-
-export function UpdatesSection({ posts }: { posts: HomePostItem[] }) {
-  const display = posts.slice(0, 3).map(toPostCardData);
+export function UpdatesSection({ posts }: { posts: NewsletterPost[] }) {
+  const display = posts.slice(0, 3);
   const hasPosts = display.length > 0;
 
   return (
@@ -55,7 +37,7 @@ export function UpdatesSection({ posts }: { posts: HomePostItem[] }) {
         {hasPosts ? (
           <div className="mt-10 grid gap-6 md:grid-cols-3">
             {display.map((post, i) => (
-              <SectionReveal key={post.id} delay={i * 0.07}>
+              <SectionReveal key={post.slug} delay={i * 0.07}>
                 <PostCard post={post} />
               </SectionReveal>
             ))}

@@ -1,80 +1,49 @@
-# L&B Global Web App
+# L&B Global Website
 
-Next.js platform for students applying to Australia with two access levels:
+Customer-facing website for L&B Global (overseas education and visa services), built with Next.js.
 
-- Consultancy agent (`SUB_ADMIN`)
-- Platform owner (`ADMIN`)
+There is no database, login, or admin dashboard. The site has:
 
-## Implemented in Phase 1
+- **Homepage** (`/`): services, process, partners, testimonials, latest articles, and a contact form
+- **Apply** (`/apply`): visa and immigration enquiry form
+- **Newsletter** (`/newsletter`): articles stored in [src/content/newsletter-posts.ts](src/content/newsletter-posts.ts)
 
-- Role-based authentication with NextAuth credentials
-- Prisma schema for users, profiles, questionnaire templates, and submissions
-- Protected dashboards for Student / Sub Admin / Admin
-- Middleware route protection and role-aware redirects
+## How enquiries work
 
-## Implemented in Phase 2 and 3
+The contact form and the Apply form both **email** the enquiry to `CONTACT_INBOX_EMAIL` through Google
+Workspace SMTP, with the applicant's address set as Reply-To. The applicant also receives an automatic
+confirmation email. Nothing is stored on the server: the email is the only record.
 
-- Dynamic student questionnaire loaded from database templates
-- Submission workflow with status updates by Sub Admin/Admin
-- Admin assignment of submissions to consultancy agents
-- Submission filters and CSV export for Sub Admin and Admin
-- Admin analytics charts (country, course, application funnel)
-- Admin questionnaire template manager (`/dashboard/admin/questionnaire`)
+If SMTP credentials are missing in development, emails are logged to the console instead of sent.
+In production, missing credentials make the forms show an error.
 
-## Quick Start
+## Quick start
 
-1. Copy environment variables:
+1. Copy the environment template and fill in the Google Workspace SMTP credentials:
 
-```bash
-copy .env.example .env // dont really have to do this
-```
+   ```bash
+   copy .env.example .env
+   ```
 
-2. Update `DATABASE_URL`, `AUTH_SECRET`, and Blob settings in `.env`.
+2. Install and run:
 
-For student document uploads on a private Vercel Blob store, set:
-
-```bash
-BLOB_READ_WRITE_TOKEN="vercel_blob_rw_..."
-BLOB_STORE_ACCESS="private"
-```
-
-3. Generate Prisma client and push schema:
-
-```bash
-npm run db:generate
-npm run db:push
-```
-
-4. Seed test users:
-
-```bash
-npm run db:seed
-```
-
-5. Start the app:
-
-```bash
-npm docker start "name of DB"
-```
-
-
-```bash
-npm run dev
-```
+   ```bash
+   npm install
+   npm run dev
+   ```
 
 Open [http://localhost:3000](http://localhost:3000).
 
-## Seeded Login Accounts
+## Adding a newsletter article
 
-- Admin: `admin@lbglobal.test` / `AdminPass123!`
-- Sub Admin: `agent@lbglobal.test` / `AgentPass123!`
-- Student: `student@lbglobal.test` / `StudentPass123!`
+Add an entry to the list in [src/content/newsletter-posts.ts](src/content/newsletter-posts.ts) and redeploy.
+The homepage shows the three newest articles. Remote images must be on a host allowed in
+[next.config.ts](next.config.ts).
 
-## Project Scripts
+## Scripts
 
-- `npm run dev` - start local development server
-- `npm run build` - create production build
-- `npm run db:generate` - generate Prisma client
-- `npm run db:push` - push schema to database
-- `npm run db:migrate` - create/apply migration
-- `npm run db:seed` - seed demo users
+- `npm run dev`: start the local development server
+- `npm run build`: create a production build
+- `npm run lint`: run ESLint
+- `npm run typecheck`: run the TypeScript compiler
+- `npm run test:e2e`: run the Playwright smoke tests

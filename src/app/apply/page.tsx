@@ -1,126 +1,41 @@
-import { Prisma } from "@prisma/client";
 import Link from "next/link";
 import Image from "next/image";
-import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { redirect } from "next/navigation";
 
 import { prioritizedCountries } from "@/lib/countries";
+import { isValidIntakeValue, resolveIntakeFromFormData } from "@/lib/intake-options";
 import {
-  isValidIntakeValue,
-  resolveIntakeFromFormData,
-} from "@/lib/intake-options";
-import { runWithUniqueCaseReference } from "@/lib/case-reference";
-import { getCurrentClaimOwnerId } from "@/lib/claims";
-import { parseTemplateQuestions } from "@/lib/questionnaire";
-import {
+  isEducationLevel,
   isEnglishTestType,
+  isHearFromOption,
   isOtherVisaService,
   isVisaServiceType,
   OTHER_SERVICE_DESCRIPTION_KEY,
-  STUDENT_ONLY_QUESTION_IDS,
   usesStudentClientFields,
 } from "@/lib/visa-services";
-import { prisma } from "@/lib/prisma";
-import { queueDevEmail } from "@/lib/email-outbox";
 import {
+  buildApplicationAutoReplyEmail,
   buildApplicationInquiryEmail,
   getContactInboxEmail,
   sendGoogleWorkspaceEmail,
 } from "@/lib/send-email";
-import { notifyStaffOfNewApplication } from "@/lib/workflow-notifications";
-import { startNewVisaCaseForProfile, syncActiveVisaCaseFromProfile } from "@/lib/visa-cases";
 import { SubmitButton } from "@/components/submit-button";
 import { ApplyFormFields } from "./apply-form-fields";
-
-const HEAR_FROM_OPTIONS = [
-  "Higher Perspective",
-  "Google Search",
-  "Facebook",
-  "Instagram",
-  "TikTok",
-  "Friends/Family",
-  "Existing Student",
-  "Education Fair",
-  "Others",
-] as const;
-
-const NOTE_IDS = [
-  "additionalNote",
-  "additionalNotes",
-  "note",
-  "notes",
-  "comment",
-  "comments",
-] as const;
 
 type SearchParams = Promise<{ error?: string; success?: string }>;
 
 export default async function ApplyPage(props: { searchParams: SearchParams }) {
   const searchParams = await props.searchParams;
-  const template = await prisma.questionnaireTemplate.findFirst({
-    where: { isActive: true },
-    orderBy: { updatedAt: "desc" },
-    select: { id: true, title: true, questions: true },
-  });
-
-  const questions = template
-    ? parseTemplateQuestions(template.questions)
-    : [];
-
-  // Ensure key fields exist and place hearFrom + additional note at the bottom.
-  const questionIds = new Set(questions.map((q) => q.id));
-  const baseRequiredQuestions = [
-    { id: "fullName", label: "Full name", type: "text" as const, required: true, placeholder: "Enter your full name" },
-    { id: "email", label: "Email", type: "text" as const, required: true, placeholder: "you@example.com" },
-  ];
-
-  const existingHearFrom = questions.find((q) => q.id === "hearFrom");
-  const existingAdditionalNote = questions.find((q) => NOTE_IDS.includes(q.id as (typeof NOTE_IDS)[number]));
-
-  const hearFromQuestion = {
-    id: "hearFrom",
-    label: existingHearFrom?.label ?? "Where did you hear from us?",
-    type: "select" as const,
-    required: existingHearFrom?.required ?? true,
-    options: [...HEAR_FROM_OPTIONS],
-    placeholder: existingHearFrom?.placeholder,
-  };
-
-  const additionalNoteQuestion =
-    existingAdditionalNote ??
-    {
-      id: "additionalNote",
-      label: "Additional note",
-      type: "textarea" as const,
-      required: false,
-      placeholder: "If you selected Other above, please mention exactly where you heard about us.",
-    };
-
-  const merged = [
-    ...baseRequiredQuestions.filter((q) => !questionIds.has(q.id)),
-    ...questions.filter(
-      (q) =>
-        q.id !== "hearFrom" &&
-        !NOTE_IDS.includes(q.id as (typeof NOTE_IDS)[number]) &&
-        !STUDENT_ONLY_QUESTION_IDS.has(q.id),
-    ),
-    hearFromQuestion,
-    additionalNoteQuestion,
-  ];
 
   const errorMessage =
     searchParams.error === "validation"
       ? "Please fill all required fields correctly."
       : searchParams.error === "hearfrom-note"
-        ? "Please add details in Additional note when 'Other' is selected for where you heard from us."
-      : searchParams.error === "staff-email"
-        ? "This email is already used by a staff account. Please use a different email to submit your inquiry."
-        : searchParams.error === "template"
-          ? "Application form is not available. Please try again later."
-          : searchParams.error === "server"
-            ? "We could not save your inquiry right now. Please try again in a moment or email us directly."
-            : null;
+        ? "Please add details in Additional notes when 'Others' is selected for where you heard from us."
+        : searchParams.error === "server"
+          ? "We could not send your inquiry right now. Please try again in a moment or email us directly."
+          : null;
 
   const successMessage = searchParams.success
     ? "Thank you! Your inquiry has been submitted. Our team will contact you within 1–2 business days."
@@ -146,7 +61,7 @@ export default async function ApplyPage(props: { searchParams: SearchParams }) {
                 Overseas Education and Visa Services
               </p>
               <h1 className="mt-0.5 text-2xl font-semibold text-slate-900">
-                {template?.title ?? "Visa & Immigration Inquiry"}
+                Visa &amp; Immigration Inquiry
               </h1>
               <p className="mt-1 text-sm text-slate-600">
                 Tell us which service you need and our team will contact you with next steps.
@@ -193,10 +108,10 @@ export default async function ApplyPage(props: { searchParams: SearchParams }) {
           </div>
         ) : (
           <form
-            action={submitQuestionnaireAction}
+            action={submitInquiryAction}
             className="mt-6 space-y-5 rounded-2xl border border-rose-200/40 bg-white/90 p-6 text-slate-900 shadow-xl backdrop-blur-sm"
           >
-            <ApplyFormFields questions={merged} prioritizedCountries={prioritizedCountries} />
+            <ApplyFormFields prioritizedCountries={prioritizedCountries} />
             <SubmitButton
               loadingText="Submitting..."
               className="rounded-full bg-gradient-to-r from-rose-500 to-blue-500 px-5 py-2 text-sm font-semibold text-white shadow-[0_8px_18px_rgba(244,63,94,0.28)] transition hover:scale-[1.02] disabled:opacity-70"
@@ -210,389 +125,121 @@ export default async function ApplyPage(props: { searchParams: SearchParams }) {
   );
 }
 
-async function submitQuestionnaireAction(formData: FormData) {
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function hasLength(value: string, min: number, max: number) {
+  return value.length >= min && value.length <= max;
+}
+
+/**
+ * Validates the enquiry and emails it to the L&B inbox. Nothing is stored:
+ * the email is the only record, so a failed send is reported to the applicant.
+ */
+async function submitInquiryAction(formData: FormData) {
   "use server";
 
-  const answers: Record<string, string> = {};
-  for (const [key, value] of formData.entries()) {
-    if (key === "templateId") continue;
-    if (key.endsWith("Custom")) continue;
-    if (typeof value === "string") answers[key] = value;
+  const field = (name: string) => String(formData.get(name) ?? "").trim();
+
+  // Honeypot: real people never see this field, bots fill it. Pretend success.
+  if (field("company")) {
+    redirect("/apply?success=1");
   }
 
-  const preferredIntake = resolveIntakeFromFormData(formData, "preferredIntake");
-  if (preferredIntake) {
-    answers.preferredIntake = preferredIntake;
+  const fullName = field("fullName");
+  const email = field("email").toLowerCase();
+  const phone = field("phone");
+  const city = field("city");
+  const country = field("country");
+  const visaServiceType = field("visaServiceType");
+  const englishTestType = field("englishTestType");
+  const englishTestScore = field("englishTestScore");
+  const hearFrom = field("hearFrom");
+  const additionalNote = field("additionalNote");
+
+  const baseFieldsValid =
+    hasLength(fullName, 2, 100) &&
+    hasLength(email, 3, 200) &&
+    EMAIL_REGEX.test(email) &&
+    hasLength(phone, 1, 25) &&
+    hasLength(city, 1, 100) &&
+    (prioritizedCountries as readonly string[]).includes(country) &&
+    isVisaServiceType(visaServiceType) &&
+    isHearFromOption(hearFrom) &&
+    additionalNote.length <= 5000 &&
+    englishTestScore.length <= 50 &&
+    (!englishTestScore || Boolean(englishTestType)) &&
+    (!englishTestType || isEnglishTestType(englishTestType));
+
+  if (!baseFieldsValid) {
+    redirect("/apply?error=validation");
   }
 
-  const fullName = answers.fullName?.trim() ?? "";
-  const email = answers.email?.trim().toLowerCase() ?? "";
-  const hearFrom = answers.hearFrom?.trim() ?? "";
-  const additionalNote =
-    answers.additionalNote?.trim() ??
-    answers.additionalNotes?.trim() ??
-    answers.note?.trim() ??
-    answers.notes?.trim() ??
-    answers.comment?.trim() ??
-    answers.comments?.trim() ??
-    "";
-
-  if (!fullName || fullName.length < 2 || fullName.length > 100) {
-    redirect("/apply?error=validation");
-  }
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!email || !emailRegex.test(email)) {
-    redirect("/apply?error=validation");
-  }
-  if (!hearFrom) {
-    redirect("/apply?error=validation");
-  }
-  if (hearFrom.toLowerCase() === "others" && !additionalNote) {
+  if (hearFrom === "Others" && !additionalNote) {
     redirect("/apply?error=hearfrom-note");
   }
 
-  const visaServiceType = answers.visaServiceType?.trim() ?? "";
-  if (!visaServiceType || !isVisaServiceType(visaServiceType)) {
-    redirect("/apply?error=validation");
-  }
+  // Service-specific fields: only collect what the chosen service shows.
+  let otherServiceDescription = "";
+  let currentEducationLevel = "";
+  let targetCourse = "";
+  let preferredIntake = "";
 
-  const targetCourse = answers.targetCourse?.trim() ?? "";
-  const currentEducationLevel = answers.currentEducationLevel?.trim() ?? "";
-  const otherServiceDescription =
-    answers[OTHER_SERVICE_DESCRIPTION_KEY]?.trim() ?? "";
   if (usesStudentClientFields(visaServiceType)) {
+    currentEducationLevel = field("currentEducationLevel");
+    targetCourse = field("targetCourse");
+    preferredIntake = resolveIntakeFromFormData(formData, "preferredIntake");
     if (
-      !targetCourse ||
-      !preferredIntake ||
-      !currentEducationLevel ||
+      !isEducationLevel(currentEducationLevel) ||
+      !hasLength(targetCourse, 1, 200) ||
       !isValidIntakeValue(preferredIntake)
     ) {
       redirect("/apply?error=validation");
     }
-    delete answers[OTHER_SERVICE_DESCRIPTION_KEY];
   } else if (isOtherVisaService(visaServiceType)) {
-    if (otherServiceDescription.length < 3 || otherServiceDescription.length > 500) {
+    otherServiceDescription = field(OTHER_SERVICE_DESCRIPTION_KEY);
+    if (!hasLength(otherServiceDescription, 3, 500)) {
       redirect("/apply?error=validation");
     }
-    answers[OTHER_SERVICE_DESCRIPTION_KEY] = otherServiceDescription;
-    delete answers.targetCourse;
-    delete answers.preferredIntake;
-    delete answers.currentEducationLevel;
-  } else {
-    delete answers[OTHER_SERVICE_DESCRIPTION_KEY];
-    delete answers.targetCourse;
-    delete answers.preferredIntake;
-    delete answers.currentEducationLevel;
   }
 
-  const englishTestType = answers.englishTestType?.trim() ?? "";
-  const englishTestScore = answers.englishTestScore?.trim() ?? "";
-  if (englishTestScore && !englishTestType) {
-    redirect("/apply?error=validation");
-  }
-  if (englishTestType && !isEnglishTestType(englishTestType)) {
-    redirect("/apply?error=validation");
-  }
-
-  // Normalize for analytics and consistency.
-  answers.visaServiceType = visaServiceType;
-  answers.hearFrom = hearFrom;
-  if (additionalNote) {
-    answers.additionalNote = additionalNote;
-  }
-
-  const existingUser = await prisma.user.findUnique({
-    where: { email },
-    select: {
-      id: true,
-      role: true,
-      name: true,
-      deletedAt: true,
-      studentProfile: {
-        select: {
-          id: true,
-          phone: true,
-          city: true,
-          nationality: true,
-          visaServiceType: true,
-          otherServiceDescription: true,
-          currentEducationLevel: true,
-          targetCourse: true,
-          preferredIntake: true,
-          englishTestType: true,
-          englishTestScore: true,
-        },
-      },
-    },
-  });
-  if (existingUser && existingUser.role !== "USER") {
-    redirect("/apply?error=staff-email");
-  }
-
-  const template = await prisma.questionnaireTemplate.findFirst({
-    where: { isActive: true },
-    orderBy: { updatedAt: "desc" },
-    select: { id: true },
-  });
-  if (!template) redirect("/apply?error=template");
-
-  let postSubmit: {
-    studentUserId: string;
-    studentProfileId: string;
-    submissionId: string;
-    fullName: string;
-    email: string;
-    phone: string;
-    city: string;
-    country: string;
-    visaServiceType: string;
-    otherServiceDescription: string;
-    targetCourse: string;
-    preferredIntake: string;
-    englishTestType: string;
-    englishTestScore: string;
-    hearFrom: string;
-  };
-
-  try {
-    const studentUser = existingUser
-      ? await prisma.user.update({
-          where: { id: existingUser.id },
-          data: {
-            // Keep applicant record fresh in case they re-submit later.
-            name: fullName,
-            // A previously-removed client re-engaging is a live lead again, so
-            // restore them rather than letting the new enquiry stay invisible.
-            ...(existingUser.deletedAt ? { deletedAt: null, deletedById: null } : {}),
-          },
-        })
-      : await prisma.user.create({
-          data: {
-            name: fullName,
-            email,
-            role: "USER",
-          },
-        });
-
-    if (existingUser?.deletedAt && existingUser.studentProfile) {
-      await prisma.activityLog.create({
-        data: {
-          actorId: studentUser.id,
-          targetUserId: studentUser.id,
-          targetStudentProfileId: existingUser.studentProfile.id,
-          entityType: "STUDENT",
-          entityId: studentUser.id,
-          action: "Auto-restored deleted client after a new online enquiry",
-        },
-      });
-    }
-
-    const city = answers.city?.trim() ?? answers.addressCity?.trim() ?? "";
-    const country = answers.country?.trim() ?? answers.addressCountry?.trim() ?? "";
-    const phone = answers.phone?.trim() ?? "";
-    let studentProfile: { id: string };
-    if (existingUser?.studentProfile) {
-      // Resubmissions: backfill any profile field the staff hasn't filled in yet,
-      // but never overwrite values an admin may have edited in the dashboard.
-      const existing = existingUser.studentProfile;
-      const profileUpdate: Record<string, string> = {};
-      if (!existing.phone && phone) profileUpdate.phone = phone;
-      if (!existing.city && city) profileUpdate.city = city;
-      if (!existing.nationality && country) profileUpdate.nationality = country;
-      if (!existing.visaServiceType && visaServiceType)
-        profileUpdate.visaServiceType = visaServiceType;
-      if (isOtherVisaService(visaServiceType)) {
-        if (!existing.otherServiceDescription && otherServiceDescription)
-          profileUpdate.otherServiceDescription = otherServiceDescription;
-      }
-      if (usesStudentClientFields(visaServiceType)) {
-        if (!existing.currentEducationLevel && currentEducationLevel)
-          profileUpdate.currentEducationLevel = currentEducationLevel;
-        if (!existing.targetCourse && targetCourse) profileUpdate.targetCourse = targetCourse;
-        if (!existing.preferredIntake && preferredIntake)
-          profileUpdate.preferredIntake = preferredIntake;
-      }
-      if (!existing.englishTestType && englishTestType)
-        profileUpdate.englishTestType = englishTestType;
-      if (!existing.englishTestScore && englishTestScore)
-        profileUpdate.englishTestScore = englishTestScore;
-      if (Object.keys(profileUpdate).length > 0) {
-        await prisma.studentProfile.update({
-          where: { id: existing.id },
-          data: profileUpdate,
-        });
-      }
-      await prisma.$transaction(async (tx) => {
-        await startNewVisaCaseForProfile(tx, {
-          studentProfileId: existing.id,
-          visaServiceType,
-          otherServiceDescription,
-          notes: "Started from repeat online application",
-        });
-      });
-      studentProfile = { id: existing.id };
-    } else {
-      const createdProfile = await runWithUniqueCaseReference(prisma, (caseReference) =>
-        prisma.studentProfile.create({
-          data: {
-            caseReference,
-            userId: studentUser.id,
-            phone: phone || null,
-            city: city || null,
-            nationality: country || null,
-            visaServiceType,
-            otherServiceDescription: isOtherVisaService(visaServiceType)
-              ? otherServiceDescription || null
-              : null,
-            currentEducationLevel: usesStudentClientFields(visaServiceType)
-              ? currentEducationLevel || null
-              : null,
-            targetCourse: usesStudentClientFields(visaServiceType) ? targetCourse || null : null,
-            preferredIntake: usesStudentClientFields(visaServiceType) ? preferredIntake || null : null,
-            englishTestType: englishTestType || null,
-            englishTestScore: englishTestScore || null,
-            followUpNotes: null,
-          },
-          select: {
-            id: true,
-            caseReference: true,
-            visaServiceType: true,
-            otherServiceDescription: true,
-            caseStage: true,
-            visaStatus: true,
-            courseStartDate: true,
-            courseEndDate: true,
-            visaExpiryDate: true,
-          },
-        }),
-      );
-      await prisma.$transaction(async (tx) => {
-        await syncActiveVisaCaseFromProfile(tx, createdProfile);
-      });
-      studentProfile = { id: createdProfile.id };
-    }
-
-    // Per-client claim: a repeat enquiry from an already-owned client should
-    // stay with that owner instead of resetting the case to unclaimed.
-    const inheritedOwnerId = existingUser
-      ? await getCurrentClaimOwnerId(prisma, studentUser.id)
-      : null;
-
-    const submission = await prisma.questionnaireSubmission.create({
-      data: {
-        studentId: studentUser.id,
-        templateId: template.id,
-        assignedToId: inheritedOwnerId,
-        sourceCity: city,
-        sourceCountry: country,
-        answers: answers as object,
-      },
-      select: { id: true },
-    });
-
-    postSubmit = {
-      studentUserId: studentUser.id,
-      studentProfileId: studentProfile.id,
-      submissionId: submission.id,
-      fullName,
+  const inquiryResult = await sendGoogleWorkspaceEmail({
+    to: getContactInboxEmail(),
+    subject: `New visa inquiry: ${fullName}`,
+    html: buildApplicationInquiryEmail({
+      name: fullName,
       email,
       phone,
       city,
       country,
       visaServiceType,
       otherServiceDescription,
+      currentEducationLevel,
       targetCourse,
       preferredIntake,
       englishTestType,
       englishTestScore,
       hearFrom,
-    };
-  } catch (error) {
-    if (isNextNavigationError(error)) {
-      throw error;
-    }
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002"
-    ) {
-      // Only the email unique constraint maps to the "staff email" message;
-      // other unique collisions (e.g. a concurrent caseReference) are transient
-      // server errors so we don't mislead the applicant.
-      const target = error.meta?.target;
-      const targetFields = Array.isArray(target) ? target.map(String) : [String(target ?? "")];
-      if (targetFields.some((field) => field.toLowerCase().includes("email"))) {
-        redirect("/apply?error=staff-email");
-      }
-      redirect("/apply?error=server");
-    }
-    console.error("submitQuestionnaireAction failed", error);
+      additionalNote,
+    }),
+    replyTo: email,
+  });
+
+  if (!inquiryResult.ok) {
+    console.error("[apply] Inquiry email failed:", inquiryResult.error);
     redirect("/apply?error=server");
   }
 
+  // The applicant's confirmation is a courtesy; don't hold up the response for it.
   after(async () => {
-    try {
-      const googleInquiryResult = await sendGoogleWorkspaceEmail({
-        to: getContactInboxEmail(),
-        subject: `New visa inquiry: ${postSubmit.fullName}`,
-        html: buildApplicationInquiryEmail({
-          name: postSubmit.fullName,
-          email: postSubmit.email,
-          phone: postSubmit.phone,
-          city: postSubmit.city,
-          country: postSubmit.country,
-          visaServiceType: postSubmit.visaServiceType,
-          otherServiceDescription: postSubmit.otherServiceDescription,
-          targetCourse: postSubmit.targetCourse,
-          preferredIntake: postSubmit.preferredIntake,
-          englishTestType: postSubmit.englishTestType,
-          englishTestScore: postSubmit.englishTestScore,
-          hearFrom: postSubmit.hearFrom,
-        }),
-        replyTo: postSubmit.email,
-      });
-
-      if (!googleInquiryResult.ok) {
-        console.error("[apply] Google Workspace inquiry notification failed:", googleInquiryResult.error);
-      }
-
-      await queueDevEmail({
-        createdById: postSubmit.studentUserId,
-        toEmail: postSubmit.email,
-        subject: "Inquiry Received – L&B Global",
-        htmlBody: `
-      <p>Dear ${postSubmit.fullName},</p>
-      <p>Thank you for your inquiry. Our team has received your details and will contact you within 1–2 business days.</p>
-      <p>Best regards,<br />L&B Global</p>
-    `,
-      });
-
-      await notifyStaffOfNewApplication({
-        studentProfileId: postSubmit.studentProfileId,
-        studentUserId: postSubmit.studentUserId,
-        studentName: postSubmit.fullName,
-        studentEmail: postSubmit.email,
-        submissionId: postSubmit.submissionId,
-        sourceCity: postSubmit.city || null,
-        sourceCountry: postSubmit.country || null,
-        hearFrom: postSubmit.hearFrom || null,
-      });
-
-      revalidatePath("/dashboard/sub-admin");
-      revalidatePath("/dashboard/admin");
-      revalidatePath("/");
-    } catch (error) {
-      console.error("post-submit side effects failed", error);
+    const autoReply = await sendGoogleWorkspaceEmail({
+      to: email,
+      subject: "Inquiry Received – L&B Global",
+      html: buildApplicationAutoReplyEmail({ name: fullName }),
+    });
+    if (!autoReply.ok) {
+      console.warn("[apply] Inquiry sent but auto-reply failed:", autoReply.error);
     }
   });
 
-  revalidatePath("/apply");
   redirect("/apply?success=1");
-}
-
-function isNextNavigationError(error: unknown) {
-  if (typeof error !== "object" || error === null || !("digest" in error)) {
-    return false;
-  }
-  const digest = String((error as { digest?: unknown }).digest ?? "");
-  return digest.startsWith("NEXT_REDIRECT") || digest.startsWith("NEXT_NOT_FOUND");
 }

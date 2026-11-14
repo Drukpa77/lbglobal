@@ -1,14 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { IntakeSelect } from "@/components/intake-select";
-import type { QuestionnaireQuestion } from "@/lib/questionnaire";
 import {
+  EDUCATION_LEVEL_OPTIONS,
   ENGLISH_TEST_TYPES,
+  HEAR_FROM_OPTIONS,
   isOtherVisaService,
   OTHER_SERVICE_DESCRIPTION_KEY,
-  STUDENT_ONLY_QUESTION_IDS,
   usesStudentClientFields,
   VISA_SERVICE_OPTIONS,
 } from "@/lib/visa-services";
@@ -16,129 +16,30 @@ import {
 const inputClass =
   "mt-1 w-full rounded-md border border-rose-200/50 bg-white px-3 py-2 text-slate-900 shadow-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100";
 
-const NOTE_IDS = new Set([
-  "additionalNote",
-  "additionalNotes",
-  "note",
-  "notes",
-  "comment",
-  "comments",
-]);
+const labelClass = "block text-sm font-medium text-slate-700";
 
-const EDUCATION_LEVEL_OPTIONS = [
-  "+2 / High School",
-  "Diploma",
-  "Bachelors",
-  "Masters",
-  "Other",
-] as const;
+function Field({ label, required, children }: { label: string; required?: boolean; children: ReactNode }) {
+  return (
+    <label className={labelClass}>
+      {label}
+      {required && " *"}
+      {children}
+    </label>
+  );
+}
 
 export function ApplyFormFields({
-  questions,
   prioritizedCountries,
 }: {
-  questions: QuestionnaireQuestion[];
   prioritizedCountries: readonly string[];
 }) {
   const [visaServiceType, setVisaServiceType] = useState("");
   const showStudentFields = usesStudentClientFields(visaServiceType);
   const showOtherServiceField = isOtherVisaService(visaServiceType);
 
-  const hearFromQuestion = questions.find((q) => q.id === "hearFrom");
-  const additionalNoteQuestion = questions.find((q) => NOTE_IDS.has(q.id));
-  const normalQuestions = useMemo(
-    () =>
-      questions.filter(
-        (q) =>
-          q.id !== "hearFrom" &&
-          !NOTE_IDS.has(q.id) &&
-          q.id !== "visaServiceType" &&
-          !STUDENT_ONLY_QUESTION_IDS.has(q.id),
-      ),
-    [questions],
-  );
-
-  function renderQuestion(q: QuestionnaireQuestion) {
-    const isRequired = q.required !== false;
-    const name = q.id;
-
-    if (q.type === "textarea") {
-      return (
-        <label key={q.id} className="block text-sm font-medium text-slate-700">
-          {q.label}
-          {isRequired && " *"}
-          <textarea
-            name={name}
-            required={isRequired}
-            placeholder={q.placeholder}
-            rows={4}
-            className={inputClass}
-          />
-        </label>
-      );
-    }
-
-    if (q.type === "select") {
-      if (q.id === "preferredIntake") {
-        return (
-          <IntakeSelect
-            key={q.id}
-            name={name}
-            required={isRequired}
-            label={q.label}
-            labelClassName="block text-sm font-medium text-slate-700"
-            className={inputClass}
-          />
-        );
-      }
-
-      const options = q.id === "country" ? prioritizedCountries : (q.options ?? []);
-
-      return (
-        <label key={q.id} className="block text-sm font-medium text-slate-700">
-          {q.label}
-          {isRequired && " *"}
-          <select
-            name={name}
-            required={isRequired}
-            defaultValue=""
-            className={inputClass}
-          >
-            <option value="" disabled>
-              Select...
-            </option>
-            {options.map((opt) => (
-              <option key={opt} value={opt}>
-                {opt}
-              </option>
-            ))}
-          </select>
-        </label>
-      );
-    }
-
-    const inputType = q.id === "email" ? "email" : q.id === "phone" ? "tel" : "text";
-    return (
-      <label key={q.id} className="block text-sm font-medium text-slate-700">
-        {q.label}
-        {isRequired && " *"}
-        <input
-          name={name}
-          type={inputType}
-          required={isRequired}
-          placeholder={q.placeholder}
-          minLength={q.id === "fullName" ? 2 : undefined}
-          maxLength={q.id === "fullName" ? 100 : q.id === "phone" ? 25 : undefined}
-          className={inputClass}
-        />
-      </label>
-    );
-  }
-
   return (
     <>
-      <label className="block text-sm font-medium text-slate-700">
-        Service required *
+      <Field label="Service required" required>
         <select
           name="visaServiceType"
           required
@@ -155,11 +56,10 @@ export function ApplyFormFields({
             </option>
           ))}
         </select>
-      </label>
+      </Field>
 
       {showOtherServiceField ? (
-        <label className="block text-sm font-medium text-slate-700">
-          Which service are you looking for? *
+        <Field label="Which service are you looking for?" required>
           <textarea
             name={OTHER_SERVICE_DESCRIPTION_KEY}
             required
@@ -169,10 +69,70 @@ export function ApplyFormFields({
             placeholder="e.g. Partner visa consultation, business visa advice..."
             className={inputClass}
           />
-        </label>
+        </Field>
       ) : null}
 
-      {normalQuestions.map(renderQuestion)}
+      <Field label="Full name" required>
+        <input
+          name="fullName"
+          type="text"
+          required
+          minLength={2}
+          maxLength={100}
+          autoComplete="name"
+          placeholder="Enter your full name"
+          className={inputClass}
+        />
+      </Field>
+
+      <Field label="Email" required>
+        <input
+          name="email"
+          type="email"
+          required
+          maxLength={200}
+          autoComplete="email"
+          placeholder="you@example.com"
+          className={inputClass}
+        />
+      </Field>
+
+      <Field label="Phone number" required>
+        <input
+          name="phone"
+          type="tel"
+          required
+          maxLength={25}
+          autoComplete="tel"
+          placeholder="e.g. +977-98XXXXXXXX"
+          className={inputClass}
+        />
+      </Field>
+
+      <Field label="City" required>
+        <input
+          name="city"
+          type="text"
+          required
+          maxLength={100}
+          autoComplete="address-level2"
+          placeholder="Your current city"
+          className={inputClass}
+        />
+      </Field>
+
+      <Field label="Country" required>
+        <select name="country" required defaultValue="" className={inputClass}>
+          <option value="" disabled>
+            Select...
+          </option>
+          {prioritizedCountries.map((country) => (
+            <option key={country} value={country}>
+              {country}
+            </option>
+          ))}
+        </select>
+      </Field>
 
       {showStudentFields ? (
         <div className="rounded-xl border border-amber-100/80 bg-amber-50/50 p-4">
@@ -180,8 +140,7 @@ export function ApplyFormFields({
             Student visa details
           </p>
           <div className="grid gap-4 md:grid-cols-2">
-            <label className="block text-sm font-medium text-slate-700">
-              Current education level *
+            <Field label="Current education level" required>
               <select
                 name="currentEducationLevel"
                 required
@@ -197,12 +156,13 @@ export function ApplyFormFields({
                   </option>
                 ))}
               </select>
-            </label>
-            <label className="block text-sm font-medium text-slate-700 md:col-span-2">
+            </Field>
+            <label className={`${labelClass} md:col-span-2`}>
               Target course *
               <input
                 name="targetCourse"
                 required
+                maxLength={200}
                 placeholder="e.g. Master of Information Technology"
                 className={inputClass}
               />
@@ -210,7 +170,7 @@ export function ApplyFormFields({
             <IntakeSelect
               required
               className={inputClass}
-              labelClassName="block text-sm font-medium text-slate-700 md:col-span-2"
+              labelClassName={`${labelClass} md:col-span-2`}
               wrapperClassName="md:col-span-2"
             />
           </div>
@@ -222,8 +182,7 @@ export function ApplyFormFields({
           English test (optional)
         </p>
         <div className="grid gap-4 md:grid-cols-2">
-          <label className="block text-sm font-medium text-slate-700">
-            Test type
+          <Field label="Test type">
             <select name="englishTestType" defaultValue="" className={inputClass}>
               <option value="">Not taken yet / N/A</option>
               {ENGLISH_TEST_TYPES.map((testType) => (
@@ -232,33 +191,60 @@ export function ApplyFormFields({
                 </option>
               ))}
             </select>
-          </label>
-          <label className="block text-sm font-medium text-slate-700">
-            Score
+          </Field>
+          <Field label="Score">
             <input
               name="englishTestScore"
+              maxLength={50}
               placeholder="e.g. 6.5 overall or 79"
               className={inputClass}
             />
-          </label>
+          </Field>
         </div>
       </div>
 
-      {(hearFromQuestion || additionalNoteQuestion) && (
-        <div className="rounded-xl border border-blue-100/70 bg-blue-50/40 p-4">
-          <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-blue-700">
-            Final details
-          </p>
-          <div className="grid gap-4 md:grid-cols-2">
-            {hearFromQuestion ? renderQuestion(hearFromQuestion) : null}
-            {additionalNoteQuestion ? renderQuestion(additionalNoteQuestion) : null}
-          </div>
-          <p className="mt-2 text-xs text-slate-600">
-            If you choose <span className="font-semibold">Other</span> for referral source, please
-            explain it in Additional note.
-          </p>
+      <div className="rounded-xl border border-blue-100/70 bg-blue-50/40 p-4">
+        <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-blue-700">
+          Final details
+        </p>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field label="Where did you hear from us?" required>
+            <select name="hearFrom" required defaultValue="" className={inputClass}>
+              <option value="" disabled>
+                Select...
+              </option>
+              {HEAR_FROM_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Additional notes">
+            <textarea
+              name="additionalNote"
+              rows={4}
+              maxLength={5000}
+              placeholder="Any extra details about your visa goals"
+              className={inputClass}
+            />
+          </Field>
         </div>
-      )}
+        <p className="mt-2 text-xs text-slate-600">
+          If you choose <span className="font-semibold">Others</span> for where you heard from us,
+          please explain it in Additional notes.
+        </p>
+      </div>
+
+      {/* Honeypot: hidden from people, filled in by bots. */}
+      <input
+        type="text"
+        name="company"
+        tabIndex={-1}
+        autoComplete="off"
+        className="hidden"
+        aria-hidden="true"
+      />
     </>
   );
 }

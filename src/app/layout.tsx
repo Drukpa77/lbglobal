@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "L&B Global",
-  description: "Student application platform for Australia studies",
+  description: "Overseas education and visa support for studying in Australia",
 };
 
 export default function RootLayout({

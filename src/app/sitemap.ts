@@ -1,11 +1,10 @@
 import type { MetadataRoute } from "next";
 
-import { prisma } from "@/lib/prisma";
+import { getAllPosts } from "@/lib/newsletter";
 
 const BASE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://lbglobal.com.au";
 
-export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  // Static public pages
+export default function sitemap(): MetadataRoute.Sitemap {
   const staticRoutes: MetadataRoute.Sitemap = [
     {
       url: BASE_URL,
@@ -27,19 +26,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     },
   ];
 
-  // Dynamic newsletter posts
-  const posts = await prisma.homePost.findMany({
-    where: {
-      isPublished: true,
-      publishDate: { not: null, lte: new Date() },
-    },
-    select: { slug: true, updatedAt: true },
-    orderBy: { publishDate: "desc" },
-  });
-
-  const postRoutes: MetadataRoute.Sitemap = posts.map((post) => ({
+  const postRoutes: MetadataRoute.Sitemap = getAllPosts().map((post) => ({
     url: `${BASE_URL}/newsletter/${post.slug}`,
-    lastModified: post.updatedAt,
+    lastModified: new Date(post.updatedDate ?? post.publishDate),
     changeFrequency: "monthly",
     priority: 0.6,
   }));

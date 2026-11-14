@@ -2,61 +2,37 @@ import Link from "next/link";
 
 import {
   formatPostDate,
-  postAuthorLabel,
   postExcerpt,
-  postPrimaryDate,
+  postHref,
   postReadingTimeMinutes,
-  type PostLike,
-} from "@/lib/post-presentation";
-
-export type PostCardData = PostLike & {
-  id: string;
-  slug: string | null;
-  mediaType?: "NONE" | "IMAGE" | "VIDEO" | null;
-  mediaUrl?: string | null;
-  featuredThumbnail?: string | null;
-  featuredThumbnailAlt?: string | null;
-};
+  type NewsletterPost,
+} from "@/lib/newsletter";
 
 export type PostCardVariant = "featured" | "regular" | "compact";
 
-function postHref(post: PostCardData) {
-  return `/newsletter/${post.slug ?? post.id}`;
+function postImage(post: NewsletterPost) {
+  if (!post.featuredImage) return null;
+  return { src: post.featuredImage, alt: post.featuredImageAlt ?? post.title };
 }
 
-function postImage(post: PostCardData) {
-  if (post.featuredThumbnail) return { src: post.featuredThumbnail, alt: post.featuredThumbnailAlt ?? post.title };
-  if (post.mediaType === "IMAGE" && post.mediaUrl) return { src: post.mediaUrl, alt: post.title };
-  return null;
-}
-
-export function PostCard({ post, variant = "regular" }: { post: PostCardData; variant?: PostCardVariant }) {
+export function PostCard({ post, variant = "regular" }: { post: NewsletterPost; variant?: PostCardVariant }) {
   if (variant === "featured") return <FeaturedCard post={post} />;
   if (variant === "compact") return <CompactCard post={post} />;
   return <RegularCard post={post} />;
 }
 
-function FeaturedCard({ post }: { post: PostCardData }) {
+function FeaturedCard({ post }: { post: NewsletterPost }) {
   const image = postImage(post);
   const href = postHref(post);
-  const author = postAuthorLabel(post);
-  const date = postPrimaryDate(post);
-  const reading = postReadingTimeMinutes(post.content);
+  const date = formatPostDate(post.publishDate);
+  const reading = postReadingTimeMinutes(post);
   const excerpt = postExcerpt(post, 260);
 
   return (
     <article className="group overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm transition hover:shadow-lg">
       <div className="grid md:grid-cols-[1.15fr_1fr]">
         <Link href={href} className="relative block aspect-[16/10] bg-slate-100 md:aspect-auto">
-          {post.mediaType === "VIDEO" && post.mediaUrl ? (
-            <video
-              src={post.mediaUrl}
-              className="h-full w-full object-cover"
-              muted
-              playsInline
-              preload="metadata"
-            />
-          ) : image ? (
+          {image ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={image.src}
@@ -80,7 +56,7 @@ function FeaturedCard({ post }: { post: PostCardData }) {
             </h2>
           </Link>
           <p className="mt-4 text-base leading-relaxed text-slate-600 line-clamp-4">{excerpt}</p>
-          <AuthorRow author={author} />
+          <AuthorRow author={post.author} />
           <Link
             href={href}
             className="mt-6 inline-flex w-fit items-center gap-2 rounded-full bg-blue-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-800"
@@ -94,20 +70,17 @@ function FeaturedCard({ post }: { post: PostCardData }) {
   );
 }
 
-function RegularCard({ post }: { post: PostCardData }) {
+function RegularCard({ post }: { post: NewsletterPost }) {
   const image = postImage(post);
   const href = postHref(post);
-  const author = postAuthorLabel(post);
-  const date = postPrimaryDate(post);
-  const reading = postReadingTimeMinutes(post.content);
+  const date = formatPostDate(post.publishDate);
+  const reading = postReadingTimeMinutes(post);
   const excerpt = postExcerpt(post, 170);
 
   return (
     <article className="group flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
       <Link href={href} className="relative block aspect-[16/10] bg-slate-100">
-        {post.mediaType === "VIDEO" && post.mediaUrl ? (
-          <video src={post.mediaUrl} className="h-full w-full object-cover" muted playsInline preload="metadata" />
-        ) : image ? (
+        {image ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={image.src}
@@ -130,8 +103,8 @@ function RegularCard({ post }: { post: PostCardData }) {
         <p className="mt-3 flex-1 text-sm leading-relaxed text-slate-600 line-clamp-3">{excerpt}</p>
         <div className="mt-5 flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
           <span className="flex items-center gap-2 text-xs font-medium text-slate-600">
-            <Avatar name={author} />
-            {author}
+            <Avatar name={post.author} />
+            {post.author}
           </span>
           <Link
             href={href}
@@ -145,10 +118,10 @@ function RegularCard({ post }: { post: PostCardData }) {
   );
 }
 
-function CompactCard({ post }: { post: PostCardData }) {
+function CompactCard({ post }: { post: NewsletterPost }) {
   const image = postImage(post);
   const href = postHref(post);
-  const date = formatPostDate(post.publishDate ?? post.createdAt);
+  const date = formatPostDate(post.publishDate);
 
   return (
     <Link

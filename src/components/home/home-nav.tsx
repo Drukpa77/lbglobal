@@ -150,16 +150,6 @@ export function HomeNav() {
           {/* Right CTAs */}
           <div className="flex shrink-0 items-center gap-2">
             <Link
-              href="/login"
-              className={`hidden rounded-full border px-4 py-2 text-sm font-medium transition sm:inline-flex ${
-                overHero
-                  ? "border-white/40 text-white hover:border-white/70 hover:bg-white/10"
-                  : "border-slate-300 text-slate-700 hover:border-slate-400 hover:bg-slate-50"
-              }`}
-            >
-              Sign In
-            </Link>
-            <Link
               href={homeCta.primary.href}
               className="hidden items-center gap-1.5 rounded-full bg-gradient-to-r from-rose-500 to-blue-600 px-5 py-2 text-sm font-semibold text-white shadow-[0_4px_14px_rgba(244,63,94,0.35)] transition hover:brightness-110 hover:shadow-[0_6px_20px_rgba(244,63,94,0.4)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 focus-visible:ring-offset-2 sm:inline-flex"
             >
@@ -265,13 +255,6 @@ export function HomeNav() {
                 </div>
 
                 <div className="mt-4 grid gap-2 border-t border-slate-100 pt-4">
-                  <Link
-                    href="/login"
-                    className="rounded-lg border border-slate-300 px-4 py-2.5 text-center text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                    onClick={() => setIsDrawerOpen(false)}
-                  >
-                    Sign In
-                  </Link>
                   <Link
                     href={homeCta.primary.href}
                     className="rounded-lg bg-gradient-to-r from-rose-500 to-blue-600 px-4 py-2.5 text-center text-sm font-semibold text-white shadow transition hover:brightness-105"

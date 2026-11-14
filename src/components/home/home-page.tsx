@@ -1,5 +1,4 @@
 import dynamic from "next/dynamic";
-import type { HomePostItem } from "@/components/home/types";
 import { HomeNav } from "@/components/home/home-nav";
 import { HeroSection } from "@/components/home/sections/hero-section";
 import { JourneyPackageSection } from "@/components/home/sections/journey-package-section";
@@ -10,6 +9,7 @@ import { AboutSection } from "@/components/home/sections/about-section";
 import { DestinationsSection } from "@/components/home/sections/destinations-section";
 import { UpdatesSection } from "@/components/home/sections/updates-section";
 import { TestimonialsSection } from "@/components/home/sections/testimonials-section";
+import type { NewsletterPost } from "@/lib/newsletter";
 
 const ContactSection = dynamic(
   () =>
@@ -27,7 +27,7 @@ const FooterSection = dynamic(
   { loading: () => <div className="h-16" /> },
 );
 
-export function HomePage({ posts }: { posts: HomePostItem[] }) {
+export function HomePage({ posts }: { posts: NewsletterPost[] }) {
   return (
     <main className="min-h-screen bg-white text-slate-900">
       <HomeNav />
